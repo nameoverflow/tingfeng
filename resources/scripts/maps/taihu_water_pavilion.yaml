@@ -61,6 +61,8 @@ rooms:
     id: taihu_pulse_room
     name: "切脉房"
     desc: "房中只有一张木榻和三盏小灯。灯火用来照脸色，不用来照刀。"
+    char:
+      - taihu_wounded_traveler
     exits:
       east: [0, 3]
       south: [-1, 2]
@@ -101,6 +103,8 @@ rooms:
     id: taihu_formula_room
     name: "方书阁"
     desc: "架上医书和花笺很多，夹在书页里的药香比墨香更重。"
+    char:
+      - taihu_archivist
     exits:
       west: [0, 4]
       south: [1, 3]
@@ -108,6 +112,38 @@ rooms:
   - position: [0, 5]
     id: taihu_inner_grove
     name: "湖心花阵"
-    desc: "花径在水雾里分成数岔，深处偶有橹声。无人引路时，每条小径最后都会绕回原地。"
+    desc: "花径在水雾里分成数岔，深处偶有橹声。西通芦苇掩映的暗港，东接岸上庄客往来的雾柳栈桥，北面是水榭深处的荷亭。"
     exits:
       south: [0, 4]
+      west: [-1, 5]
+      east: [1, 5]
+      north: [0, 6]
+
+  - position: [-1, 5]
+    id: taihu_reed_coving
+    name: "芦苇暗港"
+    kind: road
+    desc: "密苇深处藏着一处避风水道，太湖水寨的快船常在此私下停靠，向水榭讨药或传话。"
+    char:
+      - water_fort_second_boss
+    exits:
+      east: [0, 5]
+
+  - position: [1, 5]
+    id: taihu_mist_jetty
+    name: "雾柳栈桥"
+    kind: landmark
+    desc: "长长的竹木栈桥伸向岸边柳庄的地界，晨昏水雾一起，桥那头的人影便只剩模糊轮廓。"
+    char:
+      - estate_steward_lu
+    exits:
+      west: [0, 5]
+
+  - position: [0, 6]
+    id: taihu_lotus_hermitage
+    name: "听雨荷亭"
+    kind: building
+    rest: true
+    desc: "四面临水的竹亭，檐下悬着风铃，亭中备有清茶与干爽竹席。听着雨打残荷，连体内郁结的内息也随之平复。"
+    exits:
+      south: [0, 5]

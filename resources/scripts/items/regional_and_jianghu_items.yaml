@@ -1,0 +1,119 @@
+- id: forged_iron_bracers
+  name: "新打护腕铁片"
+  desc: "东巷铁铺赵铁匠刚淬过火的护腕铁片，边角打磨得齐整，还带着一点煤火余温。"
+
+- id: pawned_old_mortar
+  name: "当铺旧药碾"
+  desc: "仁和药铺早年质在西市当铺的一只沉铜药碾，碾槽里还留着陈年三七与冰片的药味。"
+
+- id: smuggled_seal_box
+  name: "封泥木匣"
+  desc: "从北郊芦苇浅滩搜出的扁木匣，表面印着半真半假的官仓封泥，里头压着几张私改过数目的盐引。"
+
+- id: luoyang_fake_manual
+  name: "伪造古剑谱"
+  desc: "旧剑市流出的所谓“完整本天津桥剑谱”，纸张虽用茶水做旧，第三页换气转腕的注脚却被人故意写反了一行。"
+
+- id: luoyang_stele_rubbing
+  name: "古碑拓片"
+  desc: "从白马寺钟亭旧碑拓下的宣纸，墨迹黑白分明，记着昔年洛阳剑客论剑时的三句步法总纲。"
+
+- id: dali_teahorse_contract
+  name: "染泥茶马契"
+  desc: "苍山马帮遗失的茶马总契，油布封皮沾着洗马涧的红泥。内页除了茶包马匹，某行“铁匣”字样旁被人用指甲重重掐了一道印子。"
+
+- id: duan_temple_letter
+  name: "段氏手书"
+  desc: "段氏护院总管亲笔写就的短笺，封口盖着旧府私印。凭此手书可入崇圣寺三塔院。"
+
+- id: taihu_split_prescription
+  name: "分方药帖"
+  desc: "守阁女医沈青笺一分为二的药帖，隐去了水榭秘传的君药分量，却刚好能治水寨伤者所中的寒湿刀伤。"
+
+- id: burned_tally_half
+  name: "半截焦木牌"
+  desc: "北郊废军祠灰堆边拾到的半截木牌，断口被火燎黑，背面用剑尖刻着“渡河勿念”四字，笔锋与威远内院井台上的刻字如出一辙。"
+
+- id: yamen_bounty_manual
+  name: "捕房锁拿手札"
+  desc: "开封府捕房老捕快传下的锁拿手札，记着街头巷尾近身扣腕、卸力的实用招数。"
+  use:
+    type: learn_art
+    art: yamen_grappling_hand
+    level: 1
+    min_level: 1
+    max_level: 15
+    quality: 2
+    consume: false
+    message: "你翻阅《捕房锁拿手札》，学会了开封府捕房的近身拿人手法。"
+    repeat_message: "你对照《捕房锁拿手札》揣摩分筋扣腕的部位，手法愈发熟练。"
+
+- id: caoban_water_manual
+  name: "汴水踏浪谱"
+  desc: "汴河漕帮老船头手绘的步法图谱，画着在摇晃跳板与急流船头站稳换步的诀窍。"
+  use:
+    type: learn_art
+    art: bianshui_wave_step
+    level: 1
+    min_level: 1
+    max_level: 15
+    quality: 2
+    consume: false
+    message: "你照着《汴水踏浪谱》试走几步，悟出了漕帮船头借浪稳身的步法。"
+    repeat_message: "你又细看了一遍《汴水踏浪谱》，对晃板换步的节奏更有体会。"
+
+- id: luoyang_sword_notes
+  name: "天津桥剑意残篇"
+  desc: "闻声先生对照白马寺古碑拓片补定的洛阳剑法要诀，补上了坊间伪本故意隐去的换步与截脉真意。"
+  use:
+    type: learn_art
+    art: luoyang_sword
+    level: 1
+    min_level: 1
+    max_level: 20
+    quality: 3
+    consume: false
+    message: "你细读《天津桥剑意残篇》，领悟了洛阳剑法步随剑走、截断来势的真意。"
+    repeat_message: "你重读《天津桥剑意残篇》，对天津桥剑路的换位与收剑更明了一分。"
+
+- id: dali_cliff_palm_manual
+  name: "苍山裂石掌谱"
+  desc: "大理段氏内院护卫演练重掌的图谱，记着如何将呼吸沉入脚跟、以双掌开碑裂石。"
+  use:
+    type: learn_art
+    art: cangshan_cleaving_palm
+    level: 1
+    min_level: 1
+    max_level: 18
+    quality: 3
+    consume: false
+    message: "你按《苍山裂石掌谱》沉腰运劲，学会了苍山裂石掌的起手与发力。"
+    repeat_message: "你反复揣摩《苍山裂石掌谱》，双掌吐劲比先前更凝实了。"
+
+- id: taihu_mist_step_manual
+  name: "烟水步图解"
+  desc: "太湖水榭收藏的轻功图册，详注了水岸湿石与芦苇舟楫间的轻身落脚之法。"
+  use:
+    type: learn_art
+    art: mist_step
+    level: 1
+    min_level: 1
+    max_level: 18
+    quality: 3
+    consume: false
+    message: "你参详《烟水步图解》，掌握了足尖借水气滑步、敛去声息的法门。"
+    repeat_message: "你又读了一遍《烟水步图解》，脚下轻缓换气愈发自然。"
+
+- id: willow_sword_manual
+  name: "拂柳剑谱"
+  desc: "太湖水榭方书阁珍藏的剑谱，以花笺小楷写成，讲的是顺势卸力、如垂柳拂水般的剑路。"
+  use:
+    type: learn_art
+    art: taihu_willow_sword
+    level: 1
+    min_level: 1
+    max_level: 18
+    quality: 3
+    consume: false
+    message: "你展开花笺写就的《拂柳剑谱》，学会了太湖柔韧顺势的拂柳剑法。"
+    repeat_message: "你温习《拂柳剑谱》，对听风辨位、借力回剑的火候更清楚了。"

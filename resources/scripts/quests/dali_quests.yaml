@@ -1,0 +1,216 @@
+- id: dali_cangshan_caravan
+  name: "苍山劫契"
+  objectives:
+    - stage: track_cangshan
+      text: "出茶马市向西，到苍山冷泉涧向猎山人阿罗打听劫走茶马铁契的马匪去向。"
+    - stage: quarry_confront
+      text: "登上冷泉涧北面的苍山废石场，击败断指麻六并夺回茶马铁契。"
+    - stage: report_captain
+      text: "将夺回的茶马铁契交还段氏外堂的段氏护院总管。"
+    - stage: completed
+      text: "茶马铁契已归还段氏旧府，护院总管允你修习苍山裂石掌，并授你崇圣寺手书。"
+  reward:
+    money: 0
+    combat_exp: 50
+    potential: 35
+    items: []
+  events:
+    - id: duan_captain_starts_cangshan_quest
+      trigger:
+        type: talk
+        npc: dali_duan_guard_captain
+      conditions:
+        - type: flag
+          flag: dali.duan_trusted
+        - type: quest_not_started
+          quest: dali_cangshan_caravan
+      actions:
+        - type: set_stage
+          quest: dali_cangshan_caravan
+          stage: track_cangshan
+        - type: message
+          speaker: "段氏护院总管"
+          text: "你在乌蒙山道护过车，我便不把你当外人。昨夜有一支从北边回返的马帮在苍山脚下遇袭，货没丢，压队的‘茶马铁契’却被断指麻六抢走了。"
+        - type: message
+          speaker: "段氏护院总管"
+          text: "那伙人不要茶包，偏抢铁契，是想让全滇北的商帮看看段家连自家保契都护不住。你出茶马市往西到苍山冷泉涧，找猎山人阿罗问清麻六藏身之处，把铁契拿回来。"
+
+    - id: tracker_points_to_quarry
+      trigger:
+        type: talk
+        npc: cangshan_tracker
+      conditions:
+        - type: quest_stage
+          quest: dali_cangshan_caravan
+          stage: track_cangshan
+      actions:
+        - type: set_stage
+          quest: dali_cangshan_caravan
+          stage: quarry_confront
+        - type: show_npc
+          npc: cangshan_outlaw_leader
+        - type: message
+          speaker: "猎山人阿罗"
+          text: "断指麻六带着人往北坡上的苍山废石场去了。那地方三面是断崖，石头滑得很，你上去时先把下盘扎稳。"
+
+    - id: confront_cangshan_outlaw
+      trigger:
+        type: talk
+        npc: cangshan_outlaw_leader
+      conditions:
+        - type: quest_stage
+          quest: dali_cangshan_caravan
+          stage: quarry_confront
+      actions:
+        - type: message
+          speaker: "断指麻六"
+          text: "段家旧府不敢派总管上山，倒派了个生面孔来送死？这块茶马铁契我正要拿去换百两银子，想要，拿命来换！"
+        - type: start_battle
+          target: cangshan_outlaw_leader
+
+    - id: defeat_cangshan_outlaw
+      trigger:
+        type: kill
+        npc: cangshan_outlaw_leader
+      conditions:
+        - type: quest_stage
+          quest: dali_cangshan_caravan
+          stage: quarry_confront
+      actions:
+        - type: hide_npc
+          npc: cangshan_outlaw_leader
+        - type: give_item
+          item: dali_teahorse_contract
+          amount: 1
+        - type: set_stage
+          quest: dali_cangshan_caravan
+          stage: report_captain
+        - type: message
+          speaker: "旁白"
+          text: "断指麻六被震退数步，撞在青白条石上，怀里的茶马铁契当啷落地。他见势不妙，翻下山涧逃之夭夭。"
+
+    - id: duan_captain_completes_cangshan_quest
+      trigger:
+        type: talk
+        npc: dali_duan_guard_captain
+      conditions:
+        - type: quest_stage
+          quest: dali_cangshan_caravan
+          stage: report_captain
+        - type: has_item
+          item: dali_teahorse_contract
+      actions:
+        - type: take_item
+          item: dali_teahorse_contract
+          amount: 1
+        - type: give_item
+          item: dali_cliff_palm_manual
+          amount: 1
+        - type: give_item
+          item: duan_temple_letter
+          amount: 1
+        - type: give_money
+          amount: 60
+        - type: set_flag
+          flag: dali.inner_trusted
+        - type: complete_quest
+          quest: dali_cangshan_caravan
+        - type: message
+          speaker: "段氏护院总管"
+          text: "铁契完好无损！段家虽然不再称王，可只要这块铁契还在商路上通行，就没人敢轻视苍山脚下的规矩。"
+        - type: message
+          speaker: "段氏护院总管"
+          text: "这六十文是酬劳，这册《苍山裂石掌谱》和我这身掌法你都可研习。另外，这封段氏手书你拿着——从后门沿山道北上崇圣寺，守塔的枯木大师见信便会引你入三塔院。"
+
+- id: dali_chongsheng_bell
+  name: "崇圣寺听钟"
+  objectives:
+    - stage: ask_boatman
+      text: "带着枯木大师的话，去茶马市东边的洱海旧渡口向老艄公问一问昔日旧事。"
+    - stage: enter_pagoda
+      text: "回崇圣寺山门北侧的三塔院静听晚钟。"
+    - stage: report_monk
+      text: "向崇圣寺山门的守塔僧枯木印证心境。"
+    - stage: completed
+      text: "你已领略崇圣寺三塔晚钟之意，枯木大师允你修习枯荣禅息。"
+  reward:
+    money: 0
+    combat_exp: 45
+    potential: 35
+    items: []
+  events:
+    - id: chongsheng_monk_starts_bell_quest
+      trigger:
+        type: talk
+        npc: chongsheng_monk
+      conditions:
+        - type: has_item
+          item: duan_temple_letter
+        - type: quest_not_started
+          quest: dali_chongsheng_bell
+      actions:
+        - type: set_stage
+          quest: dali_chongsheng_bell
+          stage: ask_boatman
+        - type: message
+          speaker: "守塔僧枯木"
+          text: "既持段家旧府的手书而来，便是替茶马道担过风雨的人。只是老衲这门《枯荣禅息》，最忌心里还存着‘高门贵胄’或‘落魄镖师’的分别。"
+        - type: message
+          speaker: "守塔僧枯木"
+          text: "你先下山去城东的洱海旧渡口，问问那位替段家摇了五十年橹的老艄公，看他眼里如今的段家与昔年有何不同；问过了，再来三塔院听钟。"
+
+    - id: erhai_boatman_speaks_of_duan
+      trigger:
+        type: talk
+        npc: erhai_old_boatman
+      conditions:
+        - type: quest_stage
+          quest: dali_chongsheng_bell
+          stage: ask_boatman
+      actions:
+        - type: set_stage
+          quest: dali_chongsheng_bell
+          stage: enter_pagoda
+        - type: message
+          speaker: "洱海老艄公"
+          text: "枯木师父让你来问我？哈哈，他年轻时也是段家坐在堂上的人。"
+        - type: message
+          speaker: "洱海老艄公"
+          text: "要我说，以前段家坐王位的时候，咱们百姓隔着三道宫墙磕头；如今段家子弟跟我们一样披着蓑衣走山道、守夜车，茶农和船家夜里反倒睡得更踏实。有担当的荣，比关起门来的贵，长久得多。"
+
+    - id: listen_to_pagoda_bell
+      trigger:
+        type: enter_room
+        map: dali_city
+        position: [0, 8]
+      conditions:
+        - type: quest_stage
+          quest: dali_chongsheng_bell
+          stage: enter_pagoda
+      actions:
+        - type: set_stage
+          quest: dali_chongsheng_bell
+          stage: report_monk
+        - type: message
+          speaker: "旁白"
+          text: "暮色四合，三塔院中的古钟缓缓撞响。钟声越过苍山积雪与洱海波涛，你默想老艄公的话，呼吸不知不觉间与钟声余韵合为一处。"
+
+    - id: chongsheng_monk_completes_bell_quest
+      trigger:
+        type: talk
+        npc: chongsheng_monk
+      conditions:
+        - type: quest_stage
+          quest: dali_chongsheng_bell
+          stage: report_monk
+      actions:
+        - type: take_item
+          item: duan_temple_letter
+          amount: 1
+        - type: set_flag
+          flag: dali.chongsheng_vow
+        - type: complete_quest
+          quest: dali_chongsheng_bell
+        - type: message
+          speaker: "守塔僧枯木"
+          text: "昔为庙堂主，今作护路人；一枯一荣，本是一口气。你既听懂了这声晚钟，往后便可留在此处随老衲修习《枯荣禅息》。"

@@ -317,6 +317,11 @@ validateWorld wrld =
           <> [ "quest " <> qid <> " event " <> eid <> " gives non-positive item amount for " <> itemId
                | amount <= 0
              ]
+      TakeItem itemId amount ->
+        requireItem qid eid "take_item action" itemId
+          <> [ "quest " <> qid <> " event " <> eid <> " takes non-positive item amount for " <> itemId
+               | amount <= 0
+             ]
       GiveMoney amount ->
         [ "quest " <> qid <> " event " <> eid <> " gives negative money"
           | amount < 0

@@ -48,11 +48,11 @@
 
 ## 洛阳、大理与太湖
 
-当前只提供区域骨架和老师 NPC，尚未实现正式 `Faction` 类型。
+当前通过剧情 flag 与老师 `teach_requires` 表达门户与内堂信任：
 
-- 洛阳：名帖、酒会、剑法、轻功、白马寺和旧世家。
-- 大理：商队、段氏旧府、茶马道、寺门和护送武学。段氏是前朝王族后裔，不掌当朝政权。
-- 太湖：药车、水路、医者、调息和书信人情。
+- 洛阳：名帖、牡丹台试剑、残谱室、洛水旧堰亭、白马寺（外山门、古碑亭、山门茶寮）与剑法/轻功路线（《洛阳剑法》、《洛水行云步》）。
+- 大理：商队、段氏旧府、苍山冷泉涧与废石场、洱海旧渡口、崇圣寺（山门、三塔院）及掌法/禅息路线（《茶马护身拳》、《苍山裂石掌》、《枯荣禅息》）。段氏是前朝王族后裔，不掌当朝政权。
+- 太湖：药车、水榭各房、芦苇暗港、雾柳栈桥、听雨荷亭，以及调息/身法/剑法路线（《太湖调息》、《烟波步》、《拂柳剑法》）。
 
 三处区域通过接引 NPC 进入，也通过同一批接引人返回。城市地图没有一步跨回开封的出口。每条路第一次走都会停在路段地图，路上事件办完才进城，并取得该城的门户 flag；之后凭同行帖直达。
 
@@ -69,15 +69,11 @@ Faction YAML
 
 ## 北郊递道
 
-北郊递道（地图 id `north_post_road`）是开封北门外到黄河南堤的独立差事区：
+北郊递道（地图 id `north_post_road`）是开封北门外到黄河南堤与南渡津口的递路与河防交界区：
 
-- 递铺亭触发追踪。
-- 西侧小径出现玩家独立可见的截信探子。
-- 越过岔口往北会被记下，复命时顾捕头会点出来。
-- 击败探子后需要返回开封复命。
-- 木牌只证明公文交接路径，不在开局阶段连接威远旧案。
-
-后续可在剧情 quest 之外增加可重复送信、巡查和追捕 job。
+- 递铺亭触发公文失信追踪，西侧小径出现截信探子（`north_road_patrol`）。
+- 黄河南堤向西通南堤芦苇滩（承接开封水陆暗线 `caoban_canal_shadow`），向东通旧烽火台墩，向北通黄河南渡津口。
+- 当玩家在洛阳、大理或太湖发现威远旧物上的暗墨线线索后，废军祠会触发威远旧案的第一次正式回响（`weiyuan_first_echo`）。
 
 ## 当前已落资源
 
@@ -93,10 +89,17 @@ Faction YAML
 - `resources/scripts/quests/content_skeleton_quests.yaml`
 - `resources/scripts/quests/kaifeng_jianghu.yaml`
 - `resources/scripts/quests/journeys.yaml`
+- `resources/scripts/quests/luoyang_quests.yaml`
+- `resources/scripts/quests/dali_quests.yaml`
+- `resources/scripts/quests/taihu_quests.yaml`
+- `resources/scripts/quests/weiyuan_echoes.yaml`
 - `resources/scripts/characters/weiyuan_chapter.yaml`
 - `resources/scripts/characters/content_skeleton_npcs.yaml`
 - `resources/scripts/characters/kaifeng_jianghu.yaml`
 - `resources/scripts/characters/road_encounters.yaml`
+- `resources/scripts/characters/regional_and_jianghu_npcs.yaml`
+- `resources/scripts/martial_arts/regional_and_jianghu_arts.yaml`
+- `resources/scripts/items/regional_and_jianghu_items.yaml`
 
 ## 后续制作顺序
 

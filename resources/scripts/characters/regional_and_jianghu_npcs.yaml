@@ -1,0 +1,711 @@
+- id: kaifeng_pawnbroker
+  name: "秦朝奉"
+  desc: "永顺当铺的老朝奉，高柜台后只露出一双精明的眼睛和一副老花镜，手里摩挲着半截旧铜尺。"
+  actions: [dialogue]
+  martial_arts:
+    foundation:
+      - id: basic_fist
+        level: 6
+  prepared: {}
+  teaches: {}
+  dialogue:
+    - "当铺的规矩：只认死当活当，不问东西是谁家的。出了这个门，砖头也是银子。"
+  respawn: 0
+  attr:
+    hp: 100
+    qi: 80
+    max_qi: 80
+    jing: 140
+    qi_regen: 1.5
+    innate:
+      strength: 12
+      agility: 14
+      vitality: 14
+
+- id: kaifeng_banker
+  name: "算盘孙"
+  desc: "通宝钱庄的大掌柜，左手拨算盘，右手按票根，账房里哪怕掉根针他也听得见。"
+  actions: [dialogue]
+  martial_arts:
+    foundation:
+      - id: basic_internal
+        level: 8
+  prepared: {}
+  teaches: {}
+  dialogue:
+    - "开封城里人来人往，铜钱嫌沉，兑成票子才能走远路。只要印鉴对得上，洛阳、大理都认。"
+  respawn: 0
+  attr:
+    hp: 100
+    qi: 100
+    max_qi: 100
+    jing: 150
+    qi_regen: 2.0
+    innate:
+      strength: 11
+      agility: 15
+      vitality: 15
+
+- id: warehouse_keeper
+  name: "周守仓"
+  desc: "汴河货栈的老管事，腰里挂着一大串生锈的铁钥匙，鞋帮上沾着河泥与麦糠。"
+  actions: [dialogue]
+  martial_arts:
+    foundation:
+      - id: basic_fist
+        level: 8
+  prepared: {}
+  teaches: {}
+  dialogue:
+    - "北来的车、东来的船，进栈先过秤，出栈先验封。封皮破了一角，谁签的字谁兜着。"
+  respawn: 0
+  attr:
+    hp: 120
+    qi: 80
+    max_qi: 80
+    jing: 120
+    qi_regen: 1.5
+    innate:
+      strength: 16
+      agility: 12
+      vitality: 16
+
+- id: alley_beggar_chen
+  name: "破衣陈七"
+  desc: "马道巷墙根下晒太阳的闲汉，怀里揣着半块冷炊饼，开封东半城哪条暗巷通哪家后院，没有他不知道的。"
+  actions: [dialogue]
+  martial_arts:
+    foundation:
+      - id: basic_lightness
+        level: 10
+      - id: basic_fist
+        level: 6
+  prepared: {}
+  teaches: {}
+  dialogue:
+    - "大路有大路的走法，暗巷有暗巷的眼睛。客官想打听谁家的后门，先看看手里的铜板响不响。"
+  respawn: 0
+  attr:
+    hp: 95
+    qi: 85
+    max_qi: 85
+    jing: 120
+    qi_regen: 2.0
+    innate:
+      strength: 12
+      agility: 20
+      vitality: 13
+
+- id: levee_ferry_guard
+  name: "守渡老卒"
+  desc: "黄河南渡津口看守旧桩的老兵，披着件洗得发白的号衣，常年听着河风，说话声音沙哑。"
+  actions: [dialogue]
+  martial_arts:
+    foundation:
+      - id: basic_fist
+        level: 12
+      - id: basic_internal
+        level: 10
+    fist:
+      - id: yamen_grappling_hand
+        level: 8
+  prepared:
+    fist:
+      id: yamen_grappling_hand
+      level: 8
+  teaches: {}
+  dialogue:
+    - "白日里渡船看旗，入夜后渡口封桩。这时候还往河边跑的，不是私盐船，就是背着人命的夜行人。"
+  respawn: 0
+  attr:
+    hp: 150
+    qi: 100
+    max_qi: 100
+    jing: 120
+    qi_regen: 2.0
+    innate:
+      strength: 20
+      agility: 14
+      vitality: 20
+
+- id: salt_gang_deputy
+  name: "盐帮香主罗七"
+  desc: "盐帮分管汴北私船的香主，短衣紧袖，双手虎口结着厚茧，正指挥手下往芦苇荡里藏货。"
+  actions: [dialogue]
+  hidden: true
+  martial_arts:
+    foundation:
+      - id: basic_fist
+        level: 12
+      - id: basic_lightness
+        level: 10
+    fist:
+      - id: escort_short_fist
+        level: 10
+  prepared:
+    fist:
+      id: escort_short_fist
+      level: 10
+  teaches: {}
+  dialogue:
+    - "南堤的芦苇荡向来不管官私，谁敢截我的船，我就拿谁填河。"
+  respawn: 45
+  attr:
+    hp: 145
+    qi: 110
+    max_qi: 110
+    jing: 120
+    qi_regen: 2.5
+    innate:
+      strength: 22
+      agility: 17
+      vitality: 18
+
+- id: ink_mark_stalker
+  name: "墨线夜行人"
+  desc: "他一身皂衣蒙面，袖口绣着一道极细的暗墨线，手里的窄刃长剑专门挑人手腕旧伤。"
+  actions: [dialogue]
+  hidden: true
+  martial_arts:
+    foundation:
+      - id: basic_sword
+        level: 14
+      - id: basic_lightness
+        level: 14
+    sword:
+      - id: weiyuan_sword
+        level: 11
+  prepared:
+    sword:
+      id: weiyuan_sword
+      level: 11
+  teaches: {}
+  dialogue:
+    - "神龛里的东西，不是留给外人看的。把底单和剑谱放下！"
+  respawn: 45
+  attr:
+    hp: 155
+    qi: 120
+    max_qi: 120
+    jing: 130
+    qi_regen: 2.5
+    innate:
+      strength: 20
+      agility: 22
+      vitality: 18
+
+- id: luoyang_blade_broker
+  name: "旧剑牙人冯三寸"
+  desc: "洛阳剑铺里专做旧剑与古谱买卖的牙人，三根手指搭在剑鞘上一摸，便知是哪一年的铁、哪一家的路数。"
+  actions: [dialogue]
+  martial_arts:
+    foundation:
+      - id: basic_sword
+        level: 12
+      - id: basic_lightness
+        level: 10
+    sword:
+      - id: nameless_trial_sword
+        level: 8
+  prepared:
+    sword:
+      id: nameless_trial_sword
+      level: 8
+  teaches: {}
+  dialogue:
+    - "洛阳城里一半人买剑是为了佩着赴宴，另一半人买剑是为了替旧剑找新主。客官是哪一种？"
+  respawn: 0
+  attr:
+    hp: 130
+    qi: 90
+    max_qi: 90
+    jing: 130
+    qi_regen: 2.0
+    innate:
+      strength: 15
+      agility: 19
+      vitality: 15
+
+- id: luoyang_footwork_mentor
+  name: "步轻尘"
+  desc: "步法廊的陪练剑师，双足落地无声，衣摆从不沾地面的青砖灰。"
+  actions: [dialogue]
+  martial_arts:
+    foundation:
+      - id: basic_lightness
+        level: 24
+      - id: basic_sword
+        level: 18
+    lightness:
+      - id: luoyang_flowing_step
+        level: 18
+    sword:
+      - id: luoyang_sword
+        level: 14
+  prepared:
+    lightness:
+      id: luoyang_flowing_step
+      level: 18
+    sword:
+      id: luoyang_sword
+      level: 14
+  teach_bonus: 4
+  teaches:
+    luoyang_flowing_step: 16
+    basic_lightness: 18
+  teach_requires:
+    flag: luoyang.name_card
+    refusal: "步法廊只教牡丹会旧帖上有名的客人。先去挣一张名帖再来。"
+  dialogue:
+    - "洛阳剑法看起来是手上的热闹，实则是脚下的分寸。步子慢半寸，剑名再响也是空谈。"
+  respawn: 0
+  attr:
+    hp: 175
+    qi: 150
+    max_qi: 150
+    jing: 150
+    qi_regen: 3.0
+    innate:
+      strength: 16
+      agility: 29
+      vitality: 17
+
+- id: peony_host_assistant
+  name: "牡丹会执事裴文举"
+  desc: "牡丹台前执掌名录与试剑席次的文士，袖中常备朱笔，谁上台、谁落席都记在册上。"
+  actions: [dialogue]
+  martial_arts:
+    foundation:
+      - id: basic_sword
+        level: 14
+      - id: basic_internal
+        level: 12
+    sword:
+      - id: luoyang_sword
+        level: 10
+  prepared:
+    sword:
+      id: luoyang_sword
+      level: 10
+  teaches: {}
+  dialogue:
+    - "牡丹台前试剑，点到即止，挣的是洛阳酒桌上的座次，不是生死仇杀。"
+  respawn: 0
+  attr:
+    hp: 150
+    qi: 130
+    max_qi: 130
+    jing: 150
+    qi_regen: 2.5
+    innate:
+      strength: 15
+      agility: 21
+      vitality: 17
+
+- id: peony_challenger_song
+  name: "嵩阳客宋秋河"
+  desc: "远道来洛阳求名的年轻剑客，佩一柄青钢长剑，站在牡丹台下等候试剑之人。"
+  actions: [dialogue]
+  hidden: true
+  martial_arts:
+    foundation:
+      - id: basic_sword
+        level: 15
+      - id: basic_lightness
+        level: 14
+    sword:
+      - id: luoyang_sword
+        level: 12
+  prepared:
+    sword:
+      id: luoyang_sword
+      level: 12
+  teaches: {}
+  dialogue:
+    - "在下宋秋河，特来牡丹台领教洛阳同道的步法与剑路。"
+  respawn: 45
+  attr:
+    hp: 155
+    qi: 120
+    max_qi: 120
+    jing: 130
+    qi_regen: 2.5
+    innate:
+      strength: 18
+      agility: 23
+      vitality: 17
+
+- id: fake_manual_swordsman
+  name: "卖谱剑客贺孤鸿"
+  desc: "他斜倚在洛水旧堰亭栏边，怀里揣着几册做旧的剑谱，眼神总往过路外乡人的钱袋上瞟。"
+  actions: [dialogue]
+  hidden: true
+  martial_arts:
+    foundation:
+      - id: basic_sword
+        level: 13
+      - id: basic_lightness
+        level: 12
+    sword:
+      - id: luoyang_sword
+        level: 10
+  prepared:
+    sword:
+      id: luoyang_sword
+      level: 10
+  teaches: {}
+  dialogue:
+    - "洛阳城里人人求真谱，可真谱放在眼前，又有几个认得出来？"
+  respawn: 45
+  attr:
+    hp: 145
+    qi: 110
+    max_qi: 110
+    jing: 120
+    qi_regen: 2.5
+    innate:
+      strength: 18
+      agility: 21
+      vitality: 16
+
+- id: baima_guest_monk
+  name: "知客僧明心"
+  desc: "白马寺山门前的知客僧，合十而立，不论来客佩剑还是带伤，神色都一般平和。"
+  actions: [dialogue]
+  martial_arts:
+    foundation:
+      - id: basic_internal
+        level: 16
+      - id: basic_fist
+        level: 12
+  prepared: {}
+  teaches: {}
+  dialogue:
+    - "城里争名的人走累了，多半会到白马寺听一声钟。施主若不急着赶路，西侧碑亭与东侧茶寮都可歇脚。"
+  respawn: 0
+  attr:
+    hp: 150
+    qi: 160
+    max_qi: 160
+    jing: 170
+    qi_regen: 3.0
+    innate:
+      strength: 14
+      agility: 16
+      vitality: 22
+
+- id: baima_stone_sweeper
+  name: "扫碑老人"
+  desc: "白马寺古碑亭里扫落叶的老人，手里的竹帚磨秃了半截，对碑阴那些被岁月磨平的刻痕如数家珍。"
+  actions: [dialogue]
+  martial_arts:
+    foundation:
+      - id: basic_internal
+        level: 20
+      - id: basic_sword
+        level: 18
+  prepared: {}
+  teaches: {}
+  dialogue:
+    - "纸上的字容易改，石头上的字难改。洛阳多少剑客争了一辈子名，最后留下的还不如碑阴两行修桥记。"
+  respawn: 0
+  attr:
+    hp: 170
+    qi: 180
+    max_qi: 180
+    jing: 180
+    qi_regen: 3.5
+    innate:
+      strength: 15
+      agility: 18
+      vitality: 24
+
+- id: dali_contract_clerk
+  name: "管契先生段文叔"
+  desc: "段氏账房里掌管茶马道保契与印信的老先生，鼻梁上架着水晶镜，对各路商帮与驿道的暗记一清二楚。"
+  actions: [dialogue]
+  martial_arts:
+    foundation:
+      - id: basic_internal
+        level: 14
+      - id: basic_fist
+        level: 10
+  prepared: {}
+  teaches: {}
+  dialogue:
+    - "段家替人护路，凭的是一纸保契。契在，哪怕货沉了澜沧江，段家也照赔不误。"
+  respawn: 0
+  attr:
+    hp: 130
+    qi: 130
+    max_qi: 130
+    jing: 160
+    qi_regen: 2.5
+    innate:
+      strength: 13
+      agility: 15
+      vitality: 18
+
+- id: cangshan_tracker
+  name: "猎山人阿罗"
+  desc: "常年在苍山冷泉涧一带巡山的猎人，绑腿扎得极紧，看一眼乱石上的苔痕便知道几个人经过。"
+  actions: [dialogue]
+  martial_arts:
+    foundation:
+      - id: basic_lightness
+        level: 16
+      - id: basic_fist
+        level: 14
+    fist:
+      - id: dali_guard_fist
+        level: 10
+  prepared:
+    fist:
+      id: dali_guard_fist
+      level: 10
+  teaches: {}
+  dialogue:
+    - "苍山的路看着宽，走错一步就是滑石涧。山上的毛贼专挑雨雾天往废石场钻。"
+  respawn: 0
+  attr:
+    hp: 160
+    qi: 110
+    max_qi: 110
+    jing: 130
+    qi_regen: 2.5
+    innate:
+      strength: 20
+      agility: 22
+      vitality: 20
+
+- id: cangshan_outlaw_leader
+  name: "断指麻六"
+  desc: "盘踞在苍山废石场的马匪头目，左手缺了一截尾指，正拿着抢来的茶马铁契打算向过往商贾勒索。"
+  actions: [dialogue]
+  hidden: true
+  martial_arts:
+    foundation:
+      - id: basic_fist
+        level: 15
+      - id: basic_internal
+        level: 12
+    fist:
+      - id: dali_guard_fist
+        level: 12
+  prepared:
+    fist:
+      id: dali_guard_fist
+      level: 12
+  teaches: {}
+  dialogue:
+    - "段家的王旗早就收进祠堂了！如今这苍山石场，谁拳头硬谁说了算。"
+  respawn: 45
+  attr:
+    hp: 165
+    qi: 120
+    max_qi: 120
+    jing: 130
+    qi_regen: 2.5
+    innate:
+      strength: 24
+      agility: 16
+      vitality: 22
+
+- id: erhai_old_boatman
+  name: "洱海老艄公"
+  desc: "守在洱海旧渡口补网的老人，年轻时替段家跑过水路，如今只载熟客过海。"
+  actions: [dialogue]
+  martial_arts:
+    foundation:
+      - id: basic_internal
+        level: 12
+      - id: basic_lightness
+        level: 12
+  prepared: {}
+  teaches: {}
+  dialogue:
+    - "苍山的风一下来，洱海的浪比人心还急。站得住船头的人，到了岸上也吃不了亏。"
+  respawn: 0
+  attr:
+    hp: 130
+    qi: 120
+    max_qi: 120
+    jing: 140
+    qi_regen: 2.0
+    innate:
+      strength: 16
+      agility: 18
+      vitality: 20
+
+- id: chongsheng_monk
+  name: "守塔僧枯木"
+  desc: "崇圣寺三塔下的老僧，灰衣布履，眉宇间似有旧日贵气，却早已随着晨钟暮鼓归于沉静。"
+  actions: [dialogue]
+  martial_arts:
+    foundation:
+      - id: basic_internal
+        level: 28
+      - id: basic_fist
+        level: 22
+    internal:
+      - id: duan_zen_breath
+        level: 24
+    fist:
+      - id: cangshan_cleaving_palm
+        level: 18
+  prepared:
+    internal:
+      id: duan_zen_breath
+      level: 24
+    fist:
+      id: cangshan_cleaving_palm
+      level: 18
+  teach_bonus: 5
+  teaches:
+    duan_zen_breath: 24
+    basic_internal: 26
+  teach_requires:
+    flag: dali.chongsheng_vow
+    refusal: "塔下禅息，只传听懂钟声、放下盛衰执念的人。"
+  dialogue:
+    - "昔年段氏为王，来此寺者求国运；如今段氏护路，来此寺者求平安。其实钟声从未变过。"
+  respawn: 0
+  attr:
+    hp: 240
+    qi: 260
+    max_qi: 260
+    jing: 220
+    qi_regen: 5.0
+    innate:
+      strength: 20
+      agility: 18
+      vitality: 30
+
+- id: taihu_archivist
+  name: "守阁女医沈青笺"
+  desc: "水榭病案阁的掌卷女医，腰间悬着一柄软鞘细剑，案上按年份排满了太湖两岸的求医旧档。"
+  gender: female
+  actions: [dialogue]
+  martial_arts:
+    foundation:
+      - id: basic_sword
+        level: 22
+      - id: basic_lightness
+        level: 22
+      - id: basic_internal
+        level: 20
+    sword:
+      - id: taihu_willow_sword
+        level: 20
+    lightness:
+      - id: mist_step
+        level: 18
+  prepared:
+    sword:
+      id: taihu_willow_sword
+      level: 20
+    lightness:
+      id: mist_step
+      level: 18
+  teach_bonus: 4
+  teaches:
+    taihu_willow_sword: 22
+    mist_step: 20
+  teach_requires:
+    flag: taihu.inner_guest
+    refusal: "病案阁的剑与步法，只传替水榭解过湖岸积怨的人。"
+  dialogue:
+    - "水榭救人，也记账。哪一刀是水寨砍的，哪一箭是岸上庄子射的，病案里写得比官府的卷宗还清楚。"
+  respawn: 0
+  attr:
+    hp: 185
+    qi: 210
+    max_qi: 210
+    jing: 200
+    qi_regen: 4.0
+    innate:
+      strength: 15
+      agility: 27
+      vitality: 24
+
+- id: taihu_wounded_traveler
+  name: "蒙眼伤客"
+  desc: "外诊廊竹榻上歇息的北方行客，眼上缠着浸过药汁的白纱，右手腕有一道尚未拆线的剑伤。"
+  actions: [dialogue]
+  martial_arts:
+    foundation:
+      - id: basic_sword
+        level: 12
+  prepared: {}
+  teaches: {}
+  dialogue:
+    - "太湖的水气养人。若不是水榭不问来历便肯收留，我这条命早丢在汴河北岸的夜雨里了。"
+  respawn: 0
+  attr:
+    hp: 95
+    qi: 90
+    max_qi: 90
+    jing: 120
+    qi_regen: 2.0
+    innate:
+      strength: 14
+      agility: 15
+      vitality: 14
+
+- id: water_fort_second_boss
+  name: "水寨二当家翻江鲤"
+  desc: "太湖水寨的二当家，敞着短褂站在芦苇暗港的快船头，手里把玩着半枚烧焦的木筹。"
+  actions: [dialogue]
+  martial_arts:
+    foundation:
+      - id: basic_fist
+        level: 16
+      - id: basic_lightness
+        level: 15
+    fist:
+      - id: escort_short_fist
+        level: 12
+  prepared:
+    fist:
+      id: escort_short_fist
+      level: 12
+  teaches: {}
+  dialogue:
+    - "水榭的白发老头欠我们水寨一条命，岸上柳庄欠我们三船粮。这笔账没算清，谁也别想装好人。"
+  respawn: 45
+  attr:
+    hp: 165
+    qi: 130
+    max_qi: 130
+    jing: 130
+    qi_regen: 2.5
+    innate:
+      strength: 22
+      agility: 20
+      vitality: 20
+
+- id: estate_steward_lu
+  name: "柳庄管事陆执"
+  desc: "湖岸柳庄派驻在雾柳栈桥的总管，身穿绸衫，身后跟着庄丁，正等着水榭送去调配好的伤药。"
+  actions: [dialogue]
+  martial_arts:
+    foundation:
+      - id: basic_sword
+        level: 14
+      - id: basic_internal
+        level: 12
+  prepared: {}
+  teaches: {}
+  dialogue:
+    - "太湖水寨那群草寇也配和柳庄平分药方？水榭若是偏向湖匪，往后岸上的米粮药材可就难进湖了。"
+  respawn: 0
+  attr:
+    hp: 145
+    qi: 120
+    max_qi: 120
+    jing: 140
+    qi_regen: 2.5
+    innate:
+      strength: 16
+      agility: 17
+      vitality: 18

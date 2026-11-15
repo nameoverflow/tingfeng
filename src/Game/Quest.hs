@@ -89,6 +89,7 @@ data StoryAction
   | HideNpc CharId
   | ShowNpc CharId
   | GiveItem ItemId Int
+  | TakeItem ItemId Int
   | GiveMoney Int
   | LearnArt ArtId Int
   | StartBattle CharId
@@ -195,6 +196,7 @@ instance FromJSON StoryAction where
       "hide_npc" -> HideNpc <$> o .: "npc"
       "show_npc" -> ShowNpc <$> o .: "npc"
       "give_item" -> GiveItem <$> o .: "item" <*> (o .:? "amount" .!= 1)
+      "take_item" -> TakeItem <$> o .: "item" <*> (o .:? "amount" .!= 1)
       "give_money" -> GiveMoney <$> o .: "amount"
       "learn_art" -> LearnArt <$> o .: "art" <*> (o .:? "level" .!= 1)
       "start_battle" -> StartBattle <$> o .: "target"
@@ -223,6 +225,8 @@ instance ToJSON StoryAction where
       object ["type" .= ("show_npc" :: Text), "npc" .= npc]
     GiveItem itemId amount ->
       object ["type" .= ("give_item" :: Text), "item" .= itemId, "amount" .= amount]
+    TakeItem itemId amount ->
+      object ["type" .= ("take_item" :: Text), "item" .= itemId, "amount" .= amount]
     GiveMoney amount ->
       object ["type" .= ("give_money" :: Text), "amount" .= amount]
     LearnArt artId level ->

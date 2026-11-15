@@ -566,6 +566,8 @@
       conditions:
         - type: not_flag
           flag: dali.caravan_vouched
+        - type: not_flag
+          flag: dali.duan_trusted
       actions:
         - type: message
           speaker: "段氏护院总管"
@@ -600,6 +602,8 @@
       conditions:
         - type: not_flag
           flag: taihu.cart_guarded
+        - type: not_flag
+          flag: taihu.pavilion_guest
       actions:
         - type: message
           speaker: "太湖白发医者"

@@ -1,0 +1,349 @@
+- id: yamen_grappling_hand
+  name: "捕房锁拿手"
+  type: fist
+  tier: entry
+  desc: "开封府捕房世代相传的拿人手法。不求伤命，专拿关节与肩井，一旦扣住便叫人使不出第二招。"
+  foundation: basic_fist
+  requires:
+    - art: basic_fist
+      level: 5
+  max_level: 25
+  attack_moves:
+    - id: yamen_wrist_lock
+      name: "扣腕式"
+      desc: "顺着来拳一搭一拧，专拿手腕脉门。"
+      msg: "翻掌搭腕，顺势一拧"
+      unlock_level: 1
+      damage: 13
+      animation:
+        action: rig.fist.punch_a
+        tags: ["fist", "strike"]
+    - id: yamen_shoulder_press
+      name: "压肩卸力"
+      desc: "欺身切入内门，单掌重压对手肩井。"
+      msg: "欺入内门，一掌沉沉按向肩井"
+      unlock_level: 6
+      damage: 17
+      animation:
+        action: rig.fist.heavy_a
+        tags: ["fist", "heavy", "strike"]
+  active_skills:
+    - id: yamen_iron_shackle
+      name: "铁锁横江"
+      desc: "捕房缉盗绝招，扣腕撞肩一气呵成，令对手酸麻力竭。"
+      msg: "反扣手腕，沉肩猛撞对手胸胁"
+      unlock_level: 4
+      cd: 12.0
+      target: Single
+      cost: 40
+      ap_req: 65
+      req_status: []
+      damage: 52
+      animation:
+        action: rig.fist.heavy_a
+        tags: ["fist", "heavy", "strike"]
+      effect:
+        self: []
+        target:
+          - id: weakened
+            duration: 10.0
+            value: 1
+
+- id: bianshui_wave_step
+  name: "汴水踏浪步"
+  type: lightness
+  tier: entry
+  desc: "汴河漕帮船夫在跳板与急流摇晃中练出的步子。任凭船板起伏，脚底似钉在木上，腾挪时又能借一脚水势。"
+  foundation: basic_lightness
+  requires:
+    - art: basic_lightness
+      level: 5
+  max_level: 25
+  active_skills:
+    - id: bianshui_swaying_plank
+      name: "晃板稳身"
+      desc: "腰胯随来势一晃，借力卸力，稳住守势。"
+      msg: "腰胯微沉，步似踏在摇橹船头"
+      unlock_level: 3
+      cd: 14.0
+      target: Self
+      cost: 30
+      ap_req: 45
+      req_status: []
+      animation:
+        action: rig.fist.guard
+        tags: ["stance", "self"]
+      effect:
+        self:
+          - id: focused_guard
+            duration: 12.0
+            value: 1
+        target: []
+    - id: bianshui_kick_oars
+      name: "翻桨踢"
+      desc: "趁换步错身之际，一脚如船桨翻水般撩向对手小腹。"
+      msg: "侧步拧身，一脚如木桨翻水般踢出"
+      unlock_level: 8
+      cd: 14.0
+      target: Single
+      cost: 45
+      ap_req: 65
+      req_status: []
+      damage: 54
+      animation:
+        action: rig.fist.kick_a
+        tags: ["fist", "kick"]
+      effect:
+        self: []
+        target: []
+
+- id: luoyang_flowing_step
+  name: "洛水行云步"
+  type: lightness
+  tier: regional
+  desc: "洛阳步法廊剑客在湿滑洛水石阶上磨出来的换位步法。讲究进退有度、衣角不沾水渍，最宜配合快剑。"
+  foundation: basic_lightness
+  requires:
+    - art: basic_lightness
+      level: 12
+  max_level: 45
+  active_skills:
+    - id: luoshui_bridge_shadow
+      name: "桥影换步"
+      desc: "斜踏半步，抢入对手视线侧翼，稳住自身架势。"
+      msg: "斜踏青石，身形如桥下水影一晃"
+      unlock_level: 3
+      cd: 13.0
+      target: Self
+      cost: 38
+      ap_req: 45
+      req_status: []
+      animation:
+        action: rig.fist.guard
+        tags: ["stance", "self"]
+      effect:
+        self:
+          - id: focused_guard
+            duration: 14.0
+            value: 2
+        target: []
+    - id: luoshui_stepping_wave
+      name: "踏洛凌波"
+      desc: "连踏三步借势拔起，在半空踢出一记快腿。"
+      msg: "足尖连点石面，腾身飞起一脚"
+      unlock_level: 14
+      cd: 16.0
+      target: Single
+      cost: 58
+      ap_req: 70
+      req_status: []
+      damage: 72
+      animation:
+        action: rig.fist.leap_kick_a
+        tags: ["fist", "kick", "aerial"]
+      effect:
+        self: []
+        target: []
+
+- id: cangshan_cleaving_palm
+  name: "苍山裂石掌"
+  type: fist
+  tier: regional
+  desc: "大理段氏内院护卫在苍山采石场锤炼出的重掌。比外院的茶马护身拳更烈，掌力吐出时如山涧滾石，非有深厚拳脚与内息根基不可强练。"
+  foundation: basic_fist
+  requires:
+    - art: basic_fist
+      level: 12
+    - art: basic_internal
+      level: 10
+  max_level: 45
+  attack_moves:
+    - id: cangshan_split_stone
+      name: "开碑手"
+      desc: "掌缘如斧，沉腰劈向对手肩头。"
+      msg: "沉腰吐气，掌缘如斧般劈落"
+      unlock_level: 1
+      damage: 16
+      animation:
+        action: rig.fist.heavy_a
+        tags: ["fist", "heavy", "strike"]
+    - id: cangshan_ridge_strike
+      name: "断岭掌"
+      desc: "后脚蹬地，单掌直推中宫。"
+      msg: "后足发力，一掌平推中宫"
+      unlock_level: 10
+      damage: 20
+      animation:
+        action: rig.fist.punch_a
+        tags: ["fist", "strike"]
+  active_skills:
+    - id: cangshan_rockslide
+      name: "崩云裂石"
+      desc: "聚全身内劲于双掌，猛然推出，将对手震飞数步。"
+      msg: "双掌齐推，掌风如苍山崩石般轰出"
+      unlock_level: 5
+      cd: 15.0
+      target: Single
+      cost: 60
+      ap_req: 75
+      req_status: []
+      damage: 80
+      animation:
+        action: rig.fist.palm_knockback_a
+        tags: ["fist", "palm", "knockback"]
+      effect:
+        self: []
+        target:
+          - id: weakened
+            duration: 8.0
+            value: 1
+    - id: cangshan_nine_peaks
+      name: "苍山叠嶂"
+      desc: "一掌快似一掌，三掌连叠如山峰压顶。"
+      msg: "步步进逼，连拍三掌如重峰叠落"
+      unlock_level: 18
+      cd: 20.0
+      target: Single
+      cost: 85
+      ap_req: 95
+      req_status: []
+      damage: 124
+      animation:
+        action: rig.fist.combo_a
+        tags: ["fist", "combo", "heavy"]
+      effect:
+        self: []
+        target: []
+
+- id: duan_zen_breath
+  name: "枯荣禅息"
+  type: internal
+  tier: regional
+  desc: "崇圣寺三塔院老僧与段氏退隐旧臣共参的禅门内功。取苍山冬木枯荣之意，守则如古木迎霜，回气则如春泉暗涌。"
+  foundation: basic_internal
+  requires:
+    - art: basic_internal
+      level: 15
+  max_level: 50
+  active_skills:
+    - id: zen_still_bell
+      name: "暮钟定气"
+      desc: "气沉丹田，呼吸如古寺晚钟，守御周身要害。"
+      msg: "敛目垂眉，周身气息沉稳如古钟"
+      unlock_level: 3
+      cd: 16.0
+      target: Self
+      cost: 45
+      ap_req: 45
+      req_status: []
+      animation:
+        action: rig.fist.guard
+        tags: ["buff", "self"]
+      effect:
+        self:
+          - id: iron_body_buff
+            duration: 14.0
+            value: 4
+          - id: focused_guard
+            duration: 14.0
+            value: 1
+        target: []
+    - id: zen_wither_flourish
+      name: "一念枯荣"
+      desc: "由静转生，引丹田温养之气抚平内伤，同时稳住护体真气。"
+      msg: "缓吐一口浊气，内息自枯转荣，周流百骸"
+      unlock_level: 15
+      cd: 20.0
+      target: Self
+      cost: 75
+      ap_req: 60
+      req_status: []
+      heal: 85
+      animation:
+        action: rig.fist.healing_palm
+        tags: ["heal", "buff", "self"]
+      effect:
+        self:
+          - id: iron_body_buff
+            duration: 10.0
+            value: 3
+        target: []
+
+- id: taihu_willow_sword
+  name: "拂柳剑法"
+  type: sword
+  tier: regional
+  desc: "太湖水榭与湖畔书斋相传的轻灵剑法。剑意取自湖岸垂柳，看似随风退让，实则顺着对方力道拂向手腕脉门。"
+  foundation: basic_sword
+  requires:
+    - art: basic_sword
+      level: 10
+  max_level: 40
+  attack_moves:
+    - id: willow_skim_water
+      name: "柳梢掠水"
+      desc: "剑身轻摆，如柳梢点水般掠过外门。"
+      msg: "剑尖轻颤，如柳枝掠水般横削而出"
+      unlock_level: 1
+      damage: 13
+      animation:
+        action: rig.sword.cut_a
+        tags: ["sword", "slash"]
+    - id: willow_thread_rain
+      name: "细雨穿针"
+      desc: "借水雾遮掩，剑尖无声递入空隙。"
+      msg: "手腕微送，剑尖细密直刺"
+      unlock_level: 8
+      damage: 17
+      animation:
+        action: rig.sword.thrust_a
+        tags: ["sword", "stab"]
+    - id: willow_spring_lift
+      name: "春风挑絮"
+      desc: "卸开来力后，剑锋顺势自下挑起。"
+      msg: "顺势借力，剑锋轻灵向上挑起"
+      unlock_level: 16
+      damage: 20
+      animation:
+        action: rig.sword.rising_cut_a
+        tags: ["sword", "uppercut"]
+  active_skills:
+    - id: willow_mist_parry
+      name: "烟柳回风"
+      desc: "剑走圆弧，在身前布下一圈柔韧守势。"
+      msg: "长剑回环，剑意如烟柳垂岸护住周身"
+      unlock_level: 4
+      cd: 14.0
+      target: Self
+      cost: 35
+      ap_req: 45
+      req_status: []
+      animation:
+        action: rig.sword.guard
+        tags: ["stance", "self"]
+      effect:
+        self:
+          - id: focused_guard
+            duration: 14.0
+            value: 2
+        target: []
+    - id: willow_ripple_slash
+      name: "听橹截剑"
+      desc: "听风辨位，一道柔中带韧的剑气直截对手发力处。"
+      msg: "侧耳听风，一剑荡开水波般的寒光"
+      unlock_level: 14
+      cd: 14.0
+      target: Single
+      cost: 55
+      ap_req: 70
+      req_status: []
+      damage: 68
+      animation:
+        action: rig.sword.qi_wave_a
+        tags: ["sword", "qi", "ranged"]
+      effect:
+        self: []
+        target:
+          - id: weakened
+            duration: 9.0
+            value: 1

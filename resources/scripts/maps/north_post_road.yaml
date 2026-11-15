@@ -80,6 +80,11 @@ rooms:
     id: north_road_abandoned_shrine
     name: "废军祠"
     desc: "废祠门歪着，门后有新烧过的灰，说明近来有人在此落脚。"
+    desc_variants:
+      - flag: weiyuan.shrine_echo_found
+        desc: "废祠神龛后的暗格已经空了，砖缝上那道细墨线与半截断剑鞘痕清晰可见。"
+    char:
+      - ink_mark_stalker
     exits:
       south: [0, 3]
       north: [0, 5]
@@ -87,6 +92,37 @@ rooms:
   - position: [0, 5]
     id: north_road_levee
     name: "黄河南堤"
-    desc: "大堤横在北面，堤下黄水翻着泥沙。渡口的船要到天明才开，守渡军士只验公牒，不许无故过河。"
+    desc: "大堤横在北面，堤下黄水翻着泥沙。西侧是芦苇密布的浅滩，东侧立着座旧烽火台墩，往北下坡便是南渡津口。"
     exits:
       south: [0, 4]
+      west: [-1, 5]
+      east: [1, 5]
+      north: [0, 6]
+
+  - position: [-1, 5]
+    id: north_road_reed_shallows
+    name: "南堤芦苇滩"
+    kind: road
+    desc: "芦苇比人还高，泥滩上留着夜船抢滩拖出的深槽，几只无名货箱半掩在苇丛里。"
+    char:
+      - salt_gang_deputy
+    exits:
+      east: [0, 5]
+
+  - position: [1, 5]
+    id: north_road_beacon_mound
+    name: "旧烽火台墩"
+    kind: landmark
+    desc: "夯土台墩早年用来瞭望河防，如今只剩半截残垣。站在墩上，北郊递道与河滩的动静尽收眼底。"
+    exits:
+      west: [0, 5]
+
+  - position: [0, 6]
+    id: north_road_ferry_landing
+    name: "黄河南渡津口"
+    kind: transit
+    desc: "津口拴船的铁环被河风吹得叮当直响。渡船要验过开封府的公牒才放行，夜里常有人在近处窥探。"
+    char:
+      - levee_ferry_guard
+    exits:
+      south: [0, 5]

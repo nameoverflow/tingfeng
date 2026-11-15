@@ -1,0 +1,217 @@
+- id: weiyuan_city_clues
+  name: "旧物暗记"
+  objectives: []
+  reward:
+    money: 0
+    items: []
+  events:
+    - id: luoyang_broker_spots_manual
+      trigger:
+        type: talk
+        npc: luoyang_blade_broker
+      conditions:
+        - type: flag
+          flag: luoyang.name_card
+        - type: has_item
+          item: weiyuan_sword_manual
+        - type: not_flag
+          flag: weiyuan.clue_luoyang
+      actions:
+        - type: set_flag
+          flag: weiyuan.clue_luoyang
+        - type: set_flag
+          flag: weiyuan.saw_ink_mark
+        - type: message
+          speaker: "旧剑牙人冯三寸"
+          text: "客官包袱里露出来的这半册手抄剑谱……封皮折角上怎么有一道暗墨线？这是北路威远镖局私记暗桩的墨记。"
+        - type: message
+          speaker: "旧剑牙人冯三寸"
+          text: "十日前有个穿灰衣、背着布包断剑的年轻后生也来过我这旧剑市，拿一枚银簪换了干粮。他临走前只问了一句话：开封北郊递道上的废军祠，神龛后头的石格还在不在。"
+
+    - id: dali_clerk_reads_route_note
+      trigger:
+        type: talk
+        npc: dali_contract_clerk
+      conditions:
+        - type: flag
+          flag: dali.duan_trusted
+        - type: has_item
+          item: soaked_route_note
+        - type: not_flag
+          flag: weiyuan.clue_dali
+      actions:
+        - type: set_flag
+          flag: weiyuan.clue_dali
+        - type: set_flag
+          flag: weiyuan.saw_ink_mark
+        - type: message
+          speaker: "管契先生段文叔"
+          text: "你身上这张水浸路单，边缘有一道浸透桐油的暗墨线。外行人以为是污迹，老夫看了一辈子各省路契，认得这是黄河渡口南岸私设的‘寄匣记’。"
+        - type: message
+          speaker: "管契先生段文叔"
+          text: "墨线尾端折向正北偏西——那是开封北门外、北郊递道上的废军祠。当年威远老镖头走紧急暗镖，若有不能带进城的东西，都会先藏在废军祠神龛后。"
+
+    - id: taihu_traveler_recalls_youth
+      trigger:
+        type: talk
+        npc: taihu_wounded_traveler
+      conditions:
+        - type: flag
+          flag: taihu.pavilion_guest
+        - type: not_flag
+          flag: weiyuan.clue_taihu
+      actions:
+        - type: set_flag
+          flag: weiyuan.clue_taihu
+        - type: set_flag
+          flag: weiyuan.saw_ink_mark
+        - type: message
+          speaker: "蒙眼伤客"
+          text: "听客官口音是从开封来的？半月前我在汴河北岸夜行，撞见几个袖口绣着暗墨线的黑衣剑客正在搜捕一个灰衣少年。"
+        - type: message
+          speaker: "蒙眼伤客"
+          text: "我被流剑所伤，是那灰衣少年替我引开追兵、送我上了太湖药船。他临别时说，若有人带着威远分局的路单和手抄剑谱追查真相，只需去开封北郊递道的废军祠一看便知。"
+
+- id: weiyuan_first_echo
+  name: "废祠夜影"
+  objectives:
+    - stage: ambush
+      text: "在北郊递道废军祠击退窥探神龛暗格的墨线夜行人。"
+    - stage: choose_report
+      text: "带着废军祠的暗记与墨线袖口回开封，向威远总局铁旗罗万川或开封府捕房顾捕头吐露实情。"
+    - stage: completed
+      text: "废军祠的暗记已查明，威远少主留下的北渡线索浮出水面。"
+  reward:
+    money: 0
+    combat_exp: 60
+    potential: 40
+    items: []
+  events:
+    - id: envoy_points_to_abandoned_shrine
+      trigger:
+        type: talk
+        npc: weiyuan_envoy
+      conditions:
+        - type: flag
+          flag: weiyuan.met_envoy
+        - type: flag
+          flag: weiyuan.saw_ink_mark
+        - type: quest_not_started
+          quest: weiyuan_first_echo
+      actions:
+        - type: message
+          speaker: "铁旗罗万川"
+          text: "你在外头听到了‘墨线’和北郊递道废军祠的风声？难怪我在南渡查了这么久都摸不到影。你快去北郊递道的废军祠看看神龛后头留了什么！"
+
+    - id: discover_shrine_niche_and_ambush
+      trigger:
+        type: enter_room
+        map: north_post_road
+        position: [0, 4]
+      conditions:
+        - type: flag
+          flag: weiyuan.saw_ink_mark
+        - type: quest_not_started
+          quest: weiyuan_first_echo
+      actions:
+        - type: set_flag
+          flag: weiyuan.shrine_echo_found
+        - type: set_stage
+          quest: weiyuan_first_echo
+          stage: ambush
+        - type: show_npc
+          npc: ink_mark_stalker
+        - type: message
+          speaker: "旁白"
+          text: "你依着旧物暗记摸向废军祠神龛背后。松动的青砖后果然有一方暗格，里头的夹袋已被取走，只留下一道半寸深的剑鞘刻痕：“账涉北渡与内鬼，勿信单方。吾已北渡。”"
+        - type: message
+          speaker: "旁白"
+          text: "字迹与威远内院井台上的如出一辙。你刚收回手，祠堂横梁上忽然掠下一道黑影，袖口那道暗墨线在冷光下分外刺眼！"
+
+    - id: confront_ink_mark_stalker
+      trigger:
+        type: talk
+        npc: ink_mark_stalker
+      conditions:
+        - type: quest_stage
+          quest: weiyuan_first_echo
+          stage: ambush
+      actions:
+        - type: message
+          speaker: "墨线夜行人"
+          text: "我们守株待兔等那姓骆的小子回来，倒等来了替他收底单的人！你既认得墨线，今夜便留在废祠里作伴吧！"
+        - type: start_battle
+          target: ink_mark_stalker
+
+    - id: defeat_ink_mark_stalker
+      trigger:
+        type: kill
+        npc: ink_mark_stalker
+      conditions:
+        - type: quest_stage
+          quest: weiyuan_first_echo
+          stage: ambush
+      actions:
+        - type: hide_npc
+          npc: ink_mark_stalker
+        - type: show_npc
+          npc: weiyuan_envoy
+        - type: set_stage
+          quest: weiyuan_first_echo
+          stage: choose_report
+        - type: message
+          speaker: "旁白"
+          text: "夜行人剑势被破，右袖被削下一截绣着暗墨线的黑绸，撞破祠窗逃向黄河南堤方向。他方才使出的剑招里，竟也夹杂着两式威远剑法的变招。"
+        - type: message
+          speaker: "旁白"
+          text: "你可以将废军祠所见回禀威远镖局门口的铁旗罗万川，也可报与开封府捕房的顾捕头。"
+
+    - id: report_shrine_echo_to_envoy
+      trigger:
+        type: talk
+        npc: weiyuan_envoy
+      conditions:
+        - type: quest_stage
+          quest: weiyuan_first_echo
+          stage: choose_report
+      actions:
+        - type: give_money
+          amount: 80
+        - type: set_flag
+          flag: weiyuan.echo_reported_envoy
+        - type: set_flag
+          flag: weiyuan.echo_resolved
+        - type: complete_quest
+          quest: weiyuan_first_echo
+        - type: message
+          speaker: "铁旗罗万川"
+          text: "袖口绣暗墨线，剑里还夹着威远的变招……果然是早年被逐出北路镖行的‘墨线客’，难怪那晚能摸清南渡分局换岗的时辰！"
+        - type: message
+          speaker: "铁旗罗万川"
+          text: "少主既已带着内册过了黄河，便算跳出了开封这口泥潭。这八十文你收好，你手里的《威远剑法》若有不解之处，从今日起我亲自指点你后半路剑招。"
+
+    - id: report_shrine_echo_to_constable
+      trigger:
+        type: talk
+        npc: kaifeng_constable
+      conditions:
+        - type: quest_stage
+          quest: weiyuan_first_echo
+          stage: choose_report
+      actions:
+        - type: give_money
+          amount: 80
+        - type: set_flag
+          flag: weiyuan.echo_reported_constable
+        - type: set_flag
+          flag: weiyuan.echo_reported_envoy
+        - type: set_flag
+          flag: weiyuan.echo_resolved
+        - type: complete_quest
+          quest: weiyuan_first_echo
+        - type: message
+          speaker: "顾捕头"
+          text: "墨线袖口、废军祠暗格、还有北郊递道被截的公文……这两桩案子果然是同一拨人干的。"
+        - type: message
+          speaker: "顾捕头"
+          text: "这八十文是开封府给你的线报银。威远总局的罗万川那边我也会派人知会一声，让他知道是你查实了少主北渡的下落，他欠你一份传剑的人情。"

@@ -247,6 +247,7 @@
       level: 9
   teaches:
     basic_fist: 8
+    yamen_grappling_hand: 18
   dialogue:
     - "北郊递道最近不安生。你若真想见江湖，先从能回来的一趟开始。"
   respawn: 0
@@ -498,7 +499,14 @@
     sword:
       id: luoyang_sword
       level: 20
-  teaches: {}
+  teach_bonus: 5
+  teaches:
+    luoyang_sword: 25
+    luoyang_flowing_step: 20
+    basic_sword: 24
+  teach_requires:
+    flag: luoyang.wensheng_trusted
+    refusal: "残谱室不教顺手讨招的人。等你看清洛阳城里哪页谱是真、哪页谱是饵，我们再谈剑。"
   dialogue:
     - "完整的契书多半有人精心做过，反倒是残页肯留下不该留下的字。"
   respawn: 0
@@ -559,7 +567,14 @@
     fist:
       id: dali_guard_fist
       level: 18
-  teaches: {}
+  teach_bonus: 5
+  teaches:
+    cangshan_cleaving_palm: 22
+    dali_guard_fist: 24
+    basic_fist: 24
+  teach_requires:
+    flag: dali.inner_trusted
+    refusal: "护院堂的硬掌只传替段家担过苍山险事的人。"
   dialogue:
     - "段家不怕你拳慢，怕你接了事又退。拳可以练，肩膀也可以练。"
   respawn: 0

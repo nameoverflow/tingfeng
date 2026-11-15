@@ -15,6 +15,13 @@
     fist:
       id: nameless_trial_fist
       level: 8
+  teach_bonus: 3
+  teaches:
+    bianshui_wave_step: 18
+    basic_lightness: 12
+  teach_requires:
+    flag: jianghu.caoban_friend
+    refusal: "漕帮的步子是踩在跳板和浪头上练出来的，不教外人。先把南渡缆桩的事帮我料理干净。"
   dialogue:
     - "汴河上的船认漕帮的旗，不认官府的牌。码头的事，码头自己了。"
   respawn: 0
@@ -77,6 +84,13 @@
     sword:
       id: weiyuan_sword
       level: 18
+  teach_bonus: 4
+  teaches:
+    weiyuan_sword: 20
+    basic_sword: 20
+  teach_requires:
+    flag: weiyuan.echo_reported_envoy
+    refusal: "你手里那点威远旧剑的路数还散得很。先把威远失散在外的旧物下落查实，我再指点你后半路剑法。"
   dialogue:
     - "开封府的案子由官府查，威远的仇由威远报。"
   respawn: 0

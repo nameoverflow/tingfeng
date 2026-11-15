@@ -38,17 +38,50 @@ rooms:
     id: dali_cangshan_road
     name: "苍山道口"
     kind: road
-    desc: "石路向苍山脚下抬升，药农和樵夫在道口换肩歇脚。更深山路尚未开放。"
+    desc: "石路向苍山脚下抬升，药农和樵夫在道口换肩歇脚。西面山涧边有条猎人踩出的窄路。"
     exits:
       east: [0, 2]
+      west: [-2, 2]
+
+  - position: [-2, 2]
+    id: dali_cangshan_stream
+    name: "苍山冷泉涧"
+    kind: road
+    desc: "融雪汇成的冷泉从苍山石壁间冲刷而下，水声如雷。北面陡坡通往一处荒废的采石场。"
+    char:
+      - cangshan_tracker
+    exits:
+      east: [-1, 2]
+      north: [-2, 3]
+
+  - position: [-2, 3]
+    id: dali_quarry_cliff
+    name: "苍山废石场"
+    kind: landmark
+    desc: "半山腰的废石场堆满青白条石，地势险峻，俯瞰着茶马入城的必经之路。"
+    char:
+      - cangshan_outlaw_leader
+    exits:
+      south: [-2, 2]
 
   - position: [1, 2]
     id: dali_erhai_lane
     name: "洱海巷口"
     kind: street
-    desc: "湿润湖风从巷中吹来，渔网和小舟桨靠墙晾着。巷深处尚未开放。"
+    desc: "湿润湖风从巷中吹来，渔网和小舟桨靠墙晾着。向东走出巷口便是洱海旧渡。"
     exits:
       west: [0, 2]
+      east: [2, 2]
+
+  - position: [2, 2]
+    id: dali_erhai_pier
+    name: "洱海旧渡口"
+    kind: landmark
+    desc: "几根老木桩伸进澄澈的洱海水中，风浪拍打着石岸，远处可见苍山十九峰的倒影。"
+    char:
+      - erhai_old_boatman
+    exits:
+      west: [1, 2]
 
   - position: [0, 3]
     id: dali_duan_outer_yard
@@ -132,6 +165,8 @@ rooms:
     name: "路契房"
     kind: building
     desc: "桌上压着许多茶马路契。路契房与外堂相连，不再借灶房作通道。"
+    char:
+      - dali_contract_clerk
     exits:
       west: [0, 5]
 
@@ -148,6 +183,21 @@ rooms:
     id: dali_chongsheng_gate
     name: "崇圣寺山门"
     kind: landmark
-    desc: "山门与府城隔着一段山道。没有手书的人，只能在阶下听见晚钟。"
+    desc: "山门与府城隔着一段山道。阶下古柏苍翠，往北入寺便是三塔院。"
+    desc_variants:
+      - flag: dali.chongsheng_vow
+        desc: "崇圣寺山门半开，守塔老僧向你微微颔首，三塔下的晚钟声显得格外澄明。"
+    char:
+      - chongsheng_monk
     exits:
       south: [0, 6]
+      north: [0, 8]
+
+  - position: [0, 8]
+    id: dali_pagoda_courtyard
+    name: "崇圣寺三塔院"
+    kind: landmark
+    rest: true
+    desc: "三座古塔在苍山云影下静立百年。院中石阶洁净，檐角铜铃随山风轻响，令人心神俱静。"
+    exits:
+      south: [0, 7]

@@ -37,6 +37,8 @@ rooms:
     name: "旧剑市"
     kind: street
     desc: "木剑、旧剑和剑匣沿街排开，每柄剑柄上都有淡淡雨痕。街尽头不通别处，只能折回南市口。"
+    char:
+      - luoyang_blade_broker
     exits:
       east: [0, 2]
 
@@ -65,6 +67,8 @@ rooms:
     name: "洛水步法廊"
     kind: street
     desc: "廊道沿洛水东岸铺开，洛阳剑客常在这里练换位。廊尽头临水，只能折返天津桥。"
+    char:
+      - luoyang_footwork_mentor
     exits:
       west: [1, 2]
 
@@ -82,6 +86,12 @@ rooms:
     name: "牡丹会场"
     kind: landmark
     desc: "会场是独立院落。西厢供静修，东厢供豪客住宿，正北才是聚义旧堂。"
+    desc_variants:
+      - flag: luoyang.peony_duel_won
+        desc: "牡丹台前的名录木牌上已经添了你的名字，来往剑客经过台下时都会多看你一眼。"
+    char:
+      - peony_host_assistant
+      - peony_challenger_song
     exits:
       south: [0, 3]
       north: [0, 5]
@@ -132,9 +142,20 @@ rooms:
     id: luoyang_cold_pool
     name: "洛水冷泉"
     kind: landmark
-    desc: "泉眼在旧堂东院，剑客常来洗剑醒酒。这里不再借客舍作通道。"
+    desc: "泉眼在旧堂东院，剑客常来洗剑醒酒。东边竹篱外通向洛水边的旧堰亭。"
     exits:
       west: [0, 5]
+      east: [2, 5]
+
+  - position: [2, 5]
+    id: luoyang_weir_pavilion
+    name: "洛水旧堰亭"
+    kind: landmark
+    desc: "旧石堰拦住一湾洛水，亭中石桌上留着剑客比剑和私下买卖旧谱的茶渍。"
+    char:
+      - fake_manual_swordsman
+    exits:
+      west: [1, 5]
 
   - position: [0, 6]
     id: luoyang_temple_road
@@ -149,6 +170,32 @@ rooms:
     id: luoyang_sealed_terrace
     name: "白马寺外山门"
     kind: landmark
-    desc: "山门与洛阳城隔着一段东郊官道。知客僧闭门不见外客，只让香客把名帖压在石灯下。"
+    desc: "山门与洛阳城隔着一段东郊官道。西侧是古碑亭，东侧设有施茶的山门茶寮。"
+    desc_variants:
+      - flag: luoyang.baima_rubbing_taken
+        desc: "白马寺山门外的钟声悠长，知客僧立在阶前，古碑亭方向的落叶已被扫得干干净净。"
+    char:
+      - baima_guest_monk
     exits:
       south: [0, 6]
+      west: [-1, 7]
+      east: [1, 7]
+
+  - position: [-1, 7]
+    id: luoyang_baima_bell_pavilion
+    name: "白马寺古碑亭"
+    kind: landmark
+    desc: "亭中立着数通前朝石碑，碑阴刻着历年修桥与施茶的旧记，字口深沉端严。"
+    char:
+      - baima_stone_sweeper
+    exits:
+      east: [0, 7]
+
+  - position: [1, 7]
+    id: luoyang_baima_tea_shed
+    name: "山门茶寮"
+    kind: building
+    rest: true
+    desc: "竹棚下支着两口粗陶茶釜，苦茶清冽。城里争名夺席的剑客到了此处，也多半把剑横在膝下静坐片刻。"
+    exits:
+      west: [0, 7]

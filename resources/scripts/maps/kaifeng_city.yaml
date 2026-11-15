@@ -164,6 +164,11 @@ rooms:
     name: "西市公告墙"
     kind: street
     desc: "巷口墙上贴着寻人、悬赏、失物和外地路引。墙北是居民取水的老井，南面开着一家当铺。"
+    desc_variants:
+      - flag: weiyuan.echo_resolved
+        desc: "巷口墙上的威远命案旧榜已被风雨淋去大半，旁边新压了一张北郊河防严查夜渡的告示。"
+      - flag: jianghu.canal_shadow_done
+        desc: "巷口墙上贴着寻人、悬赏和外地路引，角落里多了一道严禁夹带私印入仓的府衙条陈。"
     exits:
       east: [-2, 0]
       north: [-3, 1]
@@ -182,6 +187,8 @@ rooms:
     name: "西市当铺"
     kind: building
     desc: "门匾上写着一个很大的当字。掌柜看人的眼神比秤砣还沉。"
+    char:
+      - kaifeng_pawnbroker
     exits:
       north: [-3, 0]
 
@@ -200,6 +207,8 @@ rooms:
     name: "开封钱庄"
     kind: building
     desc: "钱庄独门朝向甜水巷，柜台后的铁算盘不停作响。"
+    char:
+      - kaifeng_banker
     exits:
       north: [-2, 0]
 
@@ -288,6 +297,11 @@ rooms:
     name: "官仓"
     kind: building
     desc: "官仓由府衙东门进入，仓门紧闭，门缝里透出谷米、潮木和封泥文书的气味。"
+    desc_variants:
+      - flag: jianghu.canal_inspected
+        desc: "官仓外堆着刚查验过的北来粮袋，周守仓正拿着新换的封签逐袋核对。"
+    char:
+      - warehouse_keeper
     exits:
       west: [1, 1]
 
@@ -336,6 +350,8 @@ rooms:
     name: "北街后巷"
     kind: street
     desc: "后巷夹在武庙与北街之间，门口留着衙役查访记号。它通往街市，不通城墙望台。"
+    char:
+      - alley_beggar_chen
     exits:
       east: [0, 3]
       south: [-1, 2]

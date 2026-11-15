@@ -1,0 +1,274 @@
+- id: luoyang_broken_manual
+  name: "洛阳残谱"
+  objectives:
+    - stage: investigate_weir
+      text: "到聚义旧堂东院外的洛水旧堰亭，查问私售伪造《洛阳剑法全谱》的贺孤鸿。"
+    - stage: baima_stele
+      text: "沿白马寺官道出城，去白马寺外山门西侧的古碑亭向扫碑老人求证碑阴剑势。"
+    - stage: report_wensheng
+      text: "带着伪造剑谱与古碑剑势拓片，回残谱室向闻声先生复命。"
+    - stage: completed
+      text: "洛阳伪谱之乱已清，闻声先生允你在残谱室修习洛阳剑法与洛水行云步。"
+  reward:
+    money: 0
+    combat_exp: 50
+    potential: 35
+    items: []
+  events:
+    - id: wensheng_starts_broken_manual
+      trigger:
+        type: talk
+        npc: luoyang_teacher
+      conditions:
+        - type: flag
+          flag: luoyang.name_card
+        - type: quest_not_started
+          quest: luoyang_broken_manual
+      actions:
+        - type: set_stage
+          quest: luoyang_broken_manual
+          stage: investigate_weir
+        - type: show_npc
+          npc: fake_manual_swordsman
+        - type: message
+          speaker: "闻声先生"
+          text: "洛阳城里人人都想拿一册完整的剑谱去酒桌上压人，却不知洛阳剑法传世本就只有七分在纸上、三分在脚下。"
+        - type: message
+          speaker: "闻声先生"
+          text: "近来有个叫贺孤鸿的剑客在洛水冷泉东边的旧堰亭兜售所谓《洛阳剑法全谱》，已有两个外乡少年照着强练走岔了气。你去旧堰亭会会他，看他手里的谱究竟是从哪拼凑出来的。"
+
+    - id: wensheng_waits_for_weir
+      trigger:
+        type: talk
+        npc: luoyang_teacher
+      conditions:
+        - type: quest_stage
+          quest: luoyang_broken_manual
+          stage: investigate_weir
+      actions:
+        - type: message
+          speaker: "闻声先生"
+          text: "旧堰亭就在洛水冷泉再往东。做假谱的人心虚，手底下却往往藏着毒招，留神他的换步。"
+
+    - id: confront_fake_manual_swordsman
+      trigger:
+        type: talk
+        npc: fake_manual_swordsman
+      conditions:
+        - type: quest_stage
+          quest: luoyang_broken_manual
+          stage: investigate_weir
+      actions:
+        - type: message
+          speaker: "卖谱剑客贺孤鸿"
+          text: "闻声先生派你来的？残谱室自己捂着后半部步法不肯示人，倒来管我卖谱的生意！想拿我手里的册子，先看看你接不接得住洛阳剑！"
+        - type: start_battle
+          target: fake_manual_swordsman
+
+    - id: defeat_fake_manual_swordsman
+      trigger:
+        type: kill
+        npc: fake_manual_swordsman
+      conditions:
+        - type: quest_stage
+          quest: luoyang_broken_manual
+          stage: investigate_weir
+      actions:
+        - type: hide_npc
+          npc: fake_manual_swordsman
+        - type: give_item
+          item: luoyang_fake_manual
+          amount: 1
+        - type: set_stage
+          quest: luoyang_broken_manual
+          stage: baima_stele
+        - type: message
+          speaker: "旁白"
+          text: "贺孤鸿步法一乱，被你逼到石堰栏边，怀里那册做旧的《洛阳剑谱》掉在石桌上。"
+        - type: message
+          speaker: "卖谱剑客贺孤鸿"
+          text: "罢了！前半册是我从天津桥酒肆旧壁上摹来的，后半册转折的步法……听说当年创剑的前辈刻在城东白马寺古碑亭的修桥碑背面，我进不去碑亭，才自己胡乱补了三招。"
+
+    - id: baima_monk_directs_to_stele
+      trigger:
+        type: talk
+        npc: baima_guest_monk
+      conditions:
+        - type: quest_stage
+          quest: luoyang_broken_manual
+          stage: baima_stele
+      actions:
+        - type: message
+          speaker: "知客僧明心"
+          text: "施主是为修桥碑来的？西侧古碑亭的扫碑老人守了那几通石碑四十年，心诚之人去问，他自会指点。"
+
+    - id: stone_sweeper_gives_rubbing
+      trigger:
+        type: talk
+        npc: baima_stone_sweeper
+      conditions:
+        - type: quest_stage
+          quest: luoyang_broken_manual
+          stage: baima_stele
+      actions:
+        - type: give_item
+          item: luoyang_stele_rubbing
+          amount: 1
+        - type: set_flag
+          flag: luoyang.baima_rubbing_taken
+        - type: set_stage
+          quest: luoyang_broken_manual
+          stage: report_wensheng
+        - type: message
+          speaker: "扫碑老人"
+          text: "当年那位剑客捐资修天津桥，把平生最得意的一记‘回洛转步’刻在了修桥记的笔画折锋里。争名的人只看正面功德名录，自然看不见碑阴。"
+        - type: message
+          speaker: "扫碑老人"
+          text: "这张旧拓片你带回残谱室交给闻声。告诉他，碑上的字还在，让他放心。"
+
+    - id: wensheng_completes_broken_manual
+      trigger:
+        type: talk
+        npc: luoyang_teacher
+      conditions:
+        - type: quest_stage
+          quest: luoyang_broken_manual
+          stage: report_wensheng
+        - type: has_item
+          item: luoyang_fake_manual
+        - type: has_item
+          item: luoyang_stele_rubbing
+      actions:
+        - type: take_item
+          item: luoyang_fake_manual
+          amount: 1
+        - type: take_item
+          item: luoyang_stele_rubbing
+          amount: 1
+        - type: give_item
+          item: luoyang_sword_notes
+          amount: 1
+        - type: give_money
+          amount: 50
+        - type: set_flag
+          flag: luoyang.wensheng_trusted
+        - type: complete_quest
+          quest: luoyang_broken_manual
+        - type: message
+          speaker: "闻声先生"
+          text: "一面是凑出来的满篇假话，一面是藏在修桥碑阴的半页真意。你能耐着性子跑到白马寺求证，比城里许多挂名剑客强得多。"
+        - type: message
+          speaker: "闻声先生"
+          text: "这册《洛水剑意手札》是我早年批注的读书本，先拿去参详。往后想精修《洛阳剑法》或《洛水行云步》，随时来残谱室找我。"
+
+- id: luoyang_peony_duel
+  name: "牡丹试剑"
+  objectives:
+    - stage: witness_step
+      text: "去洛水东岸的洛水步法廊请步轻尘考校你的步法眼力。"
+    - stage: challenger_ready
+      text: "回牡丹会场与嵩阳客宋秋河登台试剑。"
+    - stage: report_peony
+      text: "向牡丹会执事裴文举确认试剑席次。"
+    - stage: completed
+      text: "你的名字已挂上牡丹台名录，在洛阳剑客之间有了正式席位。"
+  reward:
+    money: 0
+    combat_exp: 45
+    potential: 30
+    items: []
+  events:
+    - id: peony_assistant_starts_duel
+      trigger:
+        type: talk
+        npc: peony_host_assistant
+      conditions:
+        - type: flag
+          flag: luoyang.name_card
+        - type: quest_not_started
+          quest: luoyang_peony_duel
+      actions:
+        - type: set_stage
+          quest: luoyang_peony_duel
+          stage: witness_step
+        - type: message
+          speaker: "牡丹会执事裴文举"
+          text: "驿路旧帖上的名字，只够让你进牡丹会场喝茶。真想在牡丹台名录上挂牌，须有一位廊中剑师点头，再在台下胜过一位同道。"
+        - type: message
+          speaker: "牡丹会执事裴文举"
+          text: "你先过天津桥去洛水步法廊找步轻尘先生，让他看看你的步子稳不稳。"
+
+    - id: footwork_mentor_approves_step
+      trigger:
+        type: talk
+        npc: luoyang_footwork_mentor
+      conditions:
+        - type: quest_stage
+          quest: luoyang_peony_duel
+          stage: witness_step
+      actions:
+        - type: set_stage
+          quest: luoyang_peony_duel
+          stage: challenger_ready
+        - type: show_npc
+          npc: peony_challenger_song
+        - type: message
+          speaker: "步轻尘"
+          text: "我从你进廊起便在看你的落脚。过洛水湿阶而不乱呼吸，说明你不是只靠手快的人。"
+        - type: message
+          speaker: "步轻尘"
+          text: "回牡丹会场吧。嵩阳来的宋秋河正在台下等人试剑，他的剑路正、变步快，正好试你的成色。"
+
+    - id: confront_peony_challenger
+      trigger:
+        type: talk
+        npc: peony_challenger_song
+      conditions:
+        - type: quest_stage
+          quest: luoyang_peony_duel
+          stage: challenger_ready
+      actions:
+        - type: message
+          speaker: "嵩阳客宋秋河"
+          text: "步先生既替你作保，宋某便不客气了。牡丹台前试剑，不拼性命，只看谁先破开对方三步剑位。请！"
+        - type: start_battle
+          target: peony_challenger_song
+
+    - id: defeat_peony_challenger
+      trigger:
+        type: kill
+        npc: peony_challenger_song
+      conditions:
+        - type: quest_stage
+          quest: luoyang_peony_duel
+          stage: challenger_ready
+      actions:
+        - type: hide_npc
+          npc: peony_challenger_song
+        - type: set_stage
+          quest: luoyang_peony_duel
+          stage: report_peony
+        - type: message
+          speaker: "旁白"
+          text: "宋秋河收剑后退半步，抱拳一礼，在场边观战的洛阳剑客纷纷颔首。"
+
+    - id: peony_assistant_completes_duel
+      trigger:
+        type: talk
+        npc: peony_host_assistant
+      conditions:
+        - type: quest_stage
+          quest: luoyang_peony_duel
+          stage: report_peony
+      actions:
+        - type: give_money
+          amount: 50
+        - type: set_flag
+          flag: luoyang.peony_duel_won
+        - type: set_flag
+          flag: jianghu.name.mudan_ke
+        - type: complete_quest
+          quest: luoyang_peony_duel
+        - type: message
+          speaker: "牡丹会执事裴文举"
+          text: "干净利落。我已在牡丹台名录上添了你的名字，这五十文是会场备下的彩头。往后在洛阳，只要提一声‘牡丹台试过剑的’，酒楼与剑铺都高看一眼。"

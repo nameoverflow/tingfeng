@@ -26,6 +26,15 @@ attack_moves:
     animation:
       action: rig.sword.thrust_a
       tags: ["sword", "stab"]
+  - id: weiyuan_return_cut
+    name: "回马横剑"
+    desc: "借护车回身之势，横剑削向追敌肋下。"
+    msg: "回身收步，剑锋平抹追敌肋下"
+    unlock_level: 10
+    damage: 19
+    animation:
+      action: rig.sword.cut_a
+      tags: ["sword", "slash"]
 active_skills:
   - id: steady_cut
     name: "定步斩"
@@ -83,3 +92,24 @@ active_skills:
     effect:
       self: []
       target: []
+
+  - id: weiyuan_banner_guard
+    name: "铁旗封路"
+    desc: "威远总镖头压箱的护旗剑式，连环三剑封死来路，震得对手臂腕发麻。"
+    msg: "剑势如大旗横卷，连封三路"
+    unlock_level: 12
+    cd: 18.0
+    target: Single
+    cost: 65
+    ap_req: 80
+    req_status: []
+    damage: 95
+    animation:
+      action: rig.sword.sword_net_a
+      tags: ["sword", "combo", "net"]
+    effect:
+      self: []
+      target:
+        - id: weakened
+          duration: 8.0
+          value: 1

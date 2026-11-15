@@ -41,6 +41,70 @@
           speaker: "旁白"
           text: "威远分局的封条前，有人把一杆卷起的镖旗插在石阶缝里。旗下站着个背剑的老镖头，正挨个拦住码头上的人问话。"
 
+    - id: storyteller_speaks_of_shrine_echo
+      trigger:
+        type: talk
+        npc: tea_storyteller
+      conditions:
+        - type: flag
+          flag: weiyuan.echo_resolved
+        - type: not_flag
+          flag: kaifeng.heard_shrine_echo
+      actions:
+        - type: set_flag
+          flag: kaifeng.heard_shrine_echo
+        - type: message
+          speaker: "张一嘴"
+          text: "北郊废军祠前些夜里动了剑！听说有人顺着威远旧物的暗记摸过去，撞见了袖绣墨线的夜行人。如今满开封都在传，威远那位灰衣少主早就过了黄河。"
+
+    - id: storyteller_speaks_of_luoyang_fame
+      trigger:
+        type: talk
+        npc: tea_storyteller
+      conditions:
+        - type: flag
+          flag: luoyang.peony_duel_won
+        - type: not_flag
+          flag: kaifeng.heard_luoyang_fame
+      actions:
+        - type: set_flag
+          flag: kaifeng.heard_luoyang_fame
+        - type: message
+          speaker: "张一嘴"
+          text: "西边洛阳车马行刚捎回来的信：有个从咱们开封出去的客官，在牡丹台下一剑胜了嵩阳客，名号已经挂上了牡丹会木牌！"
+
+    - id: storyteller_speaks_of_dali_deed
+      trigger:
+        type: talk
+        npc: tea_storyteller
+      conditions:
+        - type: flag
+          flag: dali.inner_trusted
+        - type: not_flag
+          flag: kaifeng.heard_dali_deed
+      actions:
+        - type: set_flag
+          flag: kaifeng.heard_dali_deed
+        - type: message
+          speaker: "张一嘴"
+          text: "南下茶马道的大理商队昨日进城，护卫们喝酒时都在夸一位外乡好手，说他单身上了苍山废石场，替段家把被劫的茶马铁契夺了回来。"
+
+    - id: storyteller_speaks_of_taihu_peace
+      trigger:
+        type: talk
+        npc: tea_storyteller
+      conditions:
+        - type: flag
+          flag: taihu.inner_guest
+        - type: not_flag
+          flag: kaifeng.heard_taihu_peace
+      actions:
+        - type: set_flag
+          flag: kaifeng.heard_taihu_peace
+        - type: message
+          speaker: "张一嘴"
+          text: "太湖那边也有奇事——水寨的翻江鲤和岸上柳庄为了争水榭的药方差点火并，偏有人一张分笺药方、一场快战，逼得两边都退了半步。"
+
     - id: storyteller_speaks_of_player
       trigger:
         type: talk
@@ -125,6 +189,209 @@
         - type: message
           speaker: "铁旗罗万川"
           text: "剑谱是骆兄弟的私抄本，你留着也罢。只记住，威远剑法不传外人。你在人前用出来，总局的人会来问你，别处的人也会。"
+
+- id: caoban_canal_shadow
+  name: "汴河夜航"
+  objectives:
+    - stage: alley_lead
+      text: "去北街后巷向破衣陈七打听夜里私船卸货的去向。"
+    - stage: reed_shallows
+      text: "出开封北门至黄河南堤西侧的南堤芦苇滩，查截盐帮香主罗七。"
+    - stage: choose_disposition
+      text: "带着暗印铁匣回开封，决定交予开封府捕房顾捕头，还是交予柳岸码头漕帮杜三。"
+    - stage: completed
+      text: "暗印铁匣已经落定，汴河北路的夜航风波告一段落。"
+  reward:
+    money: 0
+    combat_exp: 45
+    potential: 30
+    items: []
+  events:
+    - id: warehouse_keeper_opens_canal_case
+      trigger:
+        type: talk
+        npc: warehouse_keeper
+      conditions:
+        - type: quest_completed
+          quest: first_steps_kaifeng
+        - type: quest_not_started
+          quest: caoban_canal_shadow
+      actions:
+        - type: set_stage
+          quest: caoban_canal_shadow
+          stage: alley_lead
+        - type: set_flag
+          flag: jianghu.canal_inspected
+        - type: message
+          speaker: "周守仓"
+          text: "客官来得正好。昨夜北门外转运进仓的一批官粮，封泥印鉴看着不差，里头夹带的暗印铁匣却被人掉了包。"
+        - type: message
+          speaker: "周守仓"
+          text: "这事我不敢先声张——捕房顾捕头在查夹带，漕帮杜三也在查谁坏了水路规矩。北街后巷的破衣陈七夜里常在城根晃荡，你先去问问他昨夜是谁家的车进了后巷。"
+
+    - id: warehouse_keeper_waits_for_box
+      trigger:
+        type: talk
+        npc: warehouse_keeper
+      conditions:
+        - type: quest_stage
+          quest: caoban_canal_shadow
+          stage: alley_lead
+      actions:
+        - type: message
+          speaker: "周守仓"
+          text: "破衣陈七就在武庙北边的北街后巷，去晚了怕他又要溜去赌坊。"
+
+    - id: beggar_chen_points_to_shallows
+      trigger:
+        type: talk
+        npc: alley_beggar_chen
+      conditions:
+        - type: quest_stage
+          quest: caoban_canal_shadow
+          stage: alley_lead
+      actions:
+        - type: set_stage
+          quest: caoban_canal_shadow
+          stage: reed_shallows
+        - type: show_npc
+          npc: salt_gang_deputy
+        - type: message
+          speaker: "破衣陈七"
+          text: "昨夜四更天，确实有辆黑布篷车从北门溜进来，车轮上全是黄河滩的红泥和芦苇叶。"
+        - type: message
+          speaker: "破衣陈七"
+          text: "赶车的是盐帮香主罗七的手下。他们把换下来的暗印铁匣藏在北郊递道尽头、黄河南堤西边的芦苇滩里，只等今夜过河。你若要去，当心罗七手里那对短铁尺。"
+
+    - id: ferry_guard_warns_of_reed_shallows
+      trigger:
+        type: talk
+        npc: levee_ferry_guard
+      conditions:
+        - type: quest_stage
+          quest: caoban_canal_shadow
+          stage: reed_shallows
+      actions:
+        - type: message
+          speaker: "守渡老卒"
+          text: "津口有公牒才能开船，可南堤西边那片芦苇滩不在军士眼皮底下。方才我还看见苇丛里有灯火晃动。"
+
+    - id: confront_salt_gang_deputy
+      trigger:
+        type: talk
+        npc: salt_gang_deputy
+      conditions:
+        - type: quest_stage
+          quest: caoban_canal_shadow
+          stage: reed_shallows
+      actions:
+        - type: message
+          speaker: "盐帮香主罗七"
+          text: "开封城里的人竟能摸到南堤芦苇滩来？不管你是捕房的眼线还是漕帮的帮手，既看见了这只铁匣，就别想全身而退！"
+        - type: start_battle
+          target: salt_gang_deputy
+
+    - id: defeat_salt_gang_deputy
+      trigger:
+        type: kill
+        npc: salt_gang_deputy
+      conditions:
+        - type: quest_stage
+          quest: caoban_canal_shadow
+          stage: reed_shallows
+      actions:
+        - type: hide_npc
+          npc: salt_gang_deputy
+        - type: give_item
+          item: smuggled_seal_box
+          amount: 1
+        - type: set_stage
+          quest: caoban_canal_shadow
+          stage: choose_disposition
+        - type: message
+          speaker: "旁白"
+          text: "罗七虎口震裂，弃下货箱钻入深苇。你从苇丛暗格里起出一只沉甸甸的暗印铁匣。"
+        - type: message
+          speaker: "旁白"
+          text: "铁匣若交回开封府捕房顾捕头，便是替衙门坐实了盐帮走私的铁证；若交给柳岸码头的杜三，则是卖了漕帮一份天大的人情。"
+
+    - id: hand_seal_box_to_constable
+      trigger:
+        type: talk
+        npc: kaifeng_constable
+      conditions:
+        - type: quest_stage
+          quest: caoban_canal_shadow
+          stage: choose_disposition
+        - type: has_item
+          item: smuggled_seal_box
+      actions:
+        - type: take_item
+          item: smuggled_seal_box
+          amount: 1
+        - type: give_item
+          item: yamen_bounty_manual
+          amount: 1
+        - type: give_money
+          amount: 60
+        - type: set_flag
+          flag: jianghu.canal_reported_yamen
+        - type: set_flag
+          flag: jianghu.canal_shadow_done
+        - type: complete_quest
+          quest: caoban_canal_shadow
+        - type: message
+          speaker: "顾捕头"
+          text: "盐帮在南堤私设暗桩，捕房盯了不是一天两天，只是一直缺这只过河的对印铁匣。"
+        - type: message
+          speaker: "顾捕头"
+          text: "你没有拿它去码头换私情，很好。这六十文是赏银，这册《捕房擒拿图谱》是衙门捕快练锁拿手的底本，你拿去防身。"
+
+    - id: hand_seal_box_to_du_san
+      trigger:
+        type: talk
+        npc: caoban_du_san
+      conditions:
+        - type: quest_stage
+          quest: caoban_canal_shadow
+          stage: choose_disposition
+        - type: has_item
+          item: smuggled_seal_box
+      actions:
+        - type: take_item
+          item: smuggled_seal_box
+          amount: 1
+        - type: give_item
+          item: caoban_water_manual
+          amount: 1
+        - type: give_money
+          amount: 60
+        - type: set_flag
+          flag: jianghu.caoban_friend
+        - type: set_flag
+          flag: jianghu.canal_handed_caoban
+        - type: set_flag
+          flag: jianghu.canal_shadow_done
+        - type: complete_quest
+          quest: caoban_canal_shadow
+        - type: message
+          speaker: "过江鳅杜三"
+          text: "好小子，竟然把罗七藏在南堤的暗印铁匣给端回来了！有这东西捏在手里，盐帮在汴水北岸的几处私埠都得乖乖让出来。"
+        - type: message
+          speaker: "过江鳅杜三"
+          text: "你不送去官府邀功，却送到我柳岸码头，这份情杜三记下了。这六十文拿去买酒，这卷《汴水踏浪图谱》是我们水上人踩浪过板的步子，你留着练。"
+
+    - id: warehouse_keeper_after_canal_case
+      trigger:
+        type: talk
+        npc: warehouse_keeper
+      conditions:
+        - type: quest_completed
+          quest: caoban_canal_shadow
+      actions:
+        - type: message
+          speaker: "周守仓"
+          text: "暗印铁匣的事平了，官仓的封签也重新核对过。多亏有你跑这一趟，不然我这把老骨头真要吃官司。"
 
 - id: caoban_dock_rules
   name: "码头规矩"
@@ -277,3 +544,110 @@
         - type: message
           speaker: "过江鳅杜三"
           text: "南渡客来了。码头上的船随时载你一程，只要不是替官府办事。"
+
+- id: kaifeng_artisan_trouble
+  name: "东巷旧器"
+  objectives:
+    - stage: pawnshop
+      text: "带着赵铁匠打好的精铁护腕，去西市当铺找秦朝奉赎回仁和药铺的旧铜药臼。"
+    - stage: money_house
+      text: "到甜水巷南面的开封钱庄，请算盘孙核验贴换票据。"
+    - stage: return_mortar
+      text: "把赎出的旧铜药臼送回府后东巷的仁和药铺柳药师手中。"
+    - stage: completed
+      text: "旧铜药臼已归还仁和药铺，你也从柳药师处听到了太湖水榭的近况。"
+  reward:
+    money: 0
+    combat_exp: 25
+    potential: 20
+    items: []
+  events:
+    - id: blacksmith_starts_artisan_trouble
+      trigger:
+        type: talk
+        npc: kaifeng_blacksmith
+      conditions:
+        - type: quest_completed
+          quest: first_steps_kaifeng
+        - type: quest_not_started
+          quest: kaifeng_artisan_trouble
+      actions:
+        - type: give_item
+          item: forged_iron_bracers
+          amount: 1
+        - type: set_stage
+          quest: kaifeng_artisan_trouble
+          stage: pawnshop
+        - type: message
+          speaker: "赵铁匠"
+          text: "前些天雨大，隔壁仁和药铺的柳药师为了给几个外乡伤客抓药，把她师门传下来的旧铜药臼押在了西市当铺。"
+        - type: message
+          speaker: "赵铁匠"
+          text: "我这副精铁护腕原本是给北路镖师打的，人没来取，倒正好拿去顶当铺的死当。你替我跑一趟西市当铺，找秦朝奉把柳药师的药臼换出来。"
+
+    - id: pawnbroker_checks_bracers
+      trigger:
+        type: talk
+        npc: kaifeng_pawnbroker
+      conditions:
+        - type: quest_stage
+          quest: kaifeng_artisan_trouble
+          stage: pawnshop
+        - type: has_item
+          item: forged_iron_bracers
+      actions:
+        - type: take_item
+          item: forged_iron_bracers
+          amount: 1
+        - type: set_stage
+          quest: kaifeng_artisan_trouble
+          stage: money_house
+        - type: message
+          speaker: "秦朝奉"
+          text: "赵铁匠的火候倒是足，这副护腕抵那只旧铜药臼绰绰有余。不过当铺与开封钱庄连着账，死当贴换得让隔壁钱庄的算盘孙过个印。你去甜水巷钱庄知会他一声，药臼我便交给你。"
+
+    - id: banker_stamps_redemption
+      trigger:
+        type: talk
+        npc: kaifeng_banker
+      conditions:
+        - type: quest_stage
+          quest: kaifeng_artisan_trouble
+          stage: money_house
+      actions:
+        - type: give_item
+          item: pawned_old_mortar
+          amount: 1
+        - type: set_stage
+          quest: kaifeng_artisan_trouble
+          stage: return_mortar
+        - type: message
+          speaker: "算盘孙"
+          text: "东巷赵铁匠替柳药师赎药臼？难得那硬脾气的铁匠也有这般细心的时候。票根我已销了，这只旧铜药臼正好刚从库房提出来，你直接给柳药师送去吧。"
+
+    - id: physician_receives_old_mortar
+      trigger:
+        type: talk
+        npc: kaifeng_physician
+      conditions:
+        - type: quest_stage
+          quest: kaifeng_artisan_trouble
+          stage: return_mortar
+        - type: has_item
+          item: pawned_old_mortar
+      actions:
+        - type: take_item
+          item: pawned_old_mortar
+          amount: 1
+        - type: give_money
+          amount: 45
+        - type: set_flag
+          flag: kaifeng.artisan_helped
+        - type: complete_quest
+          quest: kaifeng_artisan_trouble
+        - type: message
+          speaker: "柳药师"
+          text: "这只铜臼是当年我离开太湖水榭时，苏姑娘亲手给我的。赵大哥嘴上不说，心里却一直记着。"
+        - type: message
+          speaker: "柳药师"
+          text: "这四十五文是药铺的一点心意。你日后若是乘太湖药车去水榭，不妨去切脉房和方书阁看看——听说前几日有个在汴河北岸受了剑伤的北方行客被药车接去了水榭，嘴里还念叨着威远镖局的旧事。"

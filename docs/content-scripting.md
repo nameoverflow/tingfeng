@@ -139,6 +139,7 @@ events:
 - `hide_npc`
 - `show_npc`
 - `give_item`
+- `take_item`
 - `give_money`
 - `learn_art`
 - `start_battle`

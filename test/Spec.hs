@@ -68,6 +68,8 @@ main = do
   testWeiyuanChapterFlow
   testKaifengSettlingAndTravelFlow
   testKaifengJianghuFlow
+  testKaifengInterleavedQuestsAndChoices
+  testRegionalQuestsAndWeiyuanEchoConvergence
   testStoryBattlesArePlayerIsolated
   testPlayerSaveRoundTrip
   testLegacyPreparedSlotFoldsIntoEnabled
@@ -1182,6 +1184,201 @@ testKaifengJianghuFlow = do
   pure ()
   where
     hasFlag flag gs' = maybe False (S.member flag . view storyFlags) (M.lookup "tester" (gs' ^. stories))
+
+testKaifengInterleavedQuestsAndChoices :: IO ()
+testKaifengInterleavedQuestsAndChoices = do
+  gs <- newTestPlayerState
+  let settled =
+        gs
+          & stories . ix "tester" . storyQuestStages . at "weiyuan_bloody_case" ?~ "completed"
+          & stories . ix "tester" . storyQuestStages . at "first_steps_kaifeng" ?~ "completed"
+          & players . ix "tester" . playerCharacter . charArt . ix Foundation %~ setArtLevel "basic_fist" 6
+          & players . ix "tester" . playerCharacter . charArt . ix Foundation %~ setArtLevel "basic_lightness" 6
+
+  -- 1. Kaifeng artisan trouble (blacksmith -> pawnbroker -> banker -> physician)
+  (_, atSmithy) <- runOk "move to smithy" settled (movePlayerToRoom "tester" "kaifeng_city" (3, 1))
+  (_, startedArtisan) <- runOk "talk to blacksmith" atSmithy (playerTalk "tester" "kaifeng_blacksmith")
+  assert (questStageOf "kaifeng_artisan_trouble" startedArtisan == Just "pawnshop") "artisan quest did not start"
+  assert (itemCount "forged_iron_bracers" startedArtisan == Just 1) "blacksmith did not give iron bracers"
+
+  (_, atPawnshop) <- runOk "move to pawnshop" startedArtisan (movePlayerToRoom "tester" "kaifeng_city" (-3, -1))
+  (_, checkedBracers) <- runOk "talk to pawnbroker" atPawnshop (playerTalk "tester" "kaifeng_pawnbroker")
+  assert (questStageOf "kaifeng_artisan_trouble" checkedBracers == Just "money_house") "pawnbroker did not send to money house"
+  assert (itemCount "forged_iron_bracers" checkedBracers == Nothing) "pawnbroker did not take iron bracers"
+
+  (_, atBank) <- runOk "move to money house" checkedBracers (movePlayerToRoom "tester" "kaifeng_city" (-2, -1))
+  (_, redeemedMortar) <- runOk "talk to banker" atBank (playerTalk "tester" "kaifeng_banker")
+  assert (questStageOf "kaifeng_artisan_trouble" redeemedMortar == Just "return_mortar") "banker did not redeem mortar"
+  assert (itemCount "pawned_old_mortar" redeemedMortar == Just 1) "banker did not give old mortar"
+
+  (_, atApothecary) <- runOk "move to apothecary" redeemedMortar (movePlayerToRoom "tester" "kaifeng_city" (2, -1))
+  (_, completedArtisan) <- runOk "return mortar to physician" atApothecary (playerTalk "tester" "kaifeng_physician")
+  assert (questStageOf "kaifeng_artisan_trouble" completedArtisan == Just "completed") "artisan quest did not complete"
+  assert (itemCount "pawned_old_mortar" completedArtisan == Nothing) "physician did not take old mortar"
+  assert (hasFlag "kaifeng.artisan_helped" completedArtisan) "artisan flag was not set"
+
+  -- 2. Kaifeng canal shadow with two-way disposition choice (Constable vs Du San)
+  (_, atWarehouse) <- runOk "move to warehouse" completedArtisan (movePlayerToRoom "tester" "kaifeng_city" (2, 1))
+  (_, startedCanal) <- runOk "talk to warehouse keeper" atWarehouse (playerTalk "tester" "warehouse_keeper")
+  assert (questStageOf "caoban_canal_shadow" startedCanal == Just "alley_lead") "canal shadow quest did not start"
+
+  (_, atBackAlley) <- runOk "move to back alley" startedCanal (movePlayerToRoom "tester" "kaifeng_city" (-1, 3))
+  (_, heardShallows) <- runOk "talk to beggar chen" atBackAlley (playerTalk "tester" "alley_beggar_chen")
+  assert (questStageOf "caoban_canal_shadow" heardShallows == Just "reed_shallows") "beggar chen did not point to reed shallows"
+
+  (_, atShallows) <- runOk "move to reed shallows" heardShallows (movePlayerToRoom "tester" "north_post_road" (-1, 5))
+  (_, deputyFight) <- runOk "confront salt gang deputy" atShallows (playerTalk "tester" "salt_gang_deputy")
+  let beatenDeputy = deputyFight & battles . ix "tester" . battleEnemyState . battleChar . charHP .~ 0
+  (_, gotSealBox) <- runOk "settle deputy fight" beatenDeputy (updateBattle 0 "tester")
+  assert (questStageOf "caoban_canal_shadow" gotSealBox == Just "choose_disposition") "deputy defeat did not advance to choose_disposition"
+  assert (itemCount "smuggled_seal_box" gotSealBox == Just 1) "deputy defeat did not yield smuggled_seal_box"
+
+  -- Branch A: Hand seal box to Constable Gu and study the yamen manual
+  (_, atConstable) <- runOk "move to constable" gotSealBox (movePlayerToRoom "tester" "kaifeng_city" (1, 2))
+  (_, reportedYamen) <- runOk "hand seal box to constable" atConstable (playerTalk "tester" "kaifeng_constable")
+  assert (questStageOf "caoban_canal_shadow" reportedYamen == Just "completed") "constable did not complete canal shadow"
+  assert (itemCount "smuggled_seal_box" reportedYamen == Nothing) "constable did not take smuggled_seal_box"
+  assert (itemCount "yamen_bounty_manual" reportedYamen == Just 1) "constable did not grant yamen_bounty_manual"
+  assert (hasFlag "jianghu.canal_reported_yamen" reportedYamen) "yamen branch flag not set"
+  (_, learnedGrappling) <- runOk "use yamen manual" reportedYamen (playerUseItem "tester" "yamen_bounty_manual")
+  grapplingPlayer <- requirePlayer learnedGrappling
+  assert (knowsArtAt "yamen_grappling_hand" 1 grapplingPlayer) "yamen manual did not teach yamen_grappling_hand"
+
+  -- Branch B: Hand seal box to Caoban Du San (even if caoban_dock_rules was already completed)
+  let gotSealBoxWithDockDone =
+        gotSealBox
+          & stories . ix "tester" . storyQuestStages . at "caoban_dock_rules" ?~ "completed"
+  (_, atWillowBank) <- runOk "move to willow bank" gotSealBoxWithDockDone (movePlayerToRoom "tester" "kaifeng_city" (-1, -3))
+  (_, handedCaoban) <- runOk "hand seal box to du san" atWillowBank (playerTalk "tester" "caoban_du_san")
+  assert (questStageOf "caoban_canal_shadow" handedCaoban == Just "completed") "du san did not complete canal shadow"
+  assert (itemCount "caoban_water_manual" handedCaoban == Just 1) "du san did not grant caoban_water_manual"
+  assert (hasFlag "jianghu.canal_handed_caoban" handedCaoban) "caoban branch flag not set"
+  (_, learnedWaveStep) <- runOk "use caoban water manual" handedCaoban (playerUseItem "tester" "caoban_water_manual")
+  wavePlayer <- requirePlayer learnedWaveStep
+  assert (knowsArtAt "bianshui_wave_step" 1 wavePlayer) "caoban manual did not teach bianshui_wave_step"
+  where
+    hasFlag flag gs' = maybe False (S.member flag . view storyFlags) (M.lookup "tester" (gs' ^. stories))
+    itemCount itemId gs' = M.lookup "tester" (gs' ^. players) >>= view (playerInventory . at itemId)
+
+testRegionalQuestsAndWeiyuanEchoConvergence :: IO ()
+testRegionalQuestsAndWeiyuanEchoConvergence = do
+  gs <- newTestPlayerState
+  let prepared =
+        gs
+          & stories . ix "tester" . storyQuestStages . at "weiyuan_bloody_case" ?~ "completed"
+          & stories . ix "tester" . storyQuestStages . at "first_steps_kaifeng" ?~ "completed"
+          & stories . ix "tester" . storyFlags %~ (S.insert "luoyang.name_card" . S.insert "dali.duan_trusted" . S.insert "taihu.pavilion_guest" . S.insert "weiyuan.met_envoy")
+          & players . ix "tester" . playerInventory . at "weiyuan_sword_manual" ?~ 1
+          & players . ix "tester" . playerInventory . at "soaked_route_note" ?~ 1
+          & players . ix "tester" . playerCharacter . charArt . ix Foundation %~ (setArtLevel "basic_sword" 16 . setArtLevel "basic_lightness" 16 . setArtLevel "basic_fist" 16 . setArtLevel "basic_internal" 16)
+
+  -- 1. Luoyang: broken manual + peony duel + Weiyuan manual clue
+  (_, atBroker) <- runOk "move to Luoyang blade broker" prepared (movePlayerToRoom "tester" "luoyang_city" (-1, 2))
+  (_, afterBrokerClue) <- runOk "broker spots Weiyuan manual" atBroker (playerTalk "tester" "luoyang_blade_broker")
+  assert (hasFlag "weiyuan.clue_luoyang" afterBrokerClue && hasFlag "weiyuan.saw_ink_mark" afterBrokerClue) "Luoyang broker did not spot the Weiyuan manual ink mark"
+
+  (_, atWensheng) <- runOk "move to Wensheng" afterBrokerClue (movePlayerToRoom "tester" "luoyang_city" (-1, 5))
+  (_, startedManual) <- runOk "start broken manual quest" atWensheng (playerTalk "tester" "luoyang_teacher")
+  assert (questStageOf "luoyang_broken_manual" startedManual == Just "investigate_weir") "broken manual quest did not start"
+  (_, atWeir) <- runOk "move to weir pavilion" startedManual (movePlayerToRoom "tester" "luoyang_city" (2, 5))
+  (_, forgerBattle) <- runOk "confront fake manual swordsman" atWeir (playerTalk "tester" "fake_manual_swordsman")
+  let beatenForger = forgerBattle & battles . ix "tester" . battleEnemyState . battleChar . charHP .~ 0
+  (_, afterForger) <- runOk "settle forger fight" beatenForger (updateBattle 0 "tester")
+  assert (questStageOf "luoyang_broken_manual" afterForger == Just "baima_stele") "forger fight did not advance to baima_stele"
+  (_, atStele) <- runOk "move to Baima stele pavilion" afterForger (movePlayerToRoom "tester" "luoyang_city" (-1, 7))
+  (_, gotRubbing) <- runOk "talk to stone sweeper" atStele (playerTalk "tester" "baima_stone_sweeper")
+  assert (itemCount "luoyang_stele_rubbing" gotRubbing == Just 1) "stone sweeper did not give rubbing"
+  (_, backAtWensheng) <- runOk "return to Wensheng" gotRubbing (movePlayerToRoom "tester" "luoyang_city" (-1, 5))
+  (_, completedManual) <- runOk "complete broken manual quest" backAtWensheng (playerTalk "tester" "luoyang_teacher")
+  assert (questStageOf "luoyang_broken_manual" completedManual == Just "completed") "broken manual quest did not complete"
+  assert (hasFlag "luoyang.wensheng_trusted" completedManual) "Wensheng trust flag was not set"
+
+  (_, atPeony) <- runOk "move to Peony court" completedManual (movePlayerToRoom "tester" "luoyang_city" (0, 4))
+  (_, startedPeony) <- runOk "start Peony duel" atPeony (playerTalk "tester" "peony_host_assistant")
+  (_, atGallery) <- runOk "move to step gallery" startedPeony (movePlayerToRoom "tester" "luoyang_city" (2, 2))
+  (_, stepApproved) <- runOk "talk to footwork mentor" atGallery (playerTalk "tester" "luoyang_footwork_mentor")
+  (_, backAtPeony) <- runOk "return to Peony court" stepApproved (movePlayerToRoom "tester" "luoyang_city" (0, 4))
+  (_, songBattle) <- runOk "duel challenger Song" backAtPeony (playerTalk "tester" "peony_challenger_song")
+  let beatenSong = songBattle & battles . ix "tester" . battleEnemyState . battleChar . charHP .~ 0
+  (_, afterSong) <- runOk "settle Song duel" beatenSong (updateBattle 0 "tester")
+  (_, completedPeony) <- runOk "report Peony duel" afterSong (playerTalk "tester" "peony_host_assistant")
+  assert (questStageOf "luoyang_peony_duel" completedPeony == Just "completed") "Peony duel did not complete"
+  assert (hasFlag "luoyang.peony_duel_won" completedPeony) "Peony duel flag was not set"
+
+  -- 2. Dali: Cangshan caravan + Chongsheng bell + Weiyuan route note clue
+  (_, atDaliClerk) <- runOk "move to Dali contract clerk" completedPeony (movePlayerToRoom "tester" "dali_city" (1, 5))
+  (_, afterDaliClue) <- runOk "clerk reads soaked route note" atDaliClerk (playerTalk "tester" "dali_contract_clerk")
+  assert (hasFlag "weiyuan.clue_dali" afterDaliClue) "Dali clerk did not identify the route note mark"
+
+  (_, atDaliHall) <- runOk "move to Duan hall" afterDaliClue (movePlayerToRoom "tester" "dali_city" (0, 5))
+  (_, startedCangshan) <- runOk "start Cangshan quest" atDaliHall (playerTalk "tester" "dali_duan_guard_captain")
+  (_, atStream) <- runOk "move to Cangshan stream" startedCangshan (movePlayerToRoom "tester" "dali_city" (-2, 2))
+  (_, trackedOutlaw) <- runOk "talk to tracker" atStream (playerTalk "tester" "cangshan_tracker")
+  (_, atQuarry) <- runOk "move to quarry cliff" trackedOutlaw (movePlayerToRoom "tester" "dali_city" (-2, 3))
+  (_, outlawBattle) <- runOk "confront outlaw leader" atQuarry (playerTalk "tester" "cangshan_outlaw_leader")
+  let beatenOutlaw = outlawBattle & battles . ix "tester" . battleEnemyState . battleChar . charHP .~ 0
+  (_, afterOutlaw) <- runOk "settle outlaw fight" beatenOutlaw (updateBattle 0 "tester")
+  (_, backAtDaliHall) <- runOk "return to Duan hall" afterOutlaw (movePlayerToRoom "tester" "dali_city" (0, 5))
+  (_, completedCangshan) <- runOk "complete Cangshan quest" backAtDaliHall (playerTalk "tester" "dali_duan_guard_captain")
+  assert (questStageOf "dali_cangshan_caravan" completedCangshan == Just "completed") "Cangshan quest did not complete"
+  assert (hasFlag "dali.inner_trusted" completedCangshan) "Dali inner trust flag was not set"
+  assert (itemCount "duan_temple_letter" completedCangshan == Just 1) "Duan captain did not give temple letter"
+
+  (_, atChongsheng) <- runOk "move to Chongsheng gate" completedCangshan (movePlayerToRoom "tester" "dali_city" (0, 7))
+  (_, startedBell) <- runOk "start Chongsheng bell quest" atChongsheng (playerTalk "tester" "chongsheng_monk")
+  (_, atErhaiPier) <- runOk "move to Erhai pier" startedBell (movePlayerToRoom "tester" "dali_city" (2, 2))
+  (_, heardBoatman) <- runOk "talk to old boatman" atErhaiPier (playerTalk "tester" "erhai_old_boatman")
+  (_, atPagodaGate) <- runOk "return to Chongsheng gate" heardBoatman (movePlayerToRoom "tester" "dali_city" (0, 7))
+  (_, inPagoda) <- runOk "enter Three Pagodas courtyard" atPagodaGate (playerMove "tester" North)
+  assert (questStageOf "dali_chongsheng_bell" inPagoda == Just "report_monk") "entering pagoda courtyard did not advance bell quest"
+  (_, backAtMonk) <- runOk "step south to monk" inPagoda (playerMove "tester" South)
+  (_, completedBell) <- runOk "complete Chongsheng bell quest" backAtMonk (playerTalk "tester" "chongsheng_monk")
+  assert (questStageOf "dali_chongsheng_bell" completedBell == Just "completed") "Chongsheng bell quest did not complete"
+  assert (hasFlag "dali.chongsheng_vow" completedBell) "Chongsheng vow flag was not set"
+
+  -- 3. Taihu: water debt + wounded traveler clue
+  (_, atPulseRoom) <- runOk "move to Taihu pulse room" completedBell (movePlayerToRoom "tester" "taihu_water_pavilion" (-1, 3))
+  (_, afterTaihuClue) <- runOk "talk to wounded traveler" atPulseRoom (playerTalk "tester" "taihu_wounded_traveler")
+  assert (hasFlag "weiyuan.clue_taihu" afterTaihuClue) "Taihu wounded traveler did not share Weiyuan clue"
+
+  (_, atTaihuHall) <- runOk "move to Taihu hall" afterTaihuClue (movePlayerToRoom "tester" "taihu_water_pavilion" (0, 4))
+  (_, startedDebt) <- runOk "start Taihu water debt" atTaihuHall (playerTalk "tester" "taihu_senior")
+  (_, atArchivist) <- runOk "move to formula room" startedDebt (movePlayerToRoom "tester" "taihu_water_pavilion" (1, 4))
+  (_, gotPrescription) <- runOk "get split prescription" atArchivist (playerTalk "tester" "taihu_archivist")
+  (_, atJetty) <- runOk "move to mist jetty" gotPrescription (movePlayerToRoom "tester" "taihu_water_pavilion" (1, 5))
+  (_, visitedEstate) <- runOk "talk to estate steward" atJetty (playerTalk "tester" "estate_steward_lu")
+  (_, atCoving) <- runOk "move to reed coving" visitedEstate (movePlayerToRoom "tester" "taihu_water_pavilion" (-1, 5))
+  (_, bossBattle) <- runOk "confront water fort second boss" atCoving (playerTalk "tester" "water_fort_second_boss")
+  let beatenBoss = bossBattle & battles . ix "tester" . battleEnemyState . battleChar . charHP .~ 0
+  (_, afterBoss) <- runOk "settle water fort boss fight" beatenBoss (updateBattle 0 "tester")
+  (_, backAtTaihuHall) <- runOk "return to Taihu hall" afterBoss (movePlayerToRoom "tester" "taihu_water_pavilion" (0, 4))
+  (_, completedDebt) <- runOk "complete Taihu water debt" backAtTaihuHall (playerTalk "tester" "taihu_senior")
+  assert (questStageOf "taihu_water_debt" completedDebt == Just "completed") "Taihu water debt did not complete"
+  assert (hasFlag "taihu.inner_guest" completedDebt) "Taihu inner guest flag was not set"
+
+  -- 4. Convergence: Weiyuan First Echo at the abandoned military shrine on North Post Road
+  (_, atFork) <- runOk "move to north road fork" completedDebt (movePlayerToRoom "tester" "north_post_road" (0, 3))
+  (_, atShrine) <- runOk "enter abandoned shrine" atFork (playerMove "tester" North)
+  assert (questStageOf "weiyuan_first_echo" atShrine == Just "ambush") "entering abandoned shrine did not trigger Weiyuan ambush"
+  (_, stalkerBattle) <- runOk "confront ink mark stalker" atShrine (playerTalk "tester" "ink_mark_stalker")
+  let beatenStalker = stalkerBattle & battles . ix "tester" . battleEnemyState . battleChar . charHP .~ 0
+  (_, afterStalker) <- runOk "settle stalker fight" beatenStalker (updateBattle 0 "tester")
+  assert (questStageOf "weiyuan_first_echo" afterStalker == Just "choose_report") "stalker defeat did not advance to choose_report"
+
+  (_, atEnvoy) <- runOk "move to Weiyuan envoy" afterStalker (movePlayerToRoom "tester" "kaifeng_city" (1, -3))
+  (_, reportedEnvoy) <- runOk "report shrine echo to envoy" atEnvoy (playerTalk "tester" "weiyuan_envoy")
+  assert (questStageOf "weiyuan_first_echo" reportedEnvoy == Just "completed") "reporting to envoy did not complete weiyuan_first_echo"
+  assert (hasFlag "weiyuan.echo_reported_envoy" reportedEnvoy && hasFlag "weiyuan.echo_resolved" reportedEnvoy) "envoy report flags were not set"
+
+  -- Storyteller in Kaifeng reacts to the resolved shrine echo
+  (_, atTeaHouse) <- runOk "move to tea house" reportedEnvoy (movePlayerToRoom "tester" "kaifeng_city" (-2, 1))
+  (storyResponses, afterStory) <- runOk "talk to storyteller" atTeaHouse (playerTalk "tester" "tea_storyteller")
+  assert (hasFlag "kaifeng.heard_shrine_echo" afterStory) "storyteller did not recount the shrine echo"
+  _ <- requireResponseIndex "storyteller mentions abandoned shrine" (\case StoryMsg _ text -> "废军祠" `T.isInfixOf` text; _ -> False) storyResponses
+  pure ()
+  where
+    hasFlag flag gs' = maybe False (S.member flag . view storyFlags) (M.lookup "tester" (gs' ^. stories))
+    itemCount itemId gs' = M.lookup "tester" (gs' ^. players) >>= view (playerInventory . at itemId)
 
 testStoryBattlesArePlayerIsolated :: IO ()
 testStoryBattlesArePlayerIsolated = do

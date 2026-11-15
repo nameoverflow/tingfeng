@@ -438,6 +438,10 @@ executeStoryActions pid actions = do
             addInventoryItem pid itemId amount
             summary <- itemRewardSummary itemId amount
             return [summary]
+      TakeItem itemId amount -> do
+        when (amount > 0) $
+          consumeInventoryItem pid itemId amount
+        return []
       GiveMoney amount -> do
         if amount <= 0
           then return []
@@ -469,6 +473,7 @@ executeStoryActions pid actions = do
       SetFlag _ -> True
       ClearFlag _ -> True
       GiveItem _ _ -> True
+      TakeItem _ _ -> True
       GiveMoney _ -> True
       LearnArt _ _ -> True
       _ -> False

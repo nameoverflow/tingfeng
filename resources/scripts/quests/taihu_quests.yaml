@@ -1,0 +1,156 @@
+- id: taihu_water_debt
+  name: "太湖还情"
+  objectives:
+    - stage: ask_archivist
+      text: "到水榭药堂东侧的方书阁，请守阁女医沈青笺取出调停湖岸的《分笺药方》。"
+    - stage: visit_estate
+      text: "穿过湖心花阵向东，在雾柳栈桥将药方上阕交予柳庄管事陆执。"
+    - stage: confront_fort
+      text: "往湖心花阵西侧的芦苇暗港，与水寨二当家翻江鲤交涉并取回半枚焦木筹。"
+    - stage: report_senior
+      text: "带着半枚焦木筹回水榭药堂向太湖白发医者复命。"
+    - stage: completed
+      text: "水寨与柳庄暂时罢手，水榭认你为内堂常客，沈青笺亦允传授拂柳剑法与烟波步。"
+  reward:
+    money: 0
+    combat_exp: 50
+    potential: 35
+    items: []
+  events:
+    - id: taihu_senior_starts_water_debt
+      trigger:
+        type: talk
+        npc: taihu_senior
+      conditions:
+        - type: flag
+          flag: taihu.pavilion_guest
+        - type: quest_not_started
+          quest: taihu_water_debt
+      actions:
+        - type: set_stage
+          quest: taihu_water_debt
+          stage: ask_archivist
+        - type: message
+          speaker: "太湖白发医者"
+          text: "我早先说过，你在运河渡口替药车挡了水寨的快船，这笔账迟早会找到水榭头上。今日水寨二当家翻江鲤进了西边芦苇暗港，岸上柳庄的陆管事也堵在东边雾柳栈桥，两边都逼水榭独供暑月伤药。"
+        - type: message
+          speaker: "太湖白发医者"
+          text: "水榭不偏帮任何一方。你去东厢方书阁找沈青笺，拿她拟好的《分笺药方》，替水榭把这场湖岸之争平下来。"
+
+    - id: archivist_gives_split_prescription
+      trigger:
+        type: talk
+        npc: taihu_archivist
+      conditions:
+        - type: quest_stage
+          quest: taihu_water_debt
+          stage: ask_archivist
+      actions:
+        - type: give_item
+          item: taihu_split_prescription
+          amount: 1
+        - type: set_stage
+          quest: taihu_water_debt
+          stage: visit_estate
+        - type: message
+          speaker: "守阁女医沈青笺"
+          text: "这张《分笺药方》我裁作了上下两阕：上阕主药生在柳庄的岸坡，下阕药引却非用芦苇暗港深处的冷泉与苇灰不可。两边若想活命，谁也离不了谁。"
+        - type: message
+          speaker: "守阁女医沈青笺"
+          text: "你先从湖心花阵往东去雾柳栈桥，把上阕给柳庄管事陆执看；再去西边芦苇暗港应付水寨的翻江鲤。"
+
+    - id: estate_steward_accepts_upper_half
+      trigger:
+        type: talk
+        npc: estate_steward_lu
+      conditions:
+        - type: quest_stage
+          quest: taihu_water_debt
+          stage: visit_estate
+        - type: has_item
+          item: taihu_split_prescription
+      actions:
+        - type: set_stage
+          quest: taihu_water_debt
+          stage: confront_fort
+        - type: message
+          speaker: "柳庄管事陆执"
+          text: "……原来这帖伤药少不得湖心暗港的苇灰与泉引。水榭倒是打得好算盘，逼着我们柳庄放水寨一条生路。"
+        - type: message
+          speaker: "柳庄管事陆执"
+          text: "也罢！只要芦苇暗港的翻江鲤肯交出上月劫船留下的那半枚焦木筹，立誓不再犯岸，柳庄便照方供药。"
+
+    - id: confront_water_fort_second_boss
+      trigger:
+        type: talk
+        npc: water_fort_second_boss
+      conditions:
+        - type: quest_stage
+          quest: taihu_water_debt
+          stage: confront_fort
+        - type: has_item
+          item: taihu_split_prescription
+      actions:
+        - type: message
+          speaker: "水寨二当家翻江鲤"
+          text: "哟，这不是运河渡口护药车的那位好手吗？拿着半张药方就想让我交出木筹、跟柳庄罢手？先让我试试你的拳剑配不配替水榭当这个说客！"
+        - type: start_battle
+          target: water_fort_second_boss
+
+    - id: defeat_water_fort_second_boss
+      trigger:
+        type: kill
+        npc: water_fort_second_boss
+      conditions:
+        - type: quest_stage
+          quest: taihu_water_debt
+          stage: confront_fort
+      actions:
+        - type: take_item
+          item: taihu_split_prescription
+          amount: 1
+        - type: give_item
+          item: burned_tally_half
+          amount: 1
+        - type: set_stage
+          quest: taihu_water_debt
+          stage: report_senior
+        - type: message
+          speaker: "水寨二当家翻江鲤"
+          text: "痛快！你手底下有准头，却没下死手，倒真有几分水榭的规矩。"
+        - type: message
+          speaker: "水寨二当家翻江鲤"
+          text: "药方下阕我收下了，这半枚焦木筹你拿回去交差。只要柳庄不绝我们的药材，太湖水寨的快船今年绝不靠柳庄的岸！"
+
+    - id: taihu_senior_completes_water_debt
+      trigger:
+        type: talk
+        npc: taihu_senior
+      conditions:
+        - type: quest_stage
+          quest: taihu_water_debt
+          stage: report_senior
+        - type: has_item
+          item: burned_tally_half
+      actions:
+        - type: take_item
+          item: burned_tally_half
+          amount: 1
+        - type: give_item
+          item: taihu_mist_step_manual
+          amount: 1
+        - type: give_item
+          item: willow_sword_manual
+          amount: 1
+        - type: give_money
+          amount: 60
+        - type: set_flag
+          flag: taihu.inner_guest
+        - type: complete_quest
+          quest: taihu_water_debt
+        - type: message
+          speaker: "太湖白发医者"
+          text: "你在渡口结下的梁子，今日用一张分笺药方和一场分寸得当的比试解开了。水榭立在湖岸之间，靠的从来不是没有刀剑，而是刀剑知道何时入鞘。"
+        - type: message
+          speaker: "太湖白发医者"
+          text: "这册《烟波步谱》与《拂柳剑谱》你留着研读。方书阁的沈青笺也已认你为内堂常客，想学剑与步法，随时可去请教。"
