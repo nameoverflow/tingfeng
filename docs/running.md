@@ -17,7 +17,7 @@ make dev-test
 
 它会在需要时先执行 server build / client dependency install，然后启动：
 
-- `MUD_DEV_MODE=1 stack exec mud-hs-exe`
+- `MUD_DEV_MODE=1 stack exec tingfeng-exe`
 - Vite/Svelte client dev server on `http://127.0.0.1:8080`
 - 测试入口 `http://127.0.0.1:8080/?test=1&user=tester`
 
@@ -43,19 +43,19 @@ scripts/dev-test.sh --user story1 --no-reset --no-open
 ```bash
 stack build
 stack test
-stack exec mud-hs-exe
+stack exec tingfeng-exe
 ```
 
 启动 server：
 
 ```bash
-stack exec mud-hs-exe
+stack exec tingfeng-exe
 ```
 
 测试专用 server：
 
 ```bash
-MUD_DEV_MODE=1 stack exec mud-hs-exe
+MUD_DEV_MODE=1 stack exec tingfeng-exe
 ```
 
 `MUD_DEV_MODE=1` 只用于本地开发。它允许测试入口在登录时重置同名玩家存档，避免每次换新登录名。
@@ -105,7 +105,7 @@ Installing 9.10.3 via ghcup failed
 Warning: GHC install hook exited with code: 3.
 ```
 
-只要后续继续用已安装的 GHC 构建并最终显示 `All tests passed` / `Test suite mud-hs-test passed`，测试就是通过的。
+只要后续继续用已安装的 GHC 构建并最终显示 `All tests passed` / `Test suite tingfeng-test passed`，测试就是通过的。
 
 ## 保存目录
 

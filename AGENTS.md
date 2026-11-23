@@ -2,7 +2,7 @@
 
 ## Project and task routing
 
-Wuxia MUD with a Haskell/Stack WebSocket server, YAML game content, and a
+听风录（Tingfeng）— a Wuxia MUD with a Haskell/Stack WebSocket server, YAML game content, and a
 Svelte/TypeScript web client. Player persistence uses JSON saves.
 
 Read the documentation relevant to the change; a full documentation pass is
@@ -26,7 +26,7 @@ Run backend commands from the repository root; client commands use `npm --prefix
 
 | Change or task | Relevant command / evidence |
 | --- | --- |
-| Build / run backend | `stack build` / `stack exec mud-hs-exe` (127.0.0.1:9160) |
+| Build / run backend | `stack build` / `stack exec tingfeng-exe` (127.0.0.1:9160) |
 | Backend gameplay, parsing, persistence | `stack test` |
 | Client types and Svelte components | `npm --prefix client run check` |
 | Client production bundle | `npm --prefix client run build` |

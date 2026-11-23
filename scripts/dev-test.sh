@@ -175,7 +175,7 @@ cd "$ROOT_DIR"
 
 if [ "$SKIP_BUILD" != "1" ]; then
   echo "[dev-test] Building server executable..."
-  stack build mud-hs:exe:mud-hs-exe
+  stack build tingfeng:exe:tingfeng-exe
 fi
 
 if [ "$SKIP_CLIENT_INSTALL" != "1" ] && [ ! -d "$ROOT_DIR/client/node_modules" ]; then
@@ -191,7 +191,7 @@ fi
 trap cleanup EXIT INT TERM
 
 echo "[dev-test] Starting server on ${SERVER_HOST}:${SERVER_PORT} with MUD_DEV_MODE=1..."
-MUD_DEV_MODE=1 stack exec mud-hs-exe &
+MUD_DEV_MODE=1 stack exec tingfeng-exe &
 SERVER_PID=$!
 wait_for_tcp "Server" "$SERVER_HOST" "$SERVER_PORT" "$SERVER_PID"
 

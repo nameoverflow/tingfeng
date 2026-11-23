@@ -1,13 +1,13 @@
 cradle:
   stack:
     - path: "./src"
-      component: "mud-hs:lib"
+      component: "tingfeng:lib"
 
     - path: "./app/Main.hs"
-      component: "mud-hs:exe:mud-hs-exe"
+      component: "tingfeng:exe:tingfeng-exe"
 
-    - path: "./app/Paths_mud_hs.hs"
-      component: "mud-hs:exe:mud-hs-exe"
+    - path: "./app/Paths_tingfeng.hs"
+      component: "tingfeng:exe:tingfeng-exe"
 
     - path: "./test"
-      component: "mud-hs:test:mud-hs-test"
+      component: "tingfeng:test:tingfeng-test"

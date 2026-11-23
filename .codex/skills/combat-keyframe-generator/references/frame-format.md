@@ -1,6 +1,6 @@
 # Combat Keyframe Frame Format
 
-Use this reference when generating or accepting battle animation keyframes for `hs-wuxia-mud`.
+Use this reference when generating or accepting battle animation keyframes for `tingfeng`.
 
 ## Current Project Target
 

@@ -1,4 +1,4 @@
-# Wuxia MUD Web Client
+# 听风录（Tingfeng）Web Client
 
 Svelte + TypeScript client for the Haskell WebSocket MUD server.
 
@@ -17,7 +17,7 @@ It starts both the Haskell dev server and this Vite client, then opens the `?tes
 Start the game server first:
 
 ```bash
-stack exec mud-hs-exe
+stack exec tingfeng-exe
 ```
 
 Then run the client dev server:
@@ -39,7 +39,7 @@ http://127.0.0.1:8080/
 For local story-flow testing:
 
 ```bash
-MUD_DEV_MODE=1 stack exec mud-hs-exe
+MUD_DEV_MODE=1 stack exec tingfeng-exe
 ```
 
 Then open:

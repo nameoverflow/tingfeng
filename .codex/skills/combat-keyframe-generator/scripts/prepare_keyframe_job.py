@@ -47,7 +47,7 @@ FRAME_POSES = {
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Prepare an image_gen keyframe job for hs-wuxia-mud combat animation.")
+    parser = argparse.ArgumentParser(description="Prepare an image_gen keyframe job for tingfeng combat animation.")
     parser.add_argument("--out", required=True, help="Output job folder.")
     parser.add_argument("--name", required=True, help="Stable job/action name, e.g. cold-rain-thrust.")
     parser.add_argument("--action", required=True, help="Natural-language action description.")

@@ -21,7 +21,7 @@ This is a **Wuxia-themed MUD (Multi-User Dungeon)** game written in Haskell with
 stack build
 
 # Run the server (listens on 127.0.0.1:9160)
-stack exec mud-hs-exe
+stack exec tingfeng-exe
 
 # Run tests
 stack test

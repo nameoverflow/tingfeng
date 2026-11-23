@@ -2,7 +2,7 @@ export type Locale = "zh" | "en";
 
 const messages: Record<Locale, Record<string, string>> = {
   zh: {
-    "app.title": "武侠 MUD",
+    "app.title": "听风录",
     "connection.connect": "连接",
     "connection.connected": "已连接",
     "connection.disconnected": "未连接",
@@ -202,7 +202,7 @@ const messages: Record<Locale, Record<string, string>> = {
     "direction.SouthWest": "西南"
   },
   en: {
-    "app.title": "Wuxia MUD",
+    "app.title": "Tingfeng",
     "connection.connect": "Connect",
     "connection.connected": "Connected",
     "connection.disconnected": "Disconnected",

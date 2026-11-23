@@ -1,6 +1,6 @@
-# hs-wuxia-mud
+# 听风录（Tingfeng）
 
-A Wuxia-themed MUD written in Haskell with a native web client.
+《听风录》是一款以 Haskell 服务端与 Svelte 网页客户端构建的写实武侠文字 MUD。
 
 The project is still WIP, but the current build already has a playable local flow: WebSocket login, room movement through a clickable map, NPC popup interactions, a linear story chapter, AP/Qi combat, martial arts progression, item rewards, manual-based martial art learning, and JSON player saves.
 
@@ -27,7 +27,7 @@ Manual commands:
 ```bash
 stack build
 stack test
-stack exec mud-hs-exe
+stack exec tingfeng-exe
 ```
 
 In another shell:
@@ -43,7 +43,7 @@ Open `http://127.0.0.1:8080`.
 For repeated local story-flow testing without typing a login name:
 
 ```bash
-MUD_DEV_MODE=1 stack exec mud-hs-exe
+MUD_DEV_MODE=1 stack exec tingfeng-exe
 ```
 
 Then open:

@@ -49,7 +49,7 @@
 </script>
 
 <main class="battle-lab">
-  <header class="lab-header"><div><p>武侠 MUD · 动作回放</p><h1>剪影交锋</h1></div><a href="/">返回游戏</a></header>
+  <header class="lab-header"><div><p>听风录 · 动作回放</p><h1>剪影交锋</h1></div><a href="/">返回游戏</a></header>
   <p class="lab-intro">蓄势有静，出手有锋。完整交锋包含连击、闪避、招架、调息与胜负结算。</p>
   <div class="lab-layout">
     <section class="lab-preview">
