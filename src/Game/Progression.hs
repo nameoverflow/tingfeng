@@ -92,6 +92,31 @@ researchJingCost level = max 10 (20 + level)
 researchProgress :: Int
 researchProgress = 20
 
+researchProgressWithInsight :: Int -> Int
+researchProgressWithInsight insightBonus = researchProgress + max 0 insightBonus
+
+combatInsightResearchBonus :: Int
+combatInsightResearchBonus = 6
+
+combatInsightPracticeBonus :: Int
+combatInsightPracticeBonus = 3
+
+combatInsightStacksForWin :: Int -> Int -> Int
+combatInsightStacksForWin playerRank enemyRank
+  | enemyRank > playerRank = 5
+  | enemyRank == playerRank = 3
+  | otherwise = 0
+
+-- | Scale repeatable Jianghu job rewards by the player's completion streak (1..5):
+-- streak 1 = 100%, 2 = 115%, 3 = 130%, 4 = 145%, 5+ = 160%.
+jobStreakScale :: Int -> Int -> Int
+jobStreakScale streak baseAmount
+  | baseAmount <= 0 = 0
+  | otherwise =
+      let clampedStreak = max 1 (min 5 streak)
+          percent = 100 + (clampedStreak - 1) * 15
+       in (baseAmount * percent + 50) `div` 100
+
 meditateJingCost :: Int -> Int
 meditateJingCost amount = max 5 (amount `div` 10)
 

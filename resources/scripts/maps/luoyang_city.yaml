@@ -67,6 +67,11 @@ rooms:
     name: "洛水步法廊"
     kind: street
     desc: "廊道沿洛水东岸铺开，洛阳剑客常在这里练换位。廊尽头临水，只能折返天津桥。"
+    insight:
+      arts: [lightness, sword]
+      bonus: 6
+      jing_discount: 3
+      note: "临水听涛，在此演练身法与剑路，常有意外之悟。"
     char:
       - luoyang_footwork_mentor
     exits:
@@ -186,6 +191,11 @@ rooms:
     name: "白马寺古碑亭"
     kind: landmark
     desc: "亭中立着数通前朝石碑，碑阴刻着历年修桥与施茶的旧记，字口深沉端严。"
+    insight:
+      arts: [sword, internal]
+      bonus: 8
+      jing_discount: 4
+      note: "碑阴古字笔意沉雄，在此自研剑理与内息，颇能宁心助悟。"
     char:
       - baima_stone_sweeper
     exits:

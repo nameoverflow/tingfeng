@@ -36,17 +36,125 @@ type ItemId = Text
 
 type ArtId = Text
 
-data ItemUse = LearnArtUse
-  { _itemUseArt :: ArtId,
-    _itemUseLevel :: Int,
-    -- | Level band in which @study@ still adds proficiency; the max is exclusive of further study.
-    _itemUseMinLevel :: Int,
-    _itemUseMaxLevel :: Maybe Int,
-    _itemUseQuality :: Int,
-    _itemUseConsume :: Bool,
-    _itemUseMessage :: Maybe Text,
-    _itemUseRepeatMessage :: Maybe Text
+data EquipSlot
+  = WeaponSlot
+  | ArmorSlot
+  deriving (Show, Eq, Ord, Generic, Serialize)
+
+equipSlotToText :: EquipSlot -> Text
+equipSlotToText = \case
+  WeaponSlot -> "weapon"
+  ArmorSlot -> "armor"
+
+equipSlotFromText :: Text -> Maybe EquipSlot
+equipSlotFromText = \case
+  "weapon" -> Just WeaponSlot
+  "armor" -> Just ArmorSlot
+  _ -> Nothing
+
+instance FromJSON EquipSlot where
+  parseJSON = withText "EquipSlot" $ \slotText ->
+    case equipSlotFromText (T.toLower slotText) of
+      Just slot -> pure slot
+      Nothing -> fail "Invalid EquipSlot"
+
+instance ToJSON EquipSlot where
+  toJSON = String . equipSlotToText
+
+instance FromJSONKey EquipSlot where
+  fromJSONKey = FromJSONKeyTextParser $ \slotText ->
+    case equipSlotFromText (T.toLower slotText) of
+      Just slot -> pure slot
+      Nothing -> fail "Invalid EquipSlot"
+
+instance ToJSONKey EquipSlot where
+  toJSONKey = toJSONKeyText equipSlotToText
+
+data WeaponKind
+  = SwordWeapon
+  | FistWeapon
+  deriving (Show, Eq, Ord, Generic, Serialize)
+
+weaponKindToText :: WeaponKind -> Text
+weaponKindToText = \case
+  SwordWeapon -> "sword"
+  FistWeapon -> "fist"
+
+weaponKindFromText :: Text -> Maybe WeaponKind
+weaponKindFromText = \case
+  "sword" -> Just SwordWeapon
+  "fist" -> Just FistWeapon
+  _ -> Nothing
+
+instance FromJSON WeaponKind where
+  parseJSON = withText "WeaponKind" $ \kindText ->
+    case weaponKindFromText (T.toLower kindText) of
+      Just kind -> pure kind
+      Nothing -> fail "Invalid WeaponKind"
+
+instance ToJSON WeaponKind where
+  toJSON = String . weaponKindToText
+
+data DerivedStatModifiers = DerivedStatModifiers
+  { _dsmStrength :: Int,
+    _dsmAgility :: Int,
+    _dsmVitality :: Int,
+    _dsmMaxHp :: Int,
+    _dsmMaxQi :: Int,
+    _dsmMaxJing :: Int,
+    _dsmHpRegen :: Double,
+    _dsmQiRegen :: Double,
+    _dsmJingRegen :: Double,
+    _dsmHit :: Int,
+    _dsmDodge :: Int,
+    _dsmParry :: Int,
+    _dsmDamageBonus :: Int,
+    _dsmDamageReduction :: Int,
+    _dsmLoadLimit :: Int
   }
+  deriving (Show, Eq, Ord, Generic, Serialize)
+
+data ItemMedicine = ItemMedicine
+  { _medicineHp :: Int,
+    _medicineQi :: Int,
+    _medicineJing :: Int,
+    _medicineCureInjury :: Int,
+    _medicineConsume :: Bool,
+    _medicineMessage :: Maybe Text
+  }
+  deriving (Show, Eq, Ord, Generic, Serialize)
+
+data ItemEquip = ItemEquip
+  { _equipSlot :: EquipSlot,
+    _equipWeaponKind :: Maybe WeaponKind,
+    _equipModifiers :: DerivedStatModifiers,
+    _equipMessage :: Maybe Text,
+    _unequipMessage :: Maybe Text
+  }
+  deriving (Show, Eq, Ord, Generic, Serialize)
+
+data EquippedItem = EquippedItem
+  { _equippedItemId :: ItemId,
+    _equippedSlot :: EquipSlot,
+    _equippedWeaponKind :: Maybe WeaponKind,
+    _equippedModifiers :: DerivedStatModifiers
+  }
+  deriving (Show, Eq, Ord, Generic, Serialize)
+
+data ItemUse
+  = LearnArtUse
+      { _itemUseArt :: ArtId,
+        _itemUseLevel :: Int,
+        -- | Level band in which @study@ still adds proficiency; the max is exclusive of further study.
+        _itemUseMinLevel :: Int,
+        _itemUseMaxLevel :: Maybe Int,
+        _itemUseQuality :: Int,
+        _itemUseConsume :: Bool,
+        _itemUseMessage :: Maybe Text,
+        _itemUseRepeatMessage :: Maybe Text
+      }
+  | MedicineUse ItemMedicine
+  | EquipUse ItemEquip
   deriving (Show, Eq, Ord, Generic, Serialize)
 
 instance FromJSON ItemUse where
@@ -63,21 +171,70 @@ instance FromJSON ItemUse where
         _itemUseMessage <- o .:? "message"
         _itemUseRepeatMessage <- o .:? "repeat_message"
         pure LearnArtUse {..}
+      String "medicine" -> do
+        _medicineHp <- o .:? "hp" .!= 0
+        _medicineQi <- o .:? "qi" .!= 0
+        _medicineJing <- o .:? "jing" .!= 0
+        _medicineCureInjury <- o .:? "cure_injury" .!= 0
+        _medicineConsume <- o .:? "consume" .!= True
+        _medicineMessage <- o .:? "message"
+        pure $ MedicineUse ItemMedicine {..}
+      String "equip" -> do
+        _equipSlot <- o .: "slot"
+        _equipWeaponKind <- o .:? "weapon_kind"
+        _dsmStrength <- o .:? "strength" .!= 0
+        _dsmAgility <- o .:? "agility" .!= 0
+        _dsmVitality <- o .:? "vitality" .!= 0
+        _dsmMaxHp <- o .:? "max_hp" .!= 0
+        _dsmMaxQi <- o .:? "max_qi" .!= 0
+        _dsmMaxJing <- o .:? "max_jing" .!= 0
+        _dsmHpRegen <- o .:? "hp_regen" .!= 0.0
+        _dsmQiRegen <- o .:? "qi_regen" .!= 0.0
+        _dsmJingRegen <- o .:? "jing_regen" .!= 0.0
+        _dsmHit <- o .:? "hit" .!= 0
+        _dsmDodge <- o .:? "dodge" .!= 0
+        _dsmParry <- o .:? "parry" .!= 0
+        _dsmDamageBonus <- o .:? "damage_bonus" .!= 0
+        _dsmDamageReduction <- o .:? "damage_reduction" .!= 0
+        _dsmLoadLimit <- o .:? "load_limit" .!= 0
+        _equipMessage <- o .:? "message"
+        _unequipMessage <- o .:? "unequip_message"
+        let _equipModifiers = DerivedStatModifiers {..}
+        pure $ EquipUse ItemEquip {..}
       _ -> fail "Invalid ItemUse type"
 
 instance ToJSON ItemUse where
-  toJSON LearnArtUse {..} =
-    object
-      [ "type" .= ("learn_art" :: Text),
-        "art" .= _itemUseArt,
-        "level" .= _itemUseLevel,
-        "min_level" .= _itemUseMinLevel,
-        "max_level" .= _itemUseMaxLevel,
-        "quality" .= _itemUseQuality,
-        "consume" .= _itemUseConsume,
-        "message" .= _itemUseMessage,
-        "repeat_message" .= _itemUseRepeatMessage
-      ]
+  toJSON = \case
+    LearnArtUse {..} ->
+      object
+        [ "type" .= ("learn_art" :: Text),
+          "art" .= _itemUseArt,
+          "level" .= _itemUseLevel,
+          "min_level" .= _itemUseMinLevel,
+          "max_level" .= _itemUseMaxLevel,
+          "quality" .= _itemUseQuality,
+          "consume" .= _itemUseConsume,
+          "message" .= _itemUseMessage,
+          "repeat_message" .= _itemUseRepeatMessage
+        ]
+    MedicineUse ItemMedicine {..} ->
+      object
+        [ "type" .= ("medicine" :: Text),
+          "hp" .= _medicineHp,
+          "qi" .= _medicineQi,
+          "jing" .= _medicineJing,
+          "cure_injury" .= _medicineCureInjury,
+          "consume" .= _medicineConsume,
+          "message" .= _medicineMessage
+        ]
+    EquipUse ItemEquip {..} ->
+      object
+        [ "type" .= ("equip" :: Text),
+          "slot" .= _equipSlot,
+          "weapon_kind" .= _equipWeaponKind,
+          "message" .= _equipMessage,
+          "unequip_message" .= _unequipMessage
+        ]
 
 data Item = Item
   { _itemId :: ItemId,
@@ -106,6 +263,9 @@ instance ToJSON Item where
 
 instance Configurable Item
 
+makeLenses ''ItemMedicine
+makeLenses ''ItemEquip
+makeLenses ''EquippedItem
 makeLenses ''ItemUse
 makeLenses ''Item
 
@@ -265,6 +425,7 @@ data ActiveSkill = ActiveSkill
     _activeSkillReqStatus :: [EffectId],
     _activeSkillHeal :: Maybe Int,
     _activeSkillDamage :: Maybe Int,
+    _activeSkillCleanse :: [EffectType],
     _activeSkillAnimation :: AnimationRef,
     _activeSkillEffSelf :: [(EffectId, Double, Int)],
     _activeSkillEffTarget :: [(EffectId, Double, Int)]
@@ -295,6 +456,7 @@ instance FromJSON ActiveSkill where
     _activeSkillReqStatus <- o .:? "req_status" .!= []
     _activeSkillHeal <- o .:? "heal"
     _activeSkillDamage <- o .:? "damage"
+    _activeSkillCleanse <- o .:? "cleanse" .!= []
     _activeSkillAnimation <- o .: "animation"
     eff <- o .: "effect"
     _activeSkillEffSelf <- parseEffectList <$> (eff .:? "self" .!= [])
@@ -563,25 +725,6 @@ data DerivedStats = DerivedStats
   }
   deriving (Show, Eq, Generic)
 
-data DerivedStatModifiers = DerivedStatModifiers
-  { _dsmStrength :: Int,
-    _dsmAgility :: Int,
-    _dsmVitality :: Int,
-    _dsmMaxHp :: Int,
-    _dsmMaxQi :: Int,
-    _dsmMaxJing :: Int,
-    _dsmHpRegen :: Double,
-    _dsmQiRegen :: Double,
-    _dsmJingRegen :: Double,
-    _dsmHit :: Int,
-    _dsmDodge :: Int,
-    _dsmParry :: Int,
-    _dsmDamageBonus :: Int,
-    _dsmDamageReduction :: Int,
-    _dsmLoadLimit :: Int
-  }
-  deriving (Show, Eq, Generic)
-
 data DerivedStatSources = DerivedStatSources
   { _derivedEquipmentModifiers :: DerivedStatModifiers,
     _derivedTechniqueModifiers :: DerivedStatModifiers,
@@ -711,11 +854,14 @@ data Character = Character
     _charAgility :: Int,
     _charVitality :: Int,
     -- Equipment
+    _charEquipped :: M.Map EquipSlot EquippedItem,
     _charEnabled :: M.Map ArtType ArtEntity,
     _charTeaches :: M.Map ArtId Int,
     -- | Extra proficiency per lesson from this teacher.
     _charTeachBonus :: Int,
     _charTeachRequires :: Maybe TeachRequirement,
+    -- | Merchant inventory: item ID -> price in copper.
+    _charShop :: M.Map ItemId Int,
     -- | Overrides the rank computed from the character's arts when judging battle rewards.
     _charRank :: Maybe Int,
     -- | Training targets stop paying once the player's combat exp reaches this.
@@ -754,10 +900,12 @@ newCharacter cid cname =
       _charStrength = 0,
       _charAgility = 0,
       _charVitality = 0,
+      _charEquipped = M.empty,
       _charEnabled = M.empty,
       _charTeaches = M.empty,
       _charTeachBonus = 0,
       _charTeachRequires = Nothing,
+      _charShop = M.empty,
       _charRank = Nothing,
       _charRewardExpCeiling = Nothing,
       _charFixedReward = Nothing,
@@ -802,9 +950,11 @@ instance FromJSON Character where
     prepared <- o .:? "prepared" .!= M.empty
     explicitEnabled <- o .:? "enabled" .!= M.empty
     let _charEnabled = M.union explicitEnabled prepared
+    let _charEquipped = M.empty
     _charTeaches <- o .:? "teaches" .!= M.empty
     _charTeachBonus <- o .:? "teach_bonus" .!= 0
     _charTeachRequires <- o .:? "teach_requires"
+    _charShop <- o .:? "shop" .!= M.empty
     _charRank <- o .:? "rank"
     _charRewardExpCeiling <- o .:? "reward_exp_ceiling"
     fixedReward <- o .:? "reward"
@@ -894,7 +1044,9 @@ newPlayer pid cname =
 
 deriveStats :: Player -> DerivedStats
 deriveStats player =
-  deriveStatsWithSources player emptyDerivedStatSources
+  deriveStatsWithSources
+    player
+    (characterDerivedStatSources M.empty M.empty (player ^. playerCharacter))
 
 deriveStatsWithSources :: Player -> DerivedStatSources -> DerivedStats
 deriveStatsWithSources player =
@@ -935,7 +1087,13 @@ deriveCharacterStats char combatExp statSources =
     enabledLightness = equippedArtLevel Lightness char
     internalPower = basicInternal `div` 2 + enabledInternal
     lightnessPower = basicLightness `div` 2 + enabledLightness
-    meleeLevel = max (equippedArtLevel Sword char) (equippedArtLevel Fist char)
+    meleeLevel =
+      case M.lookup WeaponSlot (char ^. charEquipped) >>= _equippedWeaponKind of
+        Just SwordWeapon
+          | M.member Sword (char ^. charEnabled) -> equippedArtLevel Sword char
+        Just FistWeapon
+          | M.member Fist (char ^. charEnabled) -> equippedArtLevel Fist char
+        _ -> max (equippedArtLevel Sword char) (equippedArtLevel Fist char)
     foundationMelee = max basicFist basicSword
     parryArtLevel = meleeLevel
     combatExpHpBonus = min 80 (combatExp `div` 2000)
@@ -1026,10 +1184,28 @@ characterDerivedStatSources effectDefs activeEffects char =
     }
 
 equipmentDerivedModifiers :: Character -> DerivedStatModifiers
-equipmentDerivedModifiers _ = emptyDerivedStatModifiers
+equipmentDerivedModifiers char =
+  foldr
+    combineDerivedStatModifiers
+    emptyDerivedStatModifiers
+    (map _equippedModifiers . M.elems $ char ^. charEquipped)
 
 techniqueDerivedModifiers :: Character -> DerivedStatModifiers
-techniqueDerivedModifiers _ = emptyDerivedStatModifiers
+techniqueDerivedModifiers char =
+  case M.lookup Internal (char ^. charEnabled) of
+    Just (ArtEntity "taihu_breath" level _) ->
+      emptyDerivedStatModifiers
+        & dsmHpRegen .~ (0.4 + fromIntegral level * 0.05)
+        & dsmQiRegen .~ (0.3 + fromIntegral level * 0.04)
+        & dsmJingRegen .~ (0.2 + fromIntegral level * 0.02)
+        & dsmDodge .~ (2 + level `div` 3)
+    Just (ArtEntity "duan_zen_breath" level _) ->
+      emptyDerivedStatModifiers
+        & dsmVitality .~ max 1 (level `div` 8)
+        & dsmMaxQi .~ (10 + level * 2)
+        & dsmDamageReduction .~ (2 + level `div` 4)
+        & dsmParry .~ (3 + level `div` 3)
+    _ -> emptyDerivedStatModifiers
 
 activeEffectDerivedModifiers :: M.Map EffectId Effect -> M.Map EffectId ActiveEffect -> DerivedStatModifiers
 activeEffectDerivedModifiers effectDefs activeEffects =
@@ -1168,6 +1344,33 @@ roomExitConfigToRef currentMapId = \case
   LocalRoomExit pos -> RoomRef currentMapId pos
   CrossMapRoomExit roomRef -> roomRef
 
+data RoomInsight = RoomInsight
+  { _roomInsightArts :: [ArtType],
+    _roomInsightBonus :: Int,
+    _roomInsightJingDiscount :: Int,
+    _roomInsightNote :: Maybe Text
+  }
+  deriving (Show, Eq, Generic)
+
+makeLenses ''RoomInsight
+
+instance FromJSON RoomInsight where
+  parseJSON = withObject "RoomInsight" $ \o -> do
+    _roomInsightArts <- o .:? "arts" .!= []
+    _roomInsightBonus <- o .:? "bonus" .!= 0
+    _roomInsightJingDiscount <- o .:? "jing_discount" .!= 0
+    _roomInsightNote <- o .:? "note"
+    pure RoomInsight {..}
+
+instance ToJSON RoomInsight where
+  toJSON RoomInsight {..} =
+    object
+      [ "arts" .= _roomInsightArts,
+        "bonus" .= _roomInsightBonus,
+        "jing_discount" .= _roomInsightJingDiscount,
+        "note" .= _roomInsightNote
+      ]
+
 data Room = Room
   { _roomId :: RoomId,
     _roomPos :: (Int, Int),
@@ -1179,6 +1382,8 @@ data Room = Room
     _roomKind :: Text,
     -- | Resting here triples out-of-combat HP/Qi/Jing recovery (inns, sect quarters).
     _roomRest :: Bool,
+    -- | Training/researching/meditating here grants bonus proficiency or reduces Jing cost.
+    _roomInsight :: Maybe RoomInsight,
     _roomScript :: Maybe Text, -- Change this to store the Lua script content
     _roomExits :: M.Map Direction RoomRef,
     _roomChar :: [CharId],
@@ -1199,6 +1404,7 @@ instance FromJSON Room where
       (,) <$> v .: "flag" <*> v .: "desc") variantObjects
     _roomKind <- o .:? "kind" .!= "building"
     _roomRest <- o .:? "rest" .!= False
+    _roomInsight <- o .:? "insight"
     _roomScript <- o .:? "script"
     exitConfigs <- o .: "exits"
     let _roomExits = M.map (roomExitConfigToRef "") exitConfigs
@@ -1215,6 +1421,7 @@ instance ToJSON Room where
         "desc_variants" .= [object ["flag" .= flag, "desc" .= desc] | (flag, desc) <- _roomDescVariants],
         "kind" .= _roomKind,
         "rest" .= _roomRest,
+        "insight" .= _roomInsight,
         "script" .= _roomScript,
         "exits" .= _roomExits,
         "char" .= _roomChar

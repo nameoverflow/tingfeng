@@ -99,6 +99,11 @@ rooms:
     name: "石锁棚"
     kind: building
     desc: "石锁大大小小排成一列。棚门只朝旧府外院，不再充作通往誓墙的道路。"
+    insight:
+      arts: [fist, foundation]
+      bonus: 6
+      jing_discount: 2
+      note: "棚中石锁林立，在此打磨拳脚与根基，劲力更易透入筋骨。"
     exits:
       east: [0, 3]
 
@@ -199,5 +204,10 @@ rooms:
     kind: landmark
     rest: true
     desc: "三座古塔在苍山云影下静立百年。院中石阶洁净，檐角铜铃随山风轻响，令人心神俱静。"
+    insight:
+      arts: [internal, fist]
+      bonus: 8
+      jing_discount: 5
+      note: "三塔云影与古刹钟声相合，在此打坐或参悟内功掌理，事半功倍。"
     exits:
       south: [0, 7]

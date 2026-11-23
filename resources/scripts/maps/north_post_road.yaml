@@ -114,6 +114,11 @@ rooms:
     name: "旧烽火台墩"
     kind: landmark
     desc: "夯土台墩早年用来瞭望河防，如今只剩半截残垣。站在墩上，北郊递道与河滩的动静尽收眼底。"
+    insight:
+      arts: [lightness, sword]
+      bonus: 6
+      jing_discount: 3
+      note: "登墩远眺黄河风势，心胸一阔，练剑行步俱添三分凌厉。"
     exits:
       west: [0, 5]
 

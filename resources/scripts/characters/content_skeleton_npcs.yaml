@@ -111,6 +111,10 @@
     fist:
       id: nameless_trial_fist
       level: 3
+  shop:
+    qinggang_sword: 45
+    iron_fist_bracers: 42
+    patrol_leather_armor: 48
   dialogue:
     - "没钱就帮我看炉、鼓风、淬火。开封不少江湖人的第一口饭，都是从铁铺挣的。"
   respawn: 0
@@ -142,6 +146,10 @@
       level: 6
   teaches:
     basic_internal: 8
+  shop:
+    wound_powder: 12
+    returning_qi_pill: 15
+    clear_spirit_san: 15
   dialogue:
     - "水榭的调息不是我能外传的。你真想学，得自己去太湖，让水榭认你。"
     - "伤口若不及时处理，小伤也会拖成大事。先学会止血，再谈行走江湖。"
@@ -648,6 +656,11 @@
     internal:
       id: taihu_breath
       level: 5
+  shop:
+    wound_powder: 10
+    clear_spirit_san: 12
+    taihu_mending_pill: 36
+    taihu_cloud_robe: 78
   dialogue:
     - "这畦不能碰，碰了会麻半条手臂。那畦也不能碰，碰了会睡到明天。"
   respawn: 0

@@ -221,7 +221,7 @@
         target: []
     - id: taihu_clear_pulse
       name: "清脉诀"
-      desc: "水榭深层吐纳法，一边澄澈经脉收束心神，一边回补亏损的气血。"
+      desc: "水榭深层吐纳法，一边澄澈经脉驱散淤毒与颓势，一边回补亏损的气血。"
       msg: "舌抵上腭，一缕清气循经脉周流全身"
       unlock_level: 14
       cd: 18.0
@@ -230,6 +230,7 @@
       ap_req: 55
       req_status: []
       heal: 75
+      cleanse: [dot, debuff]
       animation:
         action: rig.fist.healing_palm
         tags: ["heal", "buff", "self"]

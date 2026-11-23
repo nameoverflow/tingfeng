@@ -127,6 +127,11 @@
     sendAction({ learn: { teacher: character.id, art, times } });
   }
 
+  function buy(character: RoomCharacterSummary, item: string) {
+    if (!character.id || state.battle.active || state.storyActive) return;
+    sendAction({ buy: { merchant: character.id, item } });
+  }
+
   function act(character: RoomCharacterSummary, action: "talk" | "attack") {
     if (!character.id || state.storyActive) return;
     sendAction(action === "talk" ? { talk: character.id } : { attack: character.id });
@@ -690,6 +695,17 @@
               <span>{taught.name} <small>{translate(state.locale, "npc.teach_cap", { max: taught.maxLevel })}</small></span>
               <button type="button" disabled={!trainingIdle} on:click={() => learn(selectedCharacter!, taught.artId, 1)}>{translate(state.locale, "action.learn")}</button>
               <button type="button" disabled={!trainingIdle} on:click={() => learn(selectedCharacter!, taught.artId, 10)}>{translate(state.locale, "action.learn_many")}</button>
+            </div>
+          {/each}
+        </section>
+      {/if}
+      {#if selectedCharacter.shop.length > 0}
+        <section class="npc-teaches">
+          <h3>{translate(state.locale, "npc.shop")}</h3>
+          {#each selectedCharacter.shop as goods}
+            <div class="npc-teach-row">
+              <span>{goods.name} <small>{goods.price} {translate(state.locale, "field.money")}</small></span>
+              <button type="button" disabled={!state.connected || state.battle.active || state.storyActive || state.money < goods.price} on:click={() => buy(selectedCharacter!, goods.itemId)}>{translate(state.locale, "action.buy")}</button>
             </div>
           {/each}
         </section>

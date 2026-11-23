@@ -1,0 +1,366 @@
+- id: job_kaifeng_post_run
+  name: "差事·驿路走递"
+  objectives:
+    - stage: carry_dispatch
+      text: "将开封驿马院的加急驿信送往北郊递道递铺亭。"
+    - stage: delivered
+      text: "回开封驿马院向驿卒小乔复命。"
+  reward:
+    money: 28
+    combat_exp: 35
+    potential: 25
+    items: []
+  events:
+    - id: job_kaifeng_post_start
+      trigger:
+        type: talk
+        npc: post_runner
+      conditions:
+        - type: quest_completed
+          quest: first_steps_kaifeng
+        - type: quest_not_started
+          quest: job_kaifeng_post_run
+      actions:
+        - type: set_stage
+          quest: job_kaifeng_post_run
+          stage: carry_dispatch
+        - type: message
+          speaker: "驿卒小乔"
+          text: "正巧缺个脚程快的好手！这封北郊递铺的公文急着换马，劳烦你跑一趟北郊递道的递铺亭，把信筒放进驿格里再回来拿工钱。"
+
+    - id: job_kaifeng_post_deliver
+      trigger:
+        type: enter_room
+        map: north_post_road
+        position: [0, 2]
+      conditions:
+        - type: quest_stage
+          quest: job_kaifeng_post_run
+          stage: carry_dispatch
+      actions:
+        - type: set_stage
+          quest: job_kaifeng_post_run
+          stage: delivered
+        - type: message
+          speaker: "旁白"
+          text: "你将封蜡完好的驿信放进递铺亭的换马信筒，核对了竹牌记号，可以回开封驿马院向小乔复命了。"
+
+    - id: job_kaifeng_post_finish
+      trigger:
+        type: talk
+        npc: post_runner
+      conditions:
+        - type: quest_stage
+          quest: job_kaifeng_post_run
+          stage: delivered
+      actions:
+        - type: message
+          speaker: "驿卒小乔"
+          text: "好脚力！这一趟没误了时辰。工钱你收好，手头宽裕的话待会儿还有下一封北路急件。"
+        - type: complete_job
+          quest: job_kaifeng_post_run
+
+- id: job_kaifeng_smithy_work
+  name: "差事·铁铺淬火"
+  objectives:
+    - stage: fetch_water
+      text: "去西市老井取一桶冷井水，带回东巷铁铺。"
+    - stage: water_fetched
+      text: "回东巷铁铺向赵铁匠复命。"
+  reward:
+    money: 24
+    combat_exp: 30
+    potential: 24
+    items: []
+  events:
+    - id: job_kaifeng_smithy_start
+      trigger:
+        type: talk
+        npc: kaifeng_blacksmith
+      conditions:
+        - type: quest_completed
+          quest: kaifeng_artisan_trouble
+        - type: quest_not_started
+          quest: job_kaifeng_smithy_work
+      actions:
+        - type: set_stage
+          quest: job_kaifeng_smithy_work
+          stage: fetch_water
+        - type: message
+          speaker: "赵铁匠"
+          text: "刚赶出一批刃胚，槽里的水太温了，淬不出好钢口。你若得空，替我提桶西市老井的凉水回来，工钱照算，顺道也练练下盘。"
+
+    - id: job_kaifeng_smithy_fetch
+      trigger:
+        type: enter_room
+        map: kaifeng_city
+        position: [-3, 1]
+      conditions:
+        - type: quest_stage
+          quest: job_kaifeng_smithy_work
+          stage: fetch_water
+      actions:
+        - type: set_stage
+          quest: job_kaifeng_smithy_work
+          stage: water_fetched
+        - type: message
+          speaker: "旁白"
+          text: "你从老井打起一桶透心凉的井水，沉稳提在手里，折回东巷铁铺交差。"
+
+    - id: job_kaifeng_smithy_finish
+      trigger:
+        type: talk
+        npc: kaifeng_blacksmith
+      conditions:
+        - type: quest_stage
+          quest: job_kaifeng_smithy_work
+          stage: water_fetched
+      actions:
+        - type: message
+          speaker: "赵铁匠"
+          text: "嗤啦一声，这水够凉！腕子稳当了不少，这几文工钱拿去买药或换把趁手家伙吧。"
+        - type: complete_job
+          quest: job_kaifeng_smithy_work
+
+- id: job_luoyang_peony_patrol
+  name: "差事·洛水巡场"
+  objectives:
+    - stage: scout_weir
+      text: "前往洛水旧堰亭查探周边动静。"
+    - stage: weir_checked
+      text: "再赴白马寺外山门巡看官道来客。"
+    - stage: baima_checked
+      text: "回洛阳牡丹会场向裴文举复命。"
+  reward:
+    money: 38
+    combat_exp: 55
+    potential: 38
+    items: []
+  events:
+    - id: job_luoyang_patrol_start
+      trigger:
+        type: talk
+        npc: peony_host_assistant
+      conditions:
+        - type: quest_completed
+          quest: luoyang_peony_duel
+        - type: quest_not_started
+          quest: job_luoyang_peony_patrol
+      actions:
+        - type: set_stage
+          quest: job_luoyang_peony_patrol
+          stage: scout_weir
+        - type: message
+          speaker: "裴文举"
+          text: "如今你在牡丹台挂了名，正合适替会场走一趟外围巡查。请先去洛水旧堰亭看看有没有寻衅滋事的游侠，再去白马寺外山门望一眼东郊官道，回来记你一份酬劳。"
+
+    - id: job_luoyang_patrol_weir
+      trigger:
+        type: enter_room
+        map: luoyang_city
+        position: [2, 5]
+      conditions:
+        - type: quest_stage
+          quest: job_luoyang_peony_patrol
+          stage: scout_weir
+      actions:
+        - type: set_stage
+          quest: job_luoyang_peony_patrol
+          stage: weir_checked
+        - type: message
+          speaker: "旁白"
+          text: "洛水旧堰亭一带并无异动，几名过路剑客见你步履沉稳，各自抱拳让开。接下来去白马寺外山门看一眼即可。"
+
+    - id: job_luoyang_patrol_baima
+      trigger:
+        type: enter_room
+        map: luoyang_city
+        position: [0, 7]
+      conditions:
+        - type: quest_stage
+          quest: job_luoyang_peony_patrol
+          stage: weir_checked
+      actions:
+        - type: set_stage
+          quest: job_luoyang_peony_patrol
+          stage: baima_checked
+        - type: message
+          speaker: "旁白"
+          text: "白马寺外山门清静如常，东郊官道往来客商秩序井然。可以回牡丹会场向裴文举复命了。"
+
+    - id: job_luoyang_patrol_finish
+      trigger:
+        type: talk
+        npc: peony_host_assistant
+      conditions:
+        - type: quest_stage
+          quest: job_luoyang_peony_patrol
+          stage: baima_checked
+      actions:
+        - type: message
+          speaker: "裴文举"
+          text: "辛苦阁下走这一趟。牡丹会最重规矩与信义，这份酬银请收下，改日得空还请继续搭把手。"
+        - type: complete_job
+          quest: job_luoyang_peony_patrol
+
+- id: job_dali_caravan_patrol
+  name: "差事·苍山探路"
+  objectives:
+    - stage: scout_stream
+      text: "前往苍山冷泉涧探察山道水情。"
+    - stage: stream_scouted
+      text: "登上苍山废石场高处瞭望商路。"
+    - stage: cliff_scouted
+      text: "回大理茶马车场向茶马护卫复命。"
+  reward:
+    money: 40
+    combat_exp: 60
+    potential: 40
+    items: []
+  events:
+    - id: job_dali_patrol_start
+      trigger:
+        type: talk
+        npc: dali_caravan_guard
+      conditions:
+        - type: flag
+          flag: dali.road_pass
+        - type: quest_not_started
+          quest: job_dali_caravan_patrol
+      actions:
+        - type: set_stage
+          quest: job_dali_caravan_patrol
+          stage: scout_stream
+        - type: message
+          speaker: "茶马护卫"
+          text: "下一批茶马马上要过西山，前哨人手紧。兄弟若愿意搭把手，先去苍山冷泉涧看看山涧有没有滑石，再上废石场高处望一眼马道，回来领一笔探路银钱。"
+
+    - id: job_dali_patrol_stream
+      trigger:
+        type: enter_room
+        map: dali_city
+        position: [-2, 2]
+      conditions:
+        - type: quest_stage
+          quest: job_dali_caravan_patrol
+          stage: scout_stream
+      actions:
+        - type: set_stage
+          quest: job_dali_caravan_patrol
+          stage: stream_scouted
+        - type: message
+          speaker: "旁白"
+          text: "冷泉涧石路虽湿，尚可稳步过马。再往北登一趟废石场，便能把前路看个透彻。"
+
+    - id: job_dali_patrol_cliff
+      trigger:
+        type: enter_room
+        map: dali_city
+        position: [-2, 3]
+      conditions:
+        - type: quest_stage
+          quest: job_dali_caravan_patrol
+          stage: stream_scouted
+      actions:
+        - type: set_stage
+          quest: job_dali_caravan_patrol
+          stage: cliff_scouted
+        - type: message
+          speaker: "旁白"
+          text: "立在苍山废石场极目远眺，山道并无埋伏烟尘，商队可以照常发车。回茶马车场复命吧。"
+
+    - id: job_dali_patrol_finish
+      trigger:
+        type: talk
+        npc: dali_caravan_guard
+      conditions:
+        - type: quest_stage
+          quest: job_dali_caravan_patrol
+          stage: cliff_scouted
+      actions:
+        - type: message
+          speaker: "茶马护卫"
+          text: "有你这一趟回报，马帮心里就有底了。这是段家账上拨的探路钱，收好！"
+        - type: complete_job
+          quest: job_dali_caravan_patrol
+
+- id: job_taihu_herb_gathering
+  name: "差事·水榭理药"
+  objectives:
+    - stage: wash_herbs
+      text: "到洗药溪淘洗新采的药根。"
+    - stage: washed
+      text: "把洗净的药草送去晒药架翻晒。"
+    - stage: dried
+      text: "回水榭外院向药童复命。"
+  reward:
+    money: 32
+    combat_exp: 42
+    potential: 35
+    items: []
+  events:
+    - id: job_taihu_herb_start
+      trigger:
+        type: talk
+        npc: taihu_herb_boy
+      conditions:
+        - type: flag
+          flag: taihu.pavilion_guest
+        - type: quest_not_started
+          quest: job_taihu_herb_gathering
+      actions:
+        - type: set_stage
+          quest: job_taihu_herb_gathering
+          stage: wash_herbs
+        - type: message
+          speaker: "水榭药童"
+          text: "前堂的药罐正催着呢，我一个人忙不过来。你帮我把这筐药根拿去洗药溪漂净泥沙，再摊到西边晒药架上，回来我记你一份诊资酬劳。"
+
+    - id: job_taihu_herb_wash
+      trigger:
+        type: enter_room
+        map: taihu_water_pavilion
+        position: [1, 2]
+      conditions:
+        - type: quest_stage
+          quest: job_taihu_herb_gathering
+          stage: wash_herbs
+      actions:
+        - type: set_stage
+          quest: job_taihu_herb_gathering
+          stage: washed
+        - type: message
+          speaker: "旁白"
+          text: "你借着清浅溪水细细漂去药根泥沙，草木清气沁入鼻端。接着送到西侧晒药架摊开即可。"
+
+    - id: job_taihu_herb_dry
+      trigger:
+        type: enter_room
+        map: taihu_water_pavilion
+        position: [-1, 2]
+      conditions:
+        - type: quest_stage
+          quest: job_taihu_herb_gathering
+          stage: washed
+      actions:
+        - type: set_stage
+          quest: job_taihu_herb_gathering
+          stage: dried
+        - type: message
+          speaker: "旁白"
+          text: "你将药草按性味分格铺在晒药架上，微风掠过，草香四散。回水榭外院告诉药童吧。"
+
+    - id: job_taihu_herb_finish
+      trigger:
+        type: talk
+        npc: taihu_herb_boy
+      conditions:
+        - type: quest_stage
+          quest: job_taihu_herb_gathering
+          stage: dried
+      actions:
+        - type: message
+          speaker: "水榭药童"
+          text: "分格清清楚楚，一点没弄混！这是水榭给的谢礼，若缺伤药也可以顺便在我这儿抓几包。"
+        - type: complete_job
+          quest: job_taihu_herb_gathering

@@ -7,7 +7,7 @@ import Control.Monad.Except (throwError)
 import Control.Monad.Random (mkStdGen, runRand)
 import Data.Aeson (eitherDecode)
 import Data.List (findIndex)
-import Data.Maybe (isNothing)
+import Data.Maybe (fromMaybe, isNothing, listToMaybe)
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import qualified Data.Text as T
@@ -71,6 +71,10 @@ main = do
   testKaifengInterleavedQuestsAndChoices
   testRegionalQuestsAndWeiyuanEchoConvergence
   testStoryBattlesArePlayerIsolated
+  testRepeatableJobsAndStreaks
+  testShopEquipmentMedicineAndWeaponStyle
+  testRoomAndCombatInsightBonuses
+  testInternalArtDifferentiation
   testPlayerSaveRoundTrip
   testLegacyPreparedSlotFoldsIntoEnabled
   putStrLn "All tests passed"
@@ -1524,3 +1528,154 @@ testPlayerSaveRoundTrip = do
     Nothing -> fail "tester missing after legacy save restore"
     Just player ->
       assert ((player ^. playerPosition) == ("weiyuan_road", (3, 3))) "pre-migration position was restored"
+
+testRepeatableJobsAndStreaks :: IO ()
+testRepeatableJobsAndStreaks = do
+  gs0 <- newTestPlayerState
+  let gs1 =
+        gs0
+          & stories . ix "tester" . storyQuestStages . at "first_steps_kaifeng" ?~ "completed"
+          & players . ix "tester" . playerPosition .~ ("kaifeng_city", (2, 3))
+          & players . ix "tester" . playerMoney .~ 0
+          & players . ix "tester" . playerCombatExp .~ 0
+          & players . ix "tester" . playerPotential .~ 0
+  -- First run (streak 1 -> 100%)
+  (_, gs2) <- runOk "start post job 1" gs1 $ processNormalAction "tester" (Talk "post_runner")
+  assert (questStageOf "job_kaifeng_post_run" gs2 == Just "carry_dispatch") "post job did not start"
+  let gs2AtPost = gs2 & players . ix "tester" . playerPosition .~ ("north_post_road", (0, 1))
+  (_, gs3) <- runOk "deliver post 1" gs2AtPost $ processNormalAction "tester" (Go North)
+  assert (questStageOf "job_kaifeng_post_run" gs3 == Just "delivered") "post job did not advance on entering relay pavilion"
+  let gs3Back = gs3 & players . ix "tester" . playerPosition .~ ("kaifeng_city", (2, 3))
+  (res1, gs4) <- runOk "finish post job 1" gs3Back $ processNormalAction "tester" (Talk "post_runner")
+  assert (isNothing $ questStageOf "job_kaifeng_post_run" gs4) "repeatable job stage should clear after completion"
+  assert (gs4 ^? stories . ix "tester" . storyJobStreaks . ix "job_kaifeng_post_run" == Just 1) "job streak should be 1"
+  assert (any (\case SystemMsg (SystemMessage "job_completed" _) -> True; _ -> False) (map snd res1)) "job_completed system message missing"
+  let money1 = fromMaybe 0 (gs4 ^? players . ix "tester" . playerMoney)
+      exp1 = fromMaybe 0 (gs4 ^? players . ix "tester" . playerCombatExp)
+  assert (money1 == 28 && exp1 == 35) "first streak reward should be 100% of base"
+  -- Second run (streak 2 -> 115%)
+  (_, gs5) <- runOk "start post job 2" gs4 $ processNormalAction "tester" (Talk "post_runner")
+  assert (questStageOf "job_kaifeng_post_run" gs5 == Just "carry_dispatch") "repeatable job should be re-acceptable"
+  let gs5AtPost = gs5 & players . ix "tester" . playerPosition .~ ("north_post_road", (0, 1))
+  (_, gs6) <- runOk "deliver post 2" gs5AtPost $ processNormalAction "tester" (Go North)
+  let gs6Back = gs6 & players . ix "tester" . playerPosition .~ ("kaifeng_city", (2, 3))
+  (_, gs7) <- runOk "finish post job 2" gs6Back $ processNormalAction "tester" (Talk "post_runner")
+  assert (gs7 ^? stories . ix "tester" . storyJobStreaks . ix "job_kaifeng_post_run" == Just 2) "job streak should be 2"
+  let moneyDelta2 = fromMaybe 0 (gs7 ^? players . ix "tester" . playerMoney) - money1
+      expDelta2 = fromMaybe 0 (gs7 ^? players . ix "tester" . playerCombatExp) - exp1
+  assert (moneyDelta2 == jobStreakScale 2 28 && expDelta2 == jobStreakScale 2 35) "second streak reward should scale to 115%"
+
+testShopEquipmentMedicineAndWeaponStyle :: IO ()
+testShopEquipmentMedicineAndWeaponStyle = do
+  gs0 <- newTestPlayerState
+  let gs1 =
+        gs0
+          & players . ix "tester" . playerPosition .~ ("kaifeng_city", (3, 1))
+          & players . ix "tester" . playerMoney .~ 200
+          & players . ix "tester" . playerCharacter . charEnabled . at Sword ?~ ArtEntity "nameless_trial_sword" 5 0
+          & players . ix "tester" . playerCharacter . charEnabled . at Fist ?~ ArtEntity "nameless_trial_fist" 5 0
+  let baseDerived = deriveStats (gs1 ^?! players . ix "tester")
+  -- Buy sword and armor from blacksmith
+  (_, gs2) <- runOk "buy sword" gs1 $ processNormalAction "tester" (Buy (Just "kaifeng_blacksmith") "qinggang_sword")
+  (_, gs3) <- runOk "buy armor" gs2 $ processNormalAction "tester" (Buy (Just "kaifeng_blacksmith") "patrol_leather_armor")
+  assert (gs3 ^? players . ix "tester" . playerMoney == Just (200 - 45 - 48)) "buying should deduct copper"
+  -- Equip both
+  (_, gs4) <- runOk "equip sword" gs3 $ processNormalAction "tester" (Equip "qinggang_sword")
+  (_, gs5) <- runOk "equip armor" gs4 $ processNormalAction "tester" (Equip "patrol_leather_armor")
+  let pEquipped = gs5 ^?! players . ix "tester"
+      eqDerived = deriveStats pEquipped
+  assert (eqDerived ^. dsDamageBonus > baseDerived ^. dsDamageBonus) "equipping sword should increase damage bonus"
+  assert (eqDerived ^. dsMaxHp == baseDerived ^. dsMaxHp + 25) "equipping armor should increase max HP"
+  let swordAttacks = unlockedPreparedAttacks (gs5 ^. world . martialArts) (pEquipped ^. playerCharacter)
+  assert (not (null swordAttacks) && all (\(PreparedAttack _ art _) -> art ^. artType == Sword) swordAttacks) "wielding sword should select sword moves only"
+  -- Equip fist bracers and verify fist moves only
+  (_, gs6) <- runOk "buy bracers" gs5 $ processNormalAction "tester" (Buy (Just "kaifeng_blacksmith") "iron_fist_bracers")
+  (_, gs7) <- runOk "equip bracers" gs6 $ processNormalAction "tester" (Use "iron_fist_bracers")
+  let pFist = gs7 ^?! players . ix "tester"
+      fistAttacks = unlockedPreparedAttacks (gs7 ^. world . martialArts) (pFist ^. playerCharacter)
+  assert (not (null fistAttacks) && all (\(PreparedAttack _ art _) -> art ^. artType == Fist) fistAttacks) "wielding fist bracers should select fist moves only"
+  -- Save and reload equipped items
+  savePlayerState ".stack-work/test-saves" "tester-equip" (gs7 & players . at "tester-equip" .~ gs7 ^. players . at "tester")
+  savedRes <- loadPlayerSave ".stack-work/test-saves" "tester-equip"
+  loadedSave <- case savedRes of
+    Right (Just s) -> pure s
+    other -> fail $ "failed loading equip save: " <> show other
+  assert (M.lookup WeaponSlot (saveEquipped loadedSave) == Just "iron_fist_bracers") "equipped weapon should persist in save"
+  assert (M.lookup ArmorSlot (saveEquipped loadedSave) == Just "patrol_leather_armor") "equipped armor should persist in save"
+  -- Medicine heals HP and cures injury
+  let gsApothecary =
+        gs7
+          & players . ix "tester" . playerPosition .~ ("kaifeng_city", (2, -1))
+          & players . ix "tester" . playerCharacter . charHP .~ 20
+          & playerRuntime . at "tester" ?~ (newPlayerRuntime & runtimeInjuredRemaining .~ 120)
+  (_, gsBoughtMed) <- runOk "buy wound powder" gsApothecary $ processNormalAction "tester" (Buy (Just "kaifeng_physician") "wound_powder")
+  (_, gsHealed) <- runOk "use wound powder" gsBoughtMed $ processNormalAction "tester" (Use "wound_powder")
+  assert (gsHealed ^? players . ix "tester" . playerCharacter . charHP == Just 65) "wound powder should restore 45 HP"
+  assert (gsHealed ^? playerRuntime . ix "tester" . runtimeInjuredRemaining == Just 60) "wound powder should reduce injury by 60s"
+
+testRoomAndCombatInsightBonuses :: IO ()
+testRoomAndCombatInsightBonuses = do
+  gs0 <- newTestPlayerState
+  let baseSetup pos insightStacks =
+        gs0
+          & players . ix "tester" . playerPosition .~ pos
+          & players . ix "tester" . playerPotential .~ 10
+          & players . ix "tester" . playerCombatExp .~ 100000
+          & players . ix "tester" . playerCharacter . charJing .~ 120
+          & players . ix "tester" . playerCharacter . charArt . at Sword ?~ [ArtEntity "luoyang_sword" 20 0]
+          & playerRuntime . at "tester" ?~ (newPlayerRuntime & runtimeCombatInsight .~ insightStacks)
+  -- Research in a normal room (kaifeng_south_street) without combat insight
+  (_, gsPlain) <- runOk "research plain" (baseSetup ("kaifeng_city", (0, 0)) 0) $ processNormalAction "tester" (Research "luoyang_sword" 1)
+  (_, gsPlainDone) <- runOk "tick plain" gsPlain $ tickTraining 5.0
+  -- Research in Baima Stele Pavilion (bonus 8, jing_discount 4) with 2 combat insight stacks (+6)
+  (_, gsInsight) <- runOk "research insight" (baseSetup ("luoyang_city", (-1, 7)) 2) $ processNormalAction "tester" (Research "luoyang_sword" 1)
+  (_, gsInsightDone) <- runOk "tick insight" gsInsight $ tickTraining 5.0
+  let plainProg = fromMaybe 0 . listToMaybe $ [a ^. artProgress | a <- fromMaybe [] (gsPlainDone ^? players . ix "tester" . playerCharacter . charArt . ix Sword), a ^. artDef == "luoyang_sword"]
+      insightProg = fromMaybe 0 . listToMaybe $ [a ^. artProgress | a <- fromMaybe [] (gsInsightDone ^? players . ix "tester" . playerCharacter . charArt . ix Sword), a ^. artDef == "luoyang_sword"]
+      plainJing = fromMaybe 0 (gsPlainDone ^? players . ix "tester" . playerCharacter . charJing)
+      insightJing = fromMaybe 0 (gsInsightDone ^? players . ix "tester" . playerCharacter . charJing)
+  assert (insightProg == plainProg + 8 + combatInsightResearchBonus) "room insight + combat insight should boost research progress"
+  assert (insightJing == plainJing + 4) "room insight jing_discount should reduce research Jing cost"
+  assert (gsInsightDone ^? playerRuntime . ix "tester" . runtimeCombatInsight == Just 1) "research step should consume 1 combat insight stack"
+
+testInternalArtDifferentiation :: IO ()
+testInternalArtDifferentiation = do
+  gs0 <- newTestPlayerState
+  let gsTaihu =
+        gs0
+          & players . ix "tester" . playerCharacter . charEnabled . at Internal ?~ ArtEntity "taihu_breath" 15 0
+          & players . ix "tester" . playerCharacter . charHP .~ 50
+          & playerRuntime . at "tester" ?~ (newPlayerRuntime & runtimeInjuredRemaining .~ 60)
+      gsPlain =
+        gs0
+          & players . ix "tester" . playerCharacter . charEnabled . at Internal .~ Nothing
+          & players . ix "tester" . playerCharacter . charHP .~ 50
+          & playerRuntime . at "tester" ?~ (newPlayerRuntime & runtimeInjuredRemaining .~ 60)
+  (_, gsTaihuTick) <- runOk "tick taihu" gsTaihu $ tickPlayerRecovery 10.0
+  (_, gsPlainTick) <- runOk "tick plain" gsPlain $ tickPlayerRecovery 10.0
+  let taihuInj = fromMaybe 60 (gsTaihuTick ^? playerRuntime . ix "tester" . runtimeInjuredRemaining)
+      plainInj = fromMaybe 60 (gsPlainTick ^? playerRuntime . ix "tester" . runtimeInjuredRemaining)
+  assert (taihuInj < plainInj) "taihu_breath should speed up injury recovery"
+  -- Duan Zen Breath meditation bonus & defensive derived stats
+  let gsZen =
+        gs0
+          & players . ix "tester" . playerCharacter . charEnabled . at Internal ?~ ArtEntity "duan_zen_breath" 20 0
+          & players . ix "tester" . playerCharacter . charArt . at Foundation ?~ [ArtEntity "basic_internal" 20 0]
+          & players . ix "tester" . playerCharacter . charQi .~ 100
+          & players . ix "tester" . playerCharacter . charMaxQi .~ 100
+      gsNoZen =
+        gs0
+          & players . ix "tester" . playerCharacter . charEnabled . at Internal ?~ ArtEntity "taihu_breath" 20 0
+          & players . ix "tester" . playerCharacter . charArt . at Foundation ?~ [ArtEntity "basic_internal" 20 0]
+          & players . ix "tester" . playerCharacter . charQi .~ 100
+          & players . ix "tester" . playerCharacter . charMaxQi .~ 100
+  let zenDerived = deriveStats (gsZen ^?! players . ix "tester")
+      noZenDerived = deriveStats (gsNoZen ^?! players . ix "tester")
+  assert (zenDerived ^. dsDamageReduction > noZenDerived ^. dsDamageReduction) "duan_zen_breath should provide damage reduction"
+  (_, gsZenMed) <- runOk "meditate zen" gsZen $ processNormalAction "tester" (Meditate 20 1)
+  (_, gsZenDone) <- runOk "tick zen med" gsZenMed $ tickTraining 5.0
+  (_, gsNoZenMed) <- runOk "meditate no zen" gsNoZen $ processNormalAction "tester" (Meditate 20 1)
+  (_, gsNoZenDone) <- runOk "tick no zen med" gsNoZenMed $ tickTraining 5.0
+  let zenMaxQi = fromMaybe 0 (gsZenDone ^? players . ix "tester" . playerCharacter . charMaxQi)
+      noZenMaxQi = fromMaybe 0 (gsNoZenDone ^? players . ix "tester" . playerCharacter . charMaxQi)
+  assert (zenMaxQi > noZenMaxQi) "duan_zen_breath should grant extra max Qi per meditation"

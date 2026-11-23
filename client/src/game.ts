@@ -53,6 +53,7 @@ export interface PlayerStats {
   potential: number;
   combatExp: number;
   injuredSeconds: number;
+  combatInsight: number;
   busy: BusySummary | null;
 }
 
@@ -139,6 +140,7 @@ const initialState: GameState = {
     potential: 0,
     combatExp: 0,
     injuredSeconds: 0,
+    combatInsight: 0,
     busy: null
   },
   room: { name: "", desc: "", characters: [], exits: [] },
@@ -745,6 +747,7 @@ function normalizePlayerStats(payload: PlayerStatsPayload, current: PlayerStats,
       potential: payload.playerStatsSummaryPotential ?? current.potential,
       combatExp: payload.playerStatsSummaryCombatExp ?? current.combatExp,
       injuredSeconds: payload.playerStatsSummaryInjuredSeconds ?? 0,
+      combatInsight: payload.playerStatsSummaryCombatInsight ?? 0,
       busy: payload.playerStatsSummaryBusy ?? null
     }
   };
@@ -1031,11 +1034,17 @@ function normalizeCharacters(chars: unknown[]): RoomCharacterSummary[] {
               const entry = (taught || {}) as Record<string, unknown>;
               return { artId: String(entry.artId || ""), name: String(entry.name || entry.artId || ""), maxLevel: Number(entry.maxLevel || 0) };
             })
+          : [],
+        shop: Array.isArray(obj.shop)
+          ? obj.shop.map((item) => {
+              const entry = (item || {}) as Record<string, unknown>;
+              return { itemId: String(entry.itemId || ""), name: String(entry.name || entry.itemId || ""), price: Number(entry.price || 0) };
+            })
           : []
       };
     }
     const text = String(char || "");
-    return { id: null, name: text, desc: "", actions: [], teaches: [] };
+    return { id: null, name: text, desc: "", actions: [], teaches: [], shop: [] };
   });
 }
 

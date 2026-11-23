@@ -52,7 +52,8 @@ data PlayerSave = PlayerSave
     saveAppearance :: Maybe Int,
     saveInnate :: Maybe InnateAttrs,
     saveArts :: M.Map ArtType [ArtEntity],
-    saveEnabled :: M.Map ArtType ArtEntity
+    saveEnabled :: M.Map ArtType ArtEntity,
+    saveEquipped :: M.Map EquipSlot ItemId
   }
   deriving (Show, Eq, Generic)
 
@@ -132,6 +133,7 @@ instance FromJSON PlayerSave where
     savedPrepared <- o .:? "prepared" .!= M.empty
     savedEnabled <- o .:? "enabled" .!= M.empty
     let saveEnabled = M.union savedEnabled (savedPrepared :: M.Map ArtType ArtEntity)
+    saveEquipped <- o .:? "equipped" .!= M.empty
     pure PlayerSave {..}
 
 instance ToJSON PlayerSave where
@@ -168,7 +170,8 @@ instance ToJSON PlayerSave where
         "desc" .= saveDesc,
         "innate" .= saveInnate,
         "arts" .= saveArts,
-        "enabled" .= saveEnabled
+        "enabled" .= saveEnabled,
+        "equipped" .= saveEquipped
       ]
 
 loadPlayerSave :: FilePath -> PlayerId -> IO (Either Text (Maybe PlayerSave))
@@ -210,6 +213,7 @@ applyPlayerSaveToGameState PlayerSave {..} gs =
     . (players . ix savePlayerId . playerCombatExp .~ saveCombatExp)
     . (players . ix savePlayerId . playerCharacter . charArt .~ saveArts)
     . (players . ix savePlayerId . playerCharacter . charEnabled .~ saveEnabled)
+    . (players . ix savePlayerId . playerCharacter . charEquipped .~ restoredEquipped)
     . maybe id (\hp -> players . ix savePlayerId . playerCharacter . charHP .~ hp) saveHp
     . maybe id (\maxHp -> players . ix savePlayerId . playerCharacter . charMaxHP .~ maxHp) saveMaxHp
     . maybe id (\qi -> players . ix savePlayerId . playerCharacter . charQi .~ qi) saveQi
@@ -229,6 +233,24 @@ applyPlayerSaveToGameState PlayerSave {..} gs =
       if isCurrentContentSave
         then saveInventory
         else M.filterWithKey (\savedItemId _ -> M.member savedItemId $ gs ^. world . items) saveInventory
+    restoredEquipped =
+      M.mapMaybeWithKey resolveEquipped saveEquipped
+    resolveEquipped slot savedItemId = do
+      cnt <- M.lookup savedItemId restoredInventory
+      if cnt <= 0
+        then Nothing
+        else do
+          item <- M.lookup savedItemId (gs ^. world . items)
+          case item ^. itemUse of
+            Just (EquipUse eq) | eq ^. equipSlot == slot ->
+              Just $
+                EquippedItem
+                  { _equippedItemId = savedItemId,
+                    _equippedSlot = slot,
+                    _equippedWeaponKind = eq ^. equipWeaponKind,
+                    _equippedModifiers = eq ^. equipModifiers
+                  }
+            _ -> Nothing
 
 restoreSavedPosition :: PlayerId -> Maybe (MapId, (Int, Int)) -> GameState -> GameState
 restoreSavedPosition _ Nothing gs = gs
@@ -263,6 +285,7 @@ playerSaveFromGameState pid gs = do
       saveInnate = Just $ player ^. playerCharacter . charInnate
       saveArts = player ^. playerCharacter . charArt
       saveEnabled = player ^. playerCharacter . charEnabled
+      saveEquipped = M.map (^. equippedItemId) (player ^. playerCharacter . charEquipped)
   pure PlayerSave {..}
 
 currentPlayerSaveVersion :: Int

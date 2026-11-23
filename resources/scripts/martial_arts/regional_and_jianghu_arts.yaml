@@ -250,7 +250,7 @@
         target: []
     - id: zen_wither_flourish
       name: "一念枯荣"
-      desc: "由静转生，引丹田温养之气抚平内伤，同时稳住护体真气。"
+      desc: "由静转生，引丹田温养之气抚平内伤、化解滞气，同时稳住护体真气。"
       msg: "缓吐一口浊气，内息自枯转荣，周流百骸"
       unlock_level: 15
       cd: 20.0
@@ -259,6 +259,7 @@
       ap_req: 60
       req_status: []
       heal: 85
+      cleanse: [debuff]
       animation:
         action: rig.fist.healing_palm
         tags: ["heal", "buff", "self"]

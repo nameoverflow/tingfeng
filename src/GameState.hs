@@ -57,12 +57,14 @@ data PlayerRuntime = PlayerRuntime
   { -- | Fractional HP/Qi/Jing recovery carried between ticks.
     _runtimeRecoveryCarry :: (Double, Double, Double),
     _runtimeInjuredRemaining :: Double,
-    _runtimeBusy :: Maybe BusyTask
+    _runtimeBusy :: Maybe BusyTask,
+    -- | Remaining steps of post-battle combat insight that boost practice/research.
+    _runtimeCombatInsight :: Int
   }
   deriving (Show, Eq, Generic)
 
 newPlayerRuntime :: PlayerRuntime
-newPlayerRuntime = PlayerRuntime (0, 0, 0) 0 Nothing
+newPlayerRuntime = PlayerRuntime (0, 0, 0) 0 Nothing 0
 
 makeLenses ''BusyTask
 makeLenses ''PlayerRuntime

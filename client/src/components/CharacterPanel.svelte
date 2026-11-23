@@ -120,6 +120,12 @@
           <dd>{translate(state.locale, "status.injured", { seconds: state.stats.injuredSeconds })}</dd>
         </div>
       {/if}
+      {#if state.stats.combatInsight > 0}
+        <div>
+          <dt>{translate(state.locale, "field.combat_insight")}</dt>
+          <dd>{translate(state.locale, "status.combat_insight", { stacks: state.stats.combatInsight })}</dd>
+        </div>
+      {/if}
     </dl>
 
     <div class="meter-stack">
@@ -179,15 +185,24 @@
               <div>
                 <strong>{item.inventoryItemSummaryName}</strong>
                 <span>x{item.inventoryItemSummaryAmount}</span>
+                {#if item.inventoryItemSummaryEquipped}
+                  <small>{translate(state.locale, "inventory.equipped")}</small>
+                {/if}
               </div>
               {#if item.inventoryItemSummaryUsable}
                 <span class="inventory-actions">
                   <button type="button" disabled={!state.connected || state.battle.active || state.storyActive} on:click={() => sendAction({ use: item.inventoryItemSummaryId })}>
-                    {translate(state.locale, "action.use")}
+                    {#if item.inventoryItemSummaryEquipSlot}
+                      {translate(state.locale, item.inventoryItemSummaryEquipped ? "action.unequip" : "action.equip")}
+                    {:else}
+                      {translate(state.locale, "action.use")}
+                    {/if}
                   </button>
-                  <button type="button" disabled={!idle} on:click={() => sendAction({ study: { item: item.inventoryItemSummaryId, times: 10 } })}>
-                    {translate(state.locale, "action.study")}
-                  </button>
+                  {#if item.inventoryItemSummaryStudyable}
+                    <button type="button" disabled={!idle} on:click={() => sendAction({ study: { item: item.inventoryItemSummaryId, times: 10 } })}>
+                      {translate(state.locale, "action.study")}
+                    </button>
+                  {/if}
                 </span>
               {/if}
             </article>

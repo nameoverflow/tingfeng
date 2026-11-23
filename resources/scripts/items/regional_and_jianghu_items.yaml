@@ -117,3 +117,118 @@
     consume: false
     message: "你展开花笺写就的《拂柳剑谱》，学会了太湖柔韧顺势的拂柳剑法。"
     repeat_message: "你温习《拂柳剑谱》，对听风辨位、借力回剑的火候更清楚了。"
+
+- id: wound_powder
+  name: "金创药"
+  desc: "仁和药铺与太湖药房常备的外敷止血散，以三七、白及与血竭研成细末，敷上伤口便能收敛血口、缓解伤势。"
+  use:
+    type: medicine
+    hp: 45
+    cure_injury: 60
+    consume: true
+    message: "你拆开药包敷上金创药，伤处清凉收敛，气血与外伤都平复了不少。"
+
+- id: returning_qi_pill
+  name: "回气丸"
+  desc: "以黄芪、党参与陈皮蜜炼而成的乌黑药丸，行路或演武力竭时含服一丸，丹田便有温热真气徐徐回升。"
+  use:
+    type: medicine
+    qi: 55
+    consume: true
+    message: "你服下一粒回气丸，一股温润药力化入丹田，耗损的内息渐渐回转。"
+
+- id: clear_spirit_san
+  name: "清心散"
+  desc: "带着薄荷与冰片清香的细散，能澄澈心神、退去苦读或久战后的昏沉。"
+  use:
+    type: medicine
+    jing: 45
+    cure_injury: 45
+    consume: true
+    message: "你嗅入少许清心散又以温水送服，眉心一凉，倦意顿时消减。"
+
+- id: taihu_mending_pill
+  name: "太湖续脉丹"
+  desc: "太湖水榭以湖畔灵药精炼而成的疗伤重药，蜡封严密，专为重伤气弱之人续护经脉。"
+  use:
+    type: medicine
+    hp: 80
+    qi: 40
+    cure_injury: 300
+    consume: true
+    message: "你捏碎蜡丸服下太湖续脉丹，药力循经脉化开，胸口郁结的重伤顿时消散。"
+
+- id: qinggang_sword
+  name: "青钢剑"
+  desc: "开封与洛阳铁铺常见的标准三尺长剑，剑脊厚实、刃口轻快，最合江湖人历练防身。"
+  use:
+    type: equip
+    slot: weapon
+    weapon_kind: sword
+    damage_bonus: 5
+    hit: 8
+    agility: 1
+    message: "你握住青钢剑剑柄，挽了个剑花，将长剑佩在腰间。"
+
+- id: luoyang_white_blade
+  name: "洛阳白刃剑"
+  desc: "洛阳旧剑市名匠精锻的窄刃长剑，剑身映光如秋水，出剑回剑皆比寻常铁剑快上一分。"
+  use:
+    type: equip
+    slot: weapon
+    weapon_kind: sword
+    damage_bonus: 8
+    hit: 12
+    parry: 6
+    agility: 2
+    message: "你拔出洛阳白刃剑试了试锋芒，剑身轻鸣，十分趁手。"
+
+- id: iron_fist_bracers
+  name: "精铁护腕"
+  desc: "衬着厚牛皮的精铁护腕，扣在双腕上既能架挡兵刃，出拳撞肘时又添三分沉猛。"
+  use:
+    type: equip
+    slot: weapon
+    weapon_kind: fist
+    damage_bonus: 5
+    hit: 6
+    parry: 8
+    strength: 2
+    message: "你将一对精铁护腕牢牢扣在双腕上，试着握拳沉肘，分量正好。"
+
+- id: cangshan_rock_gauntlets
+  name: "苍山裂石护手"
+  desc: "大理段氏护院演练重掌时佩戴的乌钢护手，掌指关节处嵌着细密铁纹，发力如山石压顶。"
+  use:
+    type: equip
+    slot: weapon
+    weapon_kind: fist
+    damage_bonus: 8
+    parry: 10
+    strength: 3
+    vitality: 1
+    message: "你戴上苍山裂石护手，双掌一合，沉甸甸的乌钢护手与掌力浑然一体。"
+
+- id: patrol_leather_armor
+  name: "巡检皮甲"
+  desc: "捕房与商队护卫常穿的熟牛皮短甲，内衬棉布，虽不华丽，却能稳稳卸去刀剑劈砍的劲力。"
+  use:
+    type: equip
+    slot: armor
+    damage_reduction: 4
+    max_hp: 25
+    parry: 4
+    message: "你穿好巡检皮甲，收紧腰扣，护住前胸后背要害。"
+
+- id: taihu_cloud_robe
+  name: "水榭云纹衫"
+  desc: "太湖水榭用湖绸夹织韧麻缝制的轻便外衫，衣摆随风轻扬，不碍步法腾挪，更能敛气护身。"
+  use:
+    type: equip
+    slot: armor
+    damage_reduction: 3
+    max_hp: 15
+    max_qi: 25
+    dodge: 10
+    agility: 2
+    message: "你披上水榭云纹衫，衣衫轻软贴身，举手投足倍感轻灵。"

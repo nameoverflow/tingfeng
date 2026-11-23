@@ -56,6 +56,9 @@ processNormalAction pid action = case action of
   Attack (target :: CharId) -> haltTraining pid >> playerAttack pid target
   Talk (target :: CharId) -> haltTraining pid >> playerTalk pid target
   Use itemId -> haltTraining pid >> playerUseItem pid itemId
+  Equip itemId -> haltTraining pid >> playerEquipItem pid itemId
+  Unequip slot -> haltTraining pid >> playerUnequipSlot pid slot
+  Buy maybeMerchant itemId -> haltTraining pid >> playerBuyItem pid maybeMerchant itemId
   Train artId -> startTraining pid (TrainPractice artId) 1
   Practice artId times -> startTraining pid (TrainPractice artId) times
   Learn teacherId artId times -> startTraining pid (TrainLearn teacherId artId) times
@@ -138,6 +141,7 @@ sendPlayerStats pid = do
         PlayerStatsMsg $
           summary
             { playerStatsSummaryInjuredSeconds = ceiling (runtime ^. runtimeInjuredRemaining),
+              playerStatsSummaryCombatInsight = runtime ^. runtimeCombatInsight,
               playerStatsSummaryBusy = busySummary <$> runtime ^. runtimeBusy
             }
       )
@@ -164,6 +168,7 @@ playerStatsSummary player hp maxHp qi maxQi ap status =
       playerStatsSummaryPotential = player ^. playerPotential,
       playerStatsSummaryCombatExp = player ^. playerCombatExp,
       playerStatsSummaryInjuredSeconds = 0,
+      playerStatsSummaryCombatInsight = 0,
       playerStatsSummaryBusy = Nothing
     }
   where
@@ -179,6 +184,7 @@ playerView pid = do
   allChars <- use $ world . chars
   worldMaps <- use $ world . maps
   martialArtMap <- use $ world . martialArts
+  itemMap <- use $ world . items
   let roomChar' = curRoom ^. roomChar
   visibleRoomCharIds <- filterM (npcVisibleToPlayer pid) roomChar'
   let curRoomChars = catMaybes $ flip map visibleRoomCharIds $ \cid ->
@@ -196,6 +202,10 @@ playerView pid = do
                       roomCharacterSummaryTeaches =
                         [ TeachableArtSummary taughtArtId (maybe taughtArtId (^. artName) $ M.lookup taughtArtId martialArtMap) maxLevel
                           | (taughtArtId, maxLevel) <- M.toList $ char ^. charTeaches
+                        ],
+                      roomCharacterSummaryShop =
+                        [ ShopItemSummary shopItemId (maybe shopItemId (^. itemName) $ M.lookup shopItemId itemMap) price
+                          | (shopItemId, price) <- M.toList $ char ^. charShop
                         ]
                     }
               else Nothing
@@ -214,9 +224,13 @@ playerView pid = do
                   }
   storyState <- ensureStoryState pid
   let curRoomName = curRoom ^. roomName
-  let curRoomDesc =
+  let baseRoomDesc =
         fromMaybe (curRoom ^. roomDesc) $
           listToMaybe [desc | (flag, desc) <- curRoom ^. roomDescVariants, S.member flag (storyState ^. storyFlags)]
+  let curRoomDesc =
+        case curRoom ^. roomInsight >>= view roomInsightNote of
+          Just note -> baseRoomDesc <> "\n" <> note
+          Nothing -> baseRoomDesc
   tell [(pid, ViewMsg curRoomName curRoomDesc curRoomChars curRoomExits)]
   sendPlayerStats pid
   sendPlayerInventory pid
@@ -419,6 +433,8 @@ executeStoryActions pid actions = do
       CompleteQuest quest -> do
         stories . ix pid . storyQuestStages . at quest .= Just "completed"
         grantQuestRewardSummaries pid quest
+      CompleteRepeatableJob quest ->
+        completeRepeatableJob pid quest
       SetFlag flag ->
         stories . ix pid . storyFlags %= S.insert flag >> return []
       ClearFlag flag ->
@@ -470,6 +486,7 @@ executeStoryActions pid actions = do
     actionIsSilent = \case
       SetQuestStage _ _ -> True
       CompleteQuest _ -> True
+      CompleteRepeatableJob _ -> True
       SetFlag _ -> True
       ClearFlag _ -> True
       GiveItem _ _ -> True
@@ -504,13 +521,20 @@ sendPlayerInventory :: PlayerId -> GameStateT ()
 sendPlayerInventory pid = do
   player <- getsPlayer pid
   itemMap <- use $ world . items
+  let equippedIds = S.fromList . map (^. equippedItemId) . M.elems $ player ^. playerCharacter . charEquipped
   let itemSummaries =
-        [ InventoryItemSummary itemId displayName amount usable
+        [ InventoryItemSummary itemId displayName amount usable studyable (S.member itemId equippedIds) equipSlotName
           | (itemId, amount) <- M.toList $ player ^. playerInventory,
             amount > 0,
             let maybeItem = M.lookup itemId itemMap,
             let displayName = maybe itemId (^. itemName) maybeItem,
-            let usable = maybe False (isJust . view itemUse) maybeItem
+            let usable = maybe False (isJust . view itemUse) maybeItem,
+            let studyable = case maybeItem >>= view itemUse of
+                  Just LearnArtUse {} -> True
+                  _ -> False,
+            let equipSlotName = case maybeItem >>= view itemUse of
+                  Just (EquipUse eq) -> Just (equipSlotToText $ eq ^. equipSlot)
+                  _ -> Nothing
         ]
   tell [(pid, InventoryMsg (player ^. playerMoney) itemSummaries)]
 
@@ -538,10 +562,181 @@ applyItemUse pid player item itemUse' =
           grantArt pid artId level
           when shouldConsume $ consumeInventoryItem pid (item ^. itemId) 1
           tell [(pid, UseItemMsg (player ^. playerCharacter . charName) (fromMaybe defaultMessage message))]
+    MedicineUse med -> do
+      let derived = deriveStats player
+          char = player ^. playerCharacter
+          nextHp = min (derived ^. dsMaxHp) (char ^. charHP + max 0 (med ^. medicineHp))
+          nextQi = min (derived ^. dsMaxQi) (char ^. charQi + max 0 (med ^. medicineQi))
+          nextJing = min (derived ^. dsMaxJing) (char ^. charJing + max 0 (med ^. medicineJing))
+      players . ix pid . playerCharacter . charHP .= nextHp
+      players . ix pid . playerCharacter . charQi .= nextQi
+      players . ix pid . playerCharacter . charJing .= nextJing
+      when (med ^. medicineCureInjury > 0) $ do
+        runtime <- usePlayerRuntime pid
+        let nextInjury = max 0 (runtime ^. runtimeInjuredRemaining - fromIntegral (med ^. medicineCureInjury))
+        playerRuntime . at pid ?= (runtime & runtimeInjuredRemaining .~ nextInjury)
+      when (med ^. medicineConsume) $ consumeInventoryItem pid (item ^. itemId) 1
+      tell [(pid, UseItemMsg (player ^. playerCharacter . charName) (fromMaybe defaultMedicineMessage $ med ^. medicineMessage))]
+      sendPlayerStats pid
+      markPlayerDirty pid
+    EquipUse eq -> do
+      let slot = eq ^. equipSlot
+          currentlyEquipped = player ^. playerCharacter . charEquipped . at slot
+      case currentlyEquipped of
+        Just existing | existing ^. equippedItemId == item ^. itemId ->
+          unequipSlotWithMsg pid slot (fromMaybe defaultUnequipMessage $ eq ^. unequipMessage)
+        _ ->
+          equipItemWithMsg pid item eq (fromMaybe defaultEquipMessage $ eq ^. equipMessage)
   where
     itemDisplayName = item ^. itemName
     defaultMessage = "你使用了" <> itemDisplayName <> "。"
+    defaultMedicineMessage = "你服下了" <> itemDisplayName <> "，气息渐趋平缓。"
+    defaultEquipMessage = "你佩好了" <> itemDisplayName <> "。"
+    defaultUnequipMessage = "你卸下了" <> itemDisplayName <> "。"
     defaultRepeatMessage = "你又翻了一遍" <> itemDisplayName <> "，其中关窍早已记在心里。"
+
+playerEquipItem :: PlayerId -> ItemId -> GameStateT ()
+playerEquipItem pid itemId = do
+  player <- getsPlayer pid
+  case player ^. playerInventory . at itemId of
+    Just amount | amount > 0 -> do
+      item <- liftWorld $ getsItem itemId
+      case item ^. itemUse of
+        Just (EquipUse eq) -> do
+          let msg = fromMaybe ("你佩好了" <> item ^. itemName <> "。") (eq ^. equipMessage)
+          equipItemWithMsg pid item eq msg
+          sendPlayerInventory pid
+        _ -> throwStructured "item_cannot_be_equipped" [("item", item ^. itemName)]
+    _ -> throwStructured "item_not_in_inventory" [("itemId", itemId)]
+
+playerUnequipSlot :: PlayerId -> EquipSlot -> GameStateT ()
+playerUnequipSlot pid slot = do
+  player <- getsPlayer pid
+  case player ^. playerCharacter . charEquipped . at slot of
+    Nothing -> throwStructured "slot_not_equipped" [("slot", equipSlotToText slot)]
+    Just equipped -> do
+      itemMap <- use $ world . items
+      let maybeItem = M.lookup (equipped ^. equippedItemId) itemMap
+          itemDisplayName = maybe (equipped ^. equippedItemId) (^. itemName) maybeItem
+          customMsg = case maybeItem >>= view itemUse of
+            Just (EquipUse eq) -> eq ^. unequipMessage
+            _ -> Nothing
+          msg = fromMaybe ("你卸下了" <> itemDisplayName <> "。") customMsg
+      unequipSlotWithMsg pid slot msg
+      sendPlayerInventory pid
+
+equipItemWithMsg :: PlayerId -> Item -> ItemEquip -> T.Text -> GameStateT ()
+equipItemWithMsg pid item eq msg = do
+  let slot = eq ^. equipSlot
+      equipped =
+        EquippedItem
+          { _equippedItemId = item ^. itemId,
+            _equippedSlot = slot,
+            _equippedWeaponKind = eq ^. equipWeaponKind,
+            _equippedModifiers = eq ^. equipModifiers
+          }
+  players . ix pid . playerCharacter . charEquipped . at slot .= Just equipped
+  clampPlayerVitalsToDerived pid
+  player <- getsPlayer pid
+  tell [(pid, UseItemMsg (player ^. playerCharacter . charName) msg)]
+  sendPlayerStats pid
+  markPlayerDirty pid
+
+unequipSlotWithMsg :: PlayerId -> EquipSlot -> T.Text -> GameStateT ()
+unequipSlotWithMsg pid slot msg = do
+  players . ix pid . playerCharacter . charEquipped . at slot .= Nothing
+  clampPlayerVitalsToDerived pid
+  player <- getsPlayer pid
+  tell [(pid, UseItemMsg (player ^. playerCharacter . charName) msg)]
+  sendPlayerStats pid
+  markPlayerDirty pid
+
+clampPlayerVitalsToDerived :: PlayerId -> GameStateT ()
+clampPlayerVitalsToDerived pid = do
+  player <- getsPlayer pid
+  let derived = deriveStats player
+  players . ix pid . playerCharacter . charHP %= min (derived ^. dsMaxHp)
+  players . ix pid . playerCharacter . charQi %= min (derived ^. dsMaxQi)
+  players . ix pid . playerCharacter . charJing %= min (derived ^. dsMaxJing)
+
+playerBuyItem :: PlayerId -> Maybe CharId -> ItemId -> GameStateT ()
+playerBuyItem pid maybeMerchantId itemId = do
+  merchant <- resolveShopMerchant pid maybeMerchantId itemId
+  case merchant ^. charShop . at itemId of
+    Nothing ->
+      throwStructured "merchant_not_carrying_item" [("merchant", merchant ^. charName), ("itemId", itemId)]
+    Just price -> do
+      player <- getsPlayer pid
+      when (player ^. playerMoney < price) $
+        throwStructured
+          "not_enough_money"
+          [ ("required", showText price),
+            ("current", showText $ player ^. playerMoney)
+          ]
+      item <- liftWorld $ getsItem itemId
+      players . ix pid . playerMoney -= price
+      addInventoryItem pid itemId 1
+      summary <- itemRewardSummary itemId 1
+      tell [(pid, RewardMsg [summary])]
+      tell [(pid, SystemMsg $ SystemMessage "item_bought" (M.fromList [("merchant", merchant ^. charName), ("item", item ^. itemName), ("price", showText price)]))]
+      sendPlayerInventory pid
+      sendPlayerStats pid
+      markPlayerDirty pid
+
+resolveShopMerchant :: PlayerId -> Maybe CharId -> ItemId -> GameStateT Character
+resolveShopMerchant pid (Just merchantId) _ = getsRoomCharacter pid merchantId Dialogue
+resolveShopMerchant pid Nothing itemId = do
+  (curMapId, curPos) <- (^. playerPosition) <$> getsPlayer pid
+  curRoom <- liftWorld $ getsMapRoom curMapId curPos
+  visibleIds <- filterM (npcVisibleToPlayer pid) (curRoom ^. roomChar)
+  allChars <- use $ world . chars
+  let matching =
+        [ char
+          | cid <- visibleIds,
+            Just char <- [M.lookup cid allChars],
+            char ^. charStatus == CharAlive,
+            M.member itemId (char ^. charShop)
+        ]
+  case matching of
+    merchant : _ -> return merchant
+    [] -> throwStructured "merchant_not_carrying_item" [("itemId", itemId)]
+
+completeRepeatableJob :: PlayerId -> QuestId -> GameStateT [RewardSummary]
+completeRepeatableJob pid qid = do
+  questMap <- use $ world . quests
+  case M.lookup qid questMap of
+    Nothing -> throwStructured "quest_reward_not_found" [("questId", qid)]
+    Just quest -> do
+      storyState <- ensureStoryState pid
+      let prevStreak = fromMaybe 0 (storyState ^. storyJobStreaks . at qid)
+          newStreak = prevStreak + 1
+          reward = quest ^. questReward
+          scaledMoney = jobStreakScale newStreak (reward ^. questRewardMoney)
+          scaledExp = jobStreakScale newStreak (reward ^. questRewardCombatExp)
+          scaledPot = jobStreakScale newStreak (reward ^. questRewardPotential)
+      stories . ix pid . storyQuestStages . at qid .= Nothing
+      stories . ix pid . storyJobStreaks . at qid .= Just newStreak
+      when (scaledMoney > 0) $
+        players . ix pid . playerMoney += scaledMoney
+      forM_ (reward ^. questRewardItems) $ \rewardItem ->
+        addInventoryItem pid (rewardItem ^. questRewardItemId) (rewardItem ^. questRewardItemAmount)
+      growth <- grantGrowth pid scaledExp scaledPot
+      let scaledRewardForItemsAndMoney =
+            reward
+              & questRewardMoney .~ scaledMoney
+              & questRewardCombatExp .~ 0
+              & questRewardPotential .~ 0
+      summaries <- questRewardSummaries scaledRewardForItemsAndMoney
+      tell
+        [ ( pid,
+            SystemMsg $
+              SystemMessage
+                "job_completed"
+                (M.fromList [("job", quest ^. questName), ("streak", showText newStreak)])
+          )
+        ]
+      markPlayerDirty pid
+      return $ summaries <> growth
 
 grantQuestReward :: PlayerId -> QuestId -> GameStateT ()
 grantQuestReward pid qid = do
@@ -645,8 +840,9 @@ startTraining pid trainingAction times = do
   forM_ (runtime ^. runtimeBusy) $ \busy ->
     throwStructured "player_busy" [("seconds", showText (ceiling (busy ^. busyTimer) :: Int))]
   runTrainingStep pid trainingAction
+  runtimeAfter <- usePlayerRuntime pid
   let task = BusyTask trainingAction (min maxTrainingTimes times - 1) (trainingStepSeconds trainingAction) 1
-  playerRuntime . at pid ?= (runtime & runtimeBusy ?~ task)
+  playerRuntime . at pid ?= (runtimeAfter & runtimeBusy ?~ task)
   sendPlayerStats pid
 
 maxTrainingTimes :: Int
@@ -757,7 +953,6 @@ practiceStep pid artId = do
   level <- requireKnownArtLevel player martialArt
   knownFoundation <- knownFoundationArt player martialArt
   let foundationLevel = maybe 0 snd knownFoundation
-      gain = practiceProgress foundationLevel
       intoFoundation = case knownFoundation of
         Just (foundationArt, _) | level >= foundationLevel -> Just foundationArt
         _ -> Nothing
@@ -765,8 +960,11 @@ practiceStep pid artId = do
   case intoFoundation of
     Just foundationArt -> ensureArtCanGain pid foundationArt Nothing (const $ pure ())
     Nothing -> ensureArtCanGain pid martialArt sourceCap (const $ pure ())
-  consumeJing pid (practiceJingCost level)
+  (locBonus, locDiscount) <- currentRoomInsight pid (martialArt ^. artType)
+  consumeJing pid (max 1 $ practiceJingCost level - locDiscount)
   consumePracticeBody pid martialArt level
+  combatBonus <- consumeCombatInsightBonus pid combatInsightPracticeBonus
+  let gain = practiceProgress foundationLevel + locBonus + combatBonus
   rewards <- case intoFoundation of
     Just foundationArt -> addKnownArtProgress pid foundationArt Nothing gain
     Nothing -> gainArtProgress pid martialArt sourceCap gain
@@ -839,29 +1037,29 @@ studyStep pid itemId = do
     Just amount | amount > 0 -> do
       item <- liftWorld $ getsItem itemId
       case item ^. itemUse of
-        Just use' -> do
-          let artId' = use' ^. itemUseArt
-              level = use' ^. itemUseLevel
+        Just (LearnArtUse artId' level minLevel maybeBandMax quality _ _ _) -> do
           martialArtMap <- use $ world . martialArts
           martialArt <- lookupMartialArt "martial_art_not_found_learning" artId'
           ensureArtRequirements pid martialArtMap martialArt
+          (locBonus, locDiscount) <- currentRoomInsight pid (martialArt ^. artType)
           let currentLevel = fromMaybe 0 $ playerKnownArtLevel player artId'
-              bandMax = fromMaybe (martialArt ^. artMaxLevel) (use' ^. itemUseMaxLevel)
+              bandMax = fromMaybe (martialArt ^. artMaxLevel) maybeBandMax
+              jingCost = max 1 (studyJingCost currentLevel - locDiscount)
           if currentLevel < level
             then do
               ensureCombatExpForLevel pid level
-              consumeJing pid (studyJingCost currentLevel)
+              consumeJing pid jingCost
               rewards <- grantArtRewards pid artId' level
               sendTrainingResult pid rewards
             else do
-              when (currentLevel < use' ^. itemUseMinLevel) $
-                throwStructured "book_too_advanced" [("item", item ^. itemName), ("level", showText $ use' ^. itemUseMinLevel)]
+              when (currentLevel < minLevel) $
+                throwStructured "book_too_advanced" [("item", item ^. itemName), ("level", showText minLevel)]
               ensureArtCanGain pid martialArt (Just bandMax) $ \_ ->
                 throwStructured "book_exhausted" [("item", item ^. itemName)]
-              consumeJing pid (studyJingCost currentLevel)
-              rewards <- gainArtProgress pid martialArt (Just bandMax) (studyProgress $ use' ^. itemUseQuality)
+              consumeJing pid jingCost
+              rewards <- gainArtProgress pid martialArt (Just bandMax) (studyProgress quality + locBonus)
               sendTrainingResult pid rewards
-        Nothing -> throwStructured "item_cannot_be_studied" [("item", item ^. itemName)]
+        _ -> throwStructured "item_cannot_be_studied" [("item", item ^. itemName)]
     _ -> throwStructured "item_not_in_inventory" [("itemId", itemId)]
 
 playerResearchArt :: PlayerId -> ArtId -> GameStateT ()
@@ -880,9 +1078,11 @@ researchStep pid artId = do
   when (player ^. playerPotential <= 0) $
     throwStructured "not_enough_potential" [("required", "1"), ("current", showText $ player ^. playerPotential)]
   ensureArtCanGain pid martialArt Nothing (const $ pure ())
-  consumeJing pid (researchJingCost currentLevel)
+  (locBonus, locDiscount) <- currentRoomInsight pid (martialArt ^. artType)
+  consumeJing pid (max 1 $ researchJingCost currentLevel - locDiscount)
+  combatBonus <- consumeCombatInsightBonus pid combatInsightResearchBonus
   players . ix pid . playerPotential -= 1
-  rewards <- gainArtProgress pid martialArt Nothing researchProgress
+  rewards <- gainArtProgress pid martialArt Nothing (researchProgressWithInsight (locBonus + combatBonus))
   sendTrainingResult pid rewards
 
 playerMeditate :: PlayerId -> Int -> GameStateT ()
@@ -900,17 +1100,42 @@ meditateStep pid amount = do
       enabledInternal = equippedArtLevel Internal char
       cap = storedMaxQiCap basicInternal enabledInternal
       stored = char ^. charMaxQi
-      maxQiGain = min (cap - stored) (meditateMaxQiGain amount (basicInternal `div` 2 + enabledInternal))
+      zenBonus =
+        case char ^. charEnabled . at Internal of
+          Just (ArtEntity "duan_zen_breath" lvl _) | lvl >= 1 -> 1 + lvl `div` 20
+          _ -> 0
+      maxQiGain = min (cap - stored) (meditateMaxQiGain amount (basicInternal `div` 2 + enabledInternal) + zenBonus)
   when (qi < amount) $
     throwStructured "not_enough_qi" [("required", showText amount), ("current", showText qi)]
   when (stored >= cap) $
     throwStructured "max_qi_at_cap" [("cap", showText cap)]
-  consumeJing pid (meditateJingCost amount)
+  (_, locDiscount) <- currentRoomInsight pid Internal
+  consumeJing pid (max 1 $ meditateJingCost amount - locDiscount)
   players . ix pid . playerCharacter . charQi -= amount
   players . ix pid . playerCharacter . charMaxQi += maxQiGain
   tell [(pid, RewardMsg [resourceRewardSummary "max_qi" "真气上限" maxQiGain])]
   sendPlayerStats pid
   markPlayerDirty pid
+
+currentRoomInsight :: PlayerId -> ArtType -> GameStateT (Int, Int)
+currentRoomInsight pid artType' = do
+  (curMapId, curPos) <- (^. playerPosition) <$> getsPlayer pid
+  maybeInsight <- preuse $ world . maps . ix curMapId . mapRooms . ix curPos . roomInsight . _Just
+  case maybeInsight of
+    Just ri
+      | null (ri ^. roomInsightArts) || artType' `elem` (ri ^. roomInsightArts) ->
+          return (max 0 (ri ^. roomInsightBonus), max 0 (ri ^. roomInsightJingDiscount))
+    _ -> return (0, 0)
+
+consumeCombatInsightBonus :: PlayerId -> Int -> GameStateT Int
+consumeCombatInsightBonus pid bonusPerStack = do
+  runtime <- usePlayerRuntime pid
+  let stacks = runtime ^. runtimeCombatInsight
+  if stacks > 0
+    then do
+      playerRuntime . at pid ?= (runtime & runtimeCombatInsight .~ (stacks - 1))
+      return bonusPerStack
+    else return 0
 
 consumeJing :: PlayerId -> Int -> GameStateT ()
 consumeJing pid cost =
@@ -1112,6 +1337,9 @@ consumeInventoryItem pid itemId amount = do
   current <- fromMaybe 0 <$> preuse (players . ix pid . playerInventory . ix itemId)
   let remaining = current - amount
   players . ix pid . playerInventory . at itemId .= if remaining > 0 then Just remaining else Nothing
+  when (remaining <= 0) $ do
+    players . ix pid . playerCharacter . charEquipped %= M.filter ((/= itemId) . view equippedItemId)
+    clampPlayerVitalsToDerived pid
 
 playerKnowsArtAtLeast :: PlayerId -> ArtId -> Int -> GameStateT Bool
 playerKnowsArtAtLeast pid artId level = do
@@ -1430,7 +1658,12 @@ tickPlayerRecovery dt = do
         derived = deriveStats player
         char = player ^. playerCharacter
         restFactor = if resting && outOfCombat then 3 else 1
-        hpRate = if outOfCombat then derived ^. dsHpRegen * restFactor * (if injured then 0.5 else 1) else 0
+        hasTaihuBreath = case char ^. charEnabled . at Internal of
+          Just (ArtEntity "taihu_breath" _ _) -> True
+          _ -> False
+        injuryPenalty = if injured then (if hasTaihuBreath then 0.75 else 0.5) else 1
+        injuryDecayRate = (if hasTaihuBreath then 1.5 else 1.0) * (if resting && outOfCombat then 2.0 else 1.0)
+        hpRate = if outOfCombat then derived ^. dsHpRegen * restFactor * injuryPenalty else 0
         qiRate = if outOfCombat then derived ^. dsQiRegen * restFactor else 0
         jingRate = derived ^. dsJingRegen * restFactor
         (hpCarry, qiCarry, jingCarry) = runtime ^. runtimeRecoveryCarry
@@ -1439,7 +1672,7 @@ tickPlayerRecovery dt = do
         (nextJing, jingCarry') = recoverResource dt jingRate (char ^. charJing) (derived ^. dsMaxJing) jingCarry
         changed = nextHp /= char ^. charHP || nextQi /= char ^. charQi || nextJing /= char ^. charJing
         wasInjured = injured
-        injuredRemaining = max 0 (runtime ^. runtimeInjuredRemaining - dt)
+        injuredRemaining = max 0 (runtime ^. runtimeInjuredRemaining - dt * injuryDecayRate)
     when (status `elem` [PlayerNormal, PlayerInBattle]) $ do
       playerRuntime . at pid ?= (runtime & runtimeRecoveryCarry .~ (hpCarry', qiCarry', jingCarry') & runtimeInjuredRemaining .~ injuredRemaining)
       when changed $ do
@@ -1585,9 +1818,13 @@ battleStateDerivedStats effectDefs state =
     char = state ^. battleChar
 
 combatStyleForCharacter :: Character -> T.Text
-combatStyleForCharacter char
-  | M.member Sword enabled = "sword"
-  | otherwise = "fist"
+combatStyleForCharacter char =
+  case char ^. charEquipped . at WeaponSlot >>= _equippedWeaponKind of
+    Just SwordWeapon -> "sword"
+    Just FistWeapon -> "fist"
+    Nothing
+      | M.member Sword enabled -> "sword"
+      | otherwise -> "fist"
   where
     enabled = char ^. charEnabled
 
@@ -1697,6 +1934,12 @@ grantBattleGrowthReward pid enemy = do
                 let expGain = battleCombatExpGain playerRank enemyRank
                  in (expGain, battlePotentialGain expGain)
   rewards <- grantGrowth pid combatExpGain potentialGain
+  when (combatExpGain > 0) $ do
+    let insightGain = combatInsightStacksForWin playerRank enemyRank
+    when (insightGain > 0) $ do
+      runtime <- usePlayerRuntime pid
+      playerRuntime . at pid ?= (runtime & runtimeCombatInsight %~ min 10 . (+ insightGain))
+      tell [(pid, SystemMsg $ SystemMessage "combat_insight_gained" (M.fromList [("stacks", showText insightGain)]))]
   if null rewards
     then tell [(pid, SystemMsg $ SystemMessage "battle_reward_none" (M.fromList [("enemy", enemy ^. charName)]))]
     else tell [(pid, RewardMsg rewards)]

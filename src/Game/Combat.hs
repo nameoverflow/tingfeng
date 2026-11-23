@@ -458,12 +458,19 @@ selectPreparedAttack char = do
 unlockedPreparedAttacks :: M.Map ArtId MartialArt -> Character -> [PreparedAttack]
 unlockedPreparedAttacks martialArtMap char =
   [ PreparedAttack artEntity martialArt move
-    | artType' <- [Sword, Fist],
+    | artType' <- preferredCombatArtTypes char,
       Just artEntity <- [char ^. charEnabled . at artType'],
       Just martialArt <- [M.lookup (artEntity ^. artDef) martialArtMap],
       move <- martialArt ^. artAttackMoves,
       move ^. attackMoveUnlockLevel <= artEntity ^. artLevel
   ]
+
+preferredCombatArtTypes :: Character -> [ArtType]
+preferredCombatArtTypes char =
+  case char ^. charEquipped . at WeaponSlot >>= _equippedWeaponKind of
+    Just SwordWeapon | M.member Sword (char ^. charEnabled) -> [Sword]
+    Just FistWeapon | M.member Fist (char ^. charEnabled) -> [Fist]
+    _ -> [Sword, Fist]
 
 contest :: Int -> Int -> Combat Bool
 contest attack defense
@@ -626,3 +633,11 @@ applyActiveSkillEffects activeSkill caster target damageAmount healAmount = do
             _activeEffectValue = value
           }
     caster . battleEffects . at effId .= Just activeEff
+
+  unless (null $ activeSkill ^. activeSkillCleanse) $ do
+    effectDefs <- view effects
+    let shouldKeep activeEff =
+          case M.lookup (activeEff ^. activeEffectDef) effectDefs of
+            Just eff -> (eff ^. effectType) `notElem` (activeSkill ^. activeSkillCleanse)
+            Nothing -> True
+    caster . battleEffects %= M.filter shouldKeep

@@ -84,6 +84,7 @@ data StoryAction
   | StoryTransition Text Int
   | SetQuestStage QuestId QuestStage
   | CompleteQuest QuestId
+  | CompleteRepeatableJob QuestId
   | SetFlag FlagId
   | ClearFlag FlagId
   | HideNpc CharId
@@ -99,15 +100,16 @@ data StoryAction
 data PlayerStoryState = PlayerStoryState
   { _storyQuestStages :: M.Map QuestId QuestStage,
     _storyFlags :: S.Set FlagId,
-    _storyHiddenNpcs :: S.Set CharId
+    _storyHiddenNpcs :: S.Set CharId,
+    _storyJobStreaks :: M.Map QuestId Int
   }
   deriving (Show, Eq, Generic)
 
 newPlayerStoryState :: PlayerStoryState
-newPlayerStoryState = PlayerStoryState M.empty S.empty S.empty
+newPlayerStoryState = PlayerStoryState M.empty S.empty S.empty M.empty
 
 newPlayerStoryStateFor :: M.Map CharId Character -> PlayerStoryState
-newPlayerStoryStateFor characterMap = PlayerStoryState M.empty S.empty hiddenNpcs
+newPlayerStoryStateFor characterMap = PlayerStoryState M.empty S.empty hiddenNpcs M.empty
   where
     hiddenNpcs = M.keysSet $ M.filter _charInitiallyHidden characterMap
 
@@ -191,6 +193,7 @@ instance FromJSON StoryAction where
       "transition" -> StoryTransition <$> o .: "text" <*> o .: "ms"
       "set_stage" -> SetQuestStage <$> o .: "quest" <*> o .: "stage"
       "complete_quest" -> CompleteQuest <$> o .: "quest"
+      "complete_job" -> CompleteRepeatableJob <$> o .: "quest"
       "set_flag" -> SetFlag <$> o .: "flag"
       "clear_flag" -> ClearFlag <$> o .: "flag"
       "hide_npc" -> HideNpc <$> o .: "npc"
@@ -215,6 +218,8 @@ instance ToJSON StoryAction where
       object ["type" .= ("set_stage" :: Text), "quest" .= quest, "stage" .= stage]
     CompleteQuest quest ->
       object ["type" .= ("complete_quest" :: Text), "quest" .= quest]
+    CompleteRepeatableJob quest ->
+      object ["type" .= ("complete_job" :: Text), "quest" .= quest]
     SetFlag flag ->
       object ["type" .= ("set_flag" :: Text), "flag" .= flag]
     ClearFlag flag ->
@@ -241,6 +246,7 @@ instance FromJSON PlayerStoryState where
     _storyQuestStages <- o .:? "quest_stages" .!= M.empty
     _storyFlags <- o .:? "flags" .!= S.empty
     _storyHiddenNpcs <- o .:? "hidden_npcs" .!= S.empty
+    _storyJobStreaks <- o .:? "job_streaks" .!= M.empty
     pure PlayerStoryState {..}
 
 instance ToJSON PlayerStoryState where
@@ -248,7 +254,8 @@ instance ToJSON PlayerStoryState where
     object
       [ "quest_stages" .= _storyQuestStages,
         "flags" .= _storyFlags,
-        "hidden_npcs" .= _storyHiddenNpcs
+        "hidden_npcs" .= _storyHiddenNpcs,
+        "job_streaks" .= _storyJobStreaks
       ]
 
 withTypedObject :: String -> (Text -> Object -> Parser a) -> Value -> Parser a

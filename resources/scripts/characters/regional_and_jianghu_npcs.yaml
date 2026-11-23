@@ -212,6 +212,9 @@
       id: nameless_trial_sword
       level: 8
   teaches: {}
+  shop:
+    qinggang_sword: 45
+    luoyang_white_blade: 85
   dialogue:
     - "洛阳城里一半人买剑是为了佩着赴宴，另一半人买剑是为了替旧剑找新主。客官是哪一种？"
   respawn: 0
@@ -432,6 +435,10 @@
         level: 10
   prepared: {}
   teaches: {}
+  shop:
+    cangshan_rock_gauntlets: 80
+    patrol_leather_armor: 48
+    wound_powder: 12
   dialogue:
     - "段家替人护路，凭的是一纸保契。契在，哪怕货沉了澜沧江，段家也照赔不误。"
   respawn: 0

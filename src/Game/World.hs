@@ -130,7 +130,7 @@ validateWorld wrld =
     validateItemUse item =
       case item ^. itemUse of
         Nothing -> []
-        Just use'@(LearnArtUse artId level _ _ _ _ _ _) ->
+        Just (LearnArtUse artId level minLevel maybeBandMax _ _ _ _) ->
           [ "item " <> item ^. itemId <> " use learn_art references missing martial art " <> artId
             | M.notMember artId (wrld ^. martialArts)
           ]
@@ -139,13 +139,21 @@ validateWorld wrld =
                ]
             <> validateLearnArtLevel ("item " <> item ^. itemId <> " use learn_art") artId level
             <> [ "item " <> item ^. itemId <> " study band has min_level above max_level"
-                 | Just bandMax <- [use' ^. itemUseMaxLevel],
-                   use' ^. itemUseMinLevel > bandMax
+                 | Just bandMax <- [maybeBandMax],
+                   minLevel > bandMax
                ]
             <> concat
               [ validateLearnArtLevel ("item " <> item ^. itemId <> " study max_level") artId bandMax
-                | Just bandMax <- [use' ^. itemUseMaxLevel]
+                | Just bandMax <- [maybeBandMax]
               ]
+        Just (MedicineUse med) ->
+          [ "item " <> item ^. itemId <> " medicine has no positive restoration or cure effect"
+            | med ^. medicineHp <= 0
+                && med ^. medicineQi <= 0
+                && med ^. medicineJing <= 0
+                && med ^. medicineCureInjury <= 0
+          ]
+        Just (EquipUse _) -> []
 
     validateCharacter char =
       [ "character " <> char ^. charId <> " teaches missing martial art " <> artId
@@ -160,6 +168,14 @@ validateWorld wrld =
           [ validateLearnArtLevel ("character " <> char ^. charId <> " teaches") artId level
             | (artId, level) <- M.toList $ char ^. charTeaches
           ]
+        <> [ "character " <> char ^. charId <> " shop references missing item " <> itemId
+             | itemId <- M.keys $ char ^. charShop,
+               M.notMember itemId (wrld ^. items)
+           ]
+        <> [ "character " <> char ^. charId <> " shop has non-positive price for " <> itemId
+             | (itemId, price) <- M.toList $ char ^. charShop,
+               price <= 0
+           ]
 
     validateMartialArt martialArt =
       [ "martial art " <> artId' <> " has non-positive max_level"
@@ -308,6 +324,7 @@ validateWorld wrld =
         ]
       SetQuestStage ref _ -> requireQuest qid eid "set_stage action" ref
       CompleteQuest ref -> requireQuest qid eid "complete_quest action" ref
+      CompleteRepeatableJob ref -> requireQuest qid eid "complete_job action" ref
       SetFlag _ -> []
       ClearFlag _ -> []
       HideNpc cid -> requireChar qid eid "hide_npc action" cid

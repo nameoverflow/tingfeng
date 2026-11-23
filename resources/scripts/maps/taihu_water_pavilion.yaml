@@ -93,6 +93,11 @@ rooms:
     id: taihu_teacher_room
     name: "静息室"
     desc: "室内铺着蒲草席，墙上画着简单经络图。"
+    insight:
+      arts: [internal]
+      bonus: 5
+      jing_discount: 3
+      note: "经络图悬于静壁，在此运转吐纳尤为平顺。"
     char:
       - taihu_teacher
     exits:
@@ -145,5 +150,10 @@ rooms:
     kind: building
     rest: true
     desc: "四面临水的竹亭，檐下悬着风铃，亭中备有清茶与干爽竹席。听着雨打残荷，连体内郁结的内息也随之平复。"
+    insight:
+      arts: [internal, lightness, sword]
+      bonus: 8
+      jing_discount: 5
+      note: "雨打残荷、水气澄明，在此调息研谱，精神耗损大减且更易明悟。"
     exits:
       south: [0, 5]

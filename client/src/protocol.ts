@@ -22,6 +22,9 @@ export type PlayerAction =
   | { research: string | { art: string; times: number } }
   | { meditate: number | { amount: number; times: number } }
   | { enable: { type: string; art: string } }
+  | { equip: string }
+  | { unequip: "weapon" | "armor" }
+  | { buy: string | { merchant?: string; item: string } }
   | { use: string }
   | { say: string }
   | { other: "view" | "quests" | "inventory" | "arts" | string };
@@ -83,12 +86,19 @@ export interface TeachableArtSummary {
   maxLevel: number;
 }
 
+export interface ShopItemSummary {
+  itemId: string;
+  name: string;
+  price: number;
+}
+
 export interface RoomCharacterSummary {
   id: string | null;
   name: string;
   desc: string;
   actions: string[];
   teaches: TeachableArtSummary[];
+  shop: ShopItemSummary[];
 }
 
 export interface RoomExitSummary {
@@ -194,6 +204,7 @@ export interface PlayerStatsSummary {
   playerStatsSummaryPotential?: number;
   playerStatsSummaryCombatExp?: number;
   playerStatsSummaryInjuredSeconds?: number;
+  playerStatsSummaryCombatInsight?: number;
   playerStatsSummaryBusy?: BusySummary | null;
 }
 
@@ -220,6 +231,9 @@ export interface InventoryItemSummary {
   inventoryItemSummaryName: string;
   inventoryItemSummaryAmount: number;
   inventoryItemSummaryUsable: boolean;
+  inventoryItemSummaryStudyable?: boolean;
+  inventoryItemSummaryEquipped?: boolean;
+  inventoryItemSummaryEquipSlot?: string | null;
 }
 
 export interface QuestLogEntry {

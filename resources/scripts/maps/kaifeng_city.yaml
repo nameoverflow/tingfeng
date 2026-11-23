@@ -102,6 +102,11 @@ rooms:
     name: "南门演武场"
     kind: building
     desc: "校场紧贴南门内墙，地面铺着粗砂。南边城墙根下就是武馆，弟子常在这里练站桩和拆招。"
+    insight:
+      arts: [foundation, fist, sword]
+      bonus: 4
+      jing_discount: 2
+      note: "粗砂校场四面开阔，适合夯实基础功与拆招演练。"
     char:
       - kaifeng_martial_instructor
       - kaifeng_training_dummy

@@ -30,6 +30,9 @@ data PlayerAction
     Meditate Int Int
   | EnableArt ArtType ArtId
   | PrepareArt ArtType ArtId
+  | Equip ItemId
+  | Unequip EquipSlot
+  | Buy (Maybe CharId) ItemId
   | Use T.Text
   | Say T.Text
   | Other T.Text
@@ -48,6 +51,9 @@ instance FromJSON PlayerAction where
       <|> parseTimed "meditate" "amount" Meditate o
       <|> parseEnable o
       <|> parsePrepare o
+      <|> (Equip <$> o .: "equip")
+      <|> (Unequip <$> o .: "unequip")
+      <|> parseBuy o
       <|> (Use <$> o .: "use")
       <|> (Say <$> o .: "say")
       <|> (Other <$> o .: "other")
@@ -79,6 +85,12 @@ instance FromJSON PlayerAction where
           <$> prepareObj .: "type"
           <*> prepareObj .: "art"
 
+      parseBuy o = do
+        value <- o .: "buy"
+        case value of
+          Object buyObj -> Buy <$> buyObj .:? "merchant" <*> buyObj .: "item"
+          _ -> Buy Nothing <$> parseJSON value
+
 
 instance ToJSON PlayerAction where
   toJSON (Go dir) = object ["go" .= dir]
@@ -93,6 +105,10 @@ instance ToJSON PlayerAction where
   toJSON (Meditate amount times) = object ["meditate" .= object ["amount" .= amount, "times" .= times]]
   toJSON (EnableArt artType' targetArtId) = object ["enable" .= object ["type" .= artType', "art" .= targetArtId]]
   toJSON (PrepareArt artType' targetArtId) = object ["prepare" .= object ["type" .= artType', "art" .= targetArtId]]
+  toJSON (Equip eqItemId) = object ["equip" .= eqItemId]
+  toJSON (Unequip eqSlot) = object ["unequip" .= eqSlot]
+  toJSON (Buy maybeMerchant buyItemId) =
+    object ["buy" .= object (["item" .= buyItemId] <> ["merchant" .= m | Just m <- [maybeMerchant]])]
   toJSON (Use usedItemId) = object ["use" .= usedItemId]
   toJSON (Say msg) = object ["say" .= msg]
   toJSON (Other msg) = object ["other" .= msg]
@@ -213,12 +229,29 @@ instance ToJSON TeachableArtSummary where
         "maxLevel" .= teachableArtMaxLevel
       ]
 
+-- | An item an NPC sells, and its price in copper.
+data ShopItemSummary = ShopItemSummary
+  { shopItemSummaryId :: ItemId,
+    shopItemSummaryName :: T.Text,
+    shopItemSummaryPrice :: Int
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON ShopItemSummary where
+  toJSON ShopItemSummary {..} =
+    object
+      [ "itemId" .= shopItemSummaryId,
+        "name" .= shopItemSummaryName,
+        "price" .= shopItemSummaryPrice
+      ]
+
 data RoomCharacterSummary = RoomCharacterSummary
   { roomCharacterSummaryId :: CharId,
     roomCharacterSummaryName :: T.Text,
     roomCharacterSummaryDesc :: T.Text,
     roomCharacterSummaryActions :: [T.Text],
-    roomCharacterSummaryTeaches :: [TeachableArtSummary]
+    roomCharacterSummaryTeaches :: [TeachableArtSummary],
+    roomCharacterSummaryShop :: [ShopItemSummary]
   }
   deriving (Show, Eq, Generic)
 
@@ -229,7 +262,8 @@ instance ToJSON RoomCharacterSummary where
         "name" .= roomCharacterSummaryName,
         "desc" .= roomCharacterSummaryDesc,
         "actions" .= roomCharacterSummaryActions,
-        "teaches" .= roomCharacterSummaryTeaches
+        "teaches" .= roomCharacterSummaryTeaches,
+        "shop" .= roomCharacterSummaryShop
       ]
 
 data RoomExitSummary = RoomExitSummary
@@ -324,7 +358,10 @@ data InventoryItemSummary = InventoryItemSummary
   { inventoryItemSummaryId :: ItemId,
     inventoryItemSummaryName :: T.Text,
     inventoryItemSummaryAmount :: Int,
-    inventoryItemSummaryUsable :: Bool
+    inventoryItemSummaryUsable :: Bool,
+    inventoryItemSummaryStudyable :: Bool,
+    inventoryItemSummaryEquipped :: Bool,
+    inventoryItemSummaryEquipSlot :: Maybe T.Text
   }
   deriving (Show, Eq, Generic)
 
@@ -514,6 +551,7 @@ data PlayerStatsSummary = PlayerStatsSummary
     playerStatsSummaryPotential :: Int,
     playerStatsSummaryCombatExp :: Int,
     playerStatsSummaryInjuredSeconds :: Int,
+    playerStatsSummaryCombatInsight :: Int,
     playerStatsSummaryBusy :: Maybe BusySummary
   }
   deriving (Show, Eq, Generic)
