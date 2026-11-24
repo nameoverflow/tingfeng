@@ -91,6 +91,9 @@ foreign export javascript "hs_text_input"
 foreign export javascript "hs_text_submit"
   hsTextSubmit :: JSString -> IO ()
 
+foreign export javascript "hs_focus_input_id"
+  hsFocusInputId :: JSString -> IO ()
+
 foreign export javascript "hs_blur_input"
   hsBlurInput :: IO ()
 
@@ -292,6 +295,12 @@ hsTextSubmit inpIdJS = do
     runCmds cmds
     m2 <- flushState m1
     writeIORef globalModelRef (Just m2)
+
+hsFocusInputId :: JSString -> IO ()
+hsFocusInputId inpIdJS = do
+  mm <- readIORef globalModelRef
+  forM_ mm $ \m0 ->
+    writeIORef globalModelRef (Just (handleFocusInputId (tFromJS inpIdJS) m0))
 
 hsBlurInput :: IO ()
 hsBlurInput = do

@@ -169,8 +169,9 @@ let cssH = pageKind === "poses" ? 1420 : window.innerHeight;
 let dpr = Math.min(isTouch ? 2.0 : 2.0, window.devicePixelRatio || 1);
 
 function syncCanvasSize() {
-  cssW = window.innerWidth;
-  cssH = pageKind === "poses" ? Math.max(window.innerHeight, 1420) : window.innerHeight;
+  const vv = window.visualViewport;
+  cssW = vv ? Math.round(vv.width) : window.innerWidth;
+  cssH = pageKind === "poses" ? Math.max(window.innerHeight, 1420) : (vv ? Math.round(vv.height) : window.innerHeight);
   dpr = Math.min(2.0, window.devicePixelRatio || 1);
   const pw = Math.round(cssW * dpr), ph = Math.round(cssH * dpr);
   if (c2dCanvas.width !== pw || c2dCanvas.height !== ph) {
@@ -178,6 +179,10 @@ function syncCanvasSize() {
   }
 }
 window.addEventListener("resize", syncCanvasSize);
+if (window.visualViewport) {
+  window.visualViewport.addEventListener("resize", syncCanvasSize);
+  window.visualViewport.addEventListener("scroll", syncCanvasSize);
+}
 syncCanvasSize();
 
 const SANS_FONT = '"PingFang SC", "Hiragino Sans GB", "Noto Sans SC", -apple-system, sans-serif';
@@ -197,12 +202,45 @@ function drawShapePath(c, item) {
   }
 }
 
+let lastImeRectKey = "";
+let currentImeId = null;
+
+function syncImeOverlay(info) {
+  if (!imeProxy) return;
+  if (!info) {
+    if (lastImeRectKey !== "none") {
+      lastImeRectKey = "none";
+      currentImeId = null;
+      imeProxy.style.left = "-9999px";
+      imeProxy.style.top = "0px";
+      imeProxy.style.width = "1px";
+      imeProxy.style.height = "1px";
+      imeProxy.style.pointerEvents = "none";
+    }
+    return;
+  }
+  currentImeId = info.id;
+  const rectKey = `${info.id}:${Math.round(info.x)},${Math.round(info.y)},${Math.round(info.w)},${Math.round(info.h)}`;
+  if (rectKey !== lastImeRectKey) {
+    lastImeRectKey = rectKey;
+    imeProxy.style.left = `${info.x}px`;
+    imeProxy.style.top = `${info.y}px`;
+    imeProxy.style.width = `${info.w}px`;
+    imeProxy.style.height = `${info.h}px`;
+    imeProxy.style.pointerEvents = "auto";
+  }
+  if (document.activeElement !== imeProxy && imeProxy.value !== info.val) {
+    imeProxy.value = info.val;
+  }
+}
+
 function executeFrameBatch(batchStr) {
   ctx.save();
   ctx.scale(dpr, dpr);
   const lines = batchStr.split("\n");
   let actorDefaultFill = "#1b2521", actorOutline = "#f6f0e2", actorFlash = 0, partAlpha = 1;
   let partShapes = [], inJoin = false;
+  let frameInput = null;
 
   for (let idx = 0; idx < lines.length; idx++) {
     const line = lines[idx];
@@ -398,6 +436,10 @@ function executeFrameBatch(batchStr) {
         ctx.restore();
         break;
       }
+      case "INPUT": {
+        frameInput = { id: p[1], x: +p[2], y: +p[3], w: +p[4], h: +p[5], val: p[6] || "" };
+        break;
+      }
       case "SLASH": {
         const col = p[1];
         const segs = (p[2] || "").split(";").map((s) => s.split(",").map(Number)).filter((a) => a.length === 3);
@@ -417,6 +459,7 @@ function executeFrameBatch(batchStr) {
     }
   }
   ctx.restore();
+  syncImeOverlay(frameInput);
 }
 
 // --- 6. Low-Latency Dual WebSocket + Piggybacked HTTP Bridge ---
@@ -537,21 +580,31 @@ function sendServer(payload) {
   }
 }
 
-// --- 7. Invisible Off-Screen IME Proxy (Supports Native CJK Keyboards with Zero Visible DOM) ---
+// --- 7. Native Transparent IME Overlay (Works reliably on iOS Safari/WKWebView & third-party IMEs) ---
 let activeInputId = null;
 
 if (imeProxy) {
-  imeProxy.addEventListener("input", () => {
+  imeProxy.addEventListener("focus", () => {
+    if (currentImeId) activeInputId = currentImeId;
     if (activeInputId && hsExports) {
       const id = activeInputId;
+      runHs(() => hsExports.hs_focus_input_id(id));
+    }
+  });
+  const pushVal = () => {
+    const id = activeInputId || currentImeId;
+    if (id && hsExports) {
       const val = imeProxy.value;
       runHs(() => hsExports.hs_text_input(id, val));
     }
-  });
+  };
+  imeProxy.addEventListener("input", pushVal);
+  imeProxy.addEventListener("compositionupdate", pushVal);
+  imeProxy.addEventListener("compositionend", pushVal);
   imeProxy.addEventListener("keydown", (ev) => {
-    if (ev.key === "Enter" && !ev.isComposing && activeInputId && hsExports) {
+    const id = activeInputId || currentImeId;
+    if (ev.key === "Enter" && !ev.isComposing && id && hsExports) {
       ev.preventDefault();
-      const id = activeInputId;
       runHs(() => hsExports.hs_text_submit(id));
     } else if (ev.key === "Escape" && hsExports) {
       ev.preventDefault();

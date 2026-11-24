@@ -24,6 +24,7 @@ module Tingfeng.State
     handleScrollAt,
     handleTextInput,
     handleTextSubmit,
+    handleFocusInputId,
     handleBlurInput,
     handleKeyDown,
     panCameraBy,
@@ -1132,6 +1133,9 @@ handleTextSubmit inpId m0 = case inpId of
           then (m1, [CmdBlurInput])
           else (m1, [CmdBlurInput, CmdSendWs (encodePlayerAction (ActSay txt))])
   _ -> (m0, [])
+
+handleFocusInputId :: Text -> ClientModel -> ClientModel
+handleFocusInputId inpId m = m {cmFocusedInput = if T.null inpId then Nothing else Just inpId}
 
 handleBlurInput :: ClientModel -> ClientModel
 handleBlurInput m = m {cmFocusedInput = Nothing}

@@ -90,6 +90,10 @@ cmdClip x y w h = "CLIP|" <> f1 x <> "|" <> f1 y <> "|" <> f1 w <> "|" <> f1 h <
 cmdUnclip :: B.Builder
 cmdUnclip = "UNCLIP\n"
 
+cmdInput :: Text -> Double -> Double -> Double -> Double -> Text -> B.Builder
+cmdInput inpId x y w h val =
+  "INPUT|" <> B.fromText inpId <> "|" <> f1 x <> "|" <> f1 y <> "|" <> f1 w <> "|" <> f1 h <> "|" <> san val <> "\n"
+
 -- CJK-aware text measurement & word wrapping
 
 charWidthFactor :: Char -> Double
@@ -353,6 +357,7 @@ buildLoginBody m zh cardX pad innerW y0 =
         cmdRect x0 yInp inpW 36 3 "#fcf9f2" inpBd (if focused then 1.8 else 1.1) 1
           <> cmdTx (x0 + 10) (yInp + 23) 13.5 "500" "left" dispCol 1 (truncateText (inpW - 20) 13.5 dispTxt)
           <> (if blink then cmdLine (min (x0 + inpW - 8) caretX) (yInp + 8) (min (x0 + inpW - 8) caretX) (yInp + 28) 1.5 "#1e1a16" 0.9 False else mempty)
+          <> cmdInput "login" x0 yInp inpW 36 uTxt
       inpHit = CanvasHitbox x0 yInp inpW 36 (HitFocusInput "login") "text"
       passFlag = if cmDevReset m then "reset" else ""
       (bGo, hGo) = drawBtn m (x0 + inpW + 8) yInp 94 36 (if cmConnecting m then (if zh then "入世中…" else "Joining…") else (if zh then "踏入江湖" else "Enter")) 13 TonePrimary (cmConnecting m) (HitUi "login_submit" uTxt passFlag)
@@ -400,6 +405,7 @@ buildCreateBody m zh cardX pad innerW y0 =
                       inpB =
                         cmdRect x0 (y1 + 30) inpW 36 3 "#fcf9f2" (if focused then "#946623" else "#b8aa91") 1.3 1
                           <> cmdTx (x0 + 10) (y1 + 53) 13.5 "500" "left" (if T.null uTxt then "#8b7f6e" else "#1e1a16") 1 disp
+                          <> cmdInput "login" x0 (y1 + 30) inpW 36 uTxt
                       inpHit = CanvasHitbox x0 (y1 + 30) inpW 36 (HitFocusInput "login") "text"
                       (bNx, hNx) = drawBtn m (x0 + inpW + 8) (y1 + 30) 84 36 (if zh then "下一步" else "Next") 12.5 TonePrimary False (HitUi "create_step" "1" "")
                    in (tB <> inpB <> bNx, [inpHit] <> hNx, 82)
@@ -971,7 +977,8 @@ drawMessageDock m isMob dockY dockH compact =
           then drawBtn m (dockX + dockW - 78) (logY + logViewH - 26) 64 22 (if zh then "↓ 最新" else "↓ Latest") 10.5 TonePrimary False (HitUi "scroll_log_bottom" "" "")
           else (mempty, [])
 
-      -- Bottom Say Input Row
+      -- Bottom Say Input Row (only attach native IME overlay when unobstructed by modal/drawer)
+      canAttachIme = isNothing (cmSelectedNpc m) && (isMob || T.null (cmDesktopDrawer m)) && not (cmStoryActive m)
       (inpB, inpHits) =
         if compact
           then (mempty, [])
@@ -989,6 +996,7 @@ drawMessageDock m isMob dockY dockH compact =
                   cmdRect ix (iy + 6) iw 26 2 "#fcf9f2" (if focused then "#946623" else "#c5b9a0") (if focused then 1.5 else 1.0) 1
                     <> cmdTx (ix + 8) (iy + 23) 12 "400" "left" (if T.null draft then "#8b7f6e" else "#1e1a16") 1 (truncateText (iw - 14) 12 disp)
                     <> (if blink then cmdLine (min (ix + iw - 6) caretX) (iy + 10) (min (ix + iw - 6) caretX) (iy + 28) 1.3 "#1e1a16" 0.9 False else mempty)
+                    <> (if canAttachIme then cmdInput "say" ix (iy + 6) iw 26 draft else mempty)
                 iHit = CanvasHitbox ix (iy + 6) iw 26 (HitFocusInput "say") "text"
                 (bSend, hSend) = drawBtn m (ix + iw + 6) (iy + 6) 52 26 (if zh then "发送" else "Send") 11.5 TonePrimary (cmStoryActive m) (HitUi "send_say_draft" "" "")
                 (bClr, hClr) = drawBtn m (ix + iw + 62) (iy + 6) 50 26 (if zh then "清屏" else "Clear") 11.5 ToneGhost False (HitUi "clear_logs" "" "")
