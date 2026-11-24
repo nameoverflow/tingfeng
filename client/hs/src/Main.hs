@@ -231,7 +231,8 @@ hsPanZoom dx dy zFactor = do
   mm <- readIORef globalModelRef
   forM_ mm $ \m0 -> do
     let m1 = zoomCameraBy zFactor (panCameraBy dx dy m0)
-    writeIORef globalModelRef (Just m1)
+    m2 <- flushState m1
+    writeIORef globalModelRef (Just m2)
 
 hsUiAction :: JSString -> JSString -> JSString -> IO ()
 hsUiAction kindJS a1JS a2JS = do

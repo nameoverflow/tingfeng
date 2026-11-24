@@ -552,6 +552,9 @@ function sendServer(payload) {
 let latestUiState = null;
 let draftSayText = "";
 let draftResetChecked = false;
+let lastRenderedLogId = 0;
+let lastRenderedLogKey = "";
+let savedLogScrollTop = 0;
 let labSelectedAction = "rig.fist.punch_a";
 let labSelectedOutcome = "hit";
 let labSelectedSide = "player";
@@ -820,22 +823,48 @@ function renderBattleSection(st) {
   return { topHtml, skillsHtml, soundLabel };
 }
 
-function renderMessageDock(st, fullHeight = false) {
+function renderLogItemsHtml(logs) {
+  return logs.map((l) => `<div class="log-line log-${esc(l.kind)}" data-log-id="${l.id}">${esc(l.text)}</div>`).join("");
+}
+
+function scrollLogToBottom() {
+  const el = document.getElementById("log-scroll-box");
+  if (!el) return;
+  el.scrollTop = el.scrollHeight;
+  savedLogScrollTop = el.scrollTop;
+  requestAnimationFrame(() => {
+    const b = document.getElementById("log-scroll-box");
+    if (b) {
+      b.scrollTop = b.scrollHeight;
+      savedLogScrollTop = b.scrollTop;
+    }
+  });
+}
+
+function renderMessageDock(st, fullHeight = false, compactBattle = false) {
   const zh = st.locale === "zh";
+  const scrollStyle = fullHeight
+    ? "flex:1;height:auto;"
+    : compactBattle
+      ? "height:88px;"
+      : "";
   return `<div class="message-dock" style="${fullHeight ? "height:100%;display:flex;flex-direction:column;" : ""}">
-    <div class="log-scroll" id="log-scroll-box" style="${fullHeight ? "flex:1;height:auto;" : ""}">
-      ${st.logs.map((l) => `<div class="log-line log-${esc(l.kind)}">${esc(l.text)}</div>`).join("")}
+    <div class="log-scroll" id="log-scroll-box" style="${scrollStyle}">
+      ${renderLogItemsHtml(st.logs)}
     </div>
-    <form class="say-row" id="say-form">
+    ${compactBattle ? "" : `<form class="say-row" id="say-form">
       <input id="say-input" type="text" value="${esc(draftSayText)}" placeholder="${zh ? "输入发言，回车发送…" : "Say something…"}" autocomplete="off" />
       <button type="submit">${zh ? "发送" : "Send"}</button>
       <button type="button" data-ui="clear_logs">${zh ? "清屏" : "Clear"}</button>
-    </form>
+    </form>`}
   </div>`;
 }
 
 function renderUiShell(st) {
   latestUiState = st;
+  const newestLogId = st.logs?.length ? st.logs[st.logs.length - 1].id : 0;
+  const logViewKey = `${st.page}:${st.inBattle ? "battle" : "world"}:${st.mobileTab}`;
+
   if (stageProbe) {
     stageProbe.setAttribute("data-event-id", st.stageEventId || "idle");
     const pNode = stageProbe.querySelector('[data-side="player"]');
@@ -846,9 +875,18 @@ function renderUiShell(st) {
     }
   }
 
-  // Preserve focused input cursor if user is actively typing!
+  // Preserve focused input cursor if user is actively typing, while STILL streaming & auto-scrolling new logs!
   const activeEl = document.activeElement;
-  if (activeEl && (activeEl.id === "login-name-input" || activeEl.id === "say-input")) {
+  if (activeEl && activeEl.id === "login-name-input") {
+    return;
+  }
+  if (activeEl && activeEl.id === "say-input") {
+    const existingLog = document.getElementById("log-scroll-box");
+    if (existingLog && newestLogId !== lastRenderedLogId) {
+      existingLog.innerHTML = renderLogItemsHtml(st.logs || []);
+      lastRenderedLogId = newestLogId;
+      scrollLogToBottom();
+    }
     return;
   }
 
@@ -934,7 +972,7 @@ function renderUiShell(st) {
     </header>
     <header class="mobile-header">
       <div class="mobile-header-row">
-        <span class="mobile-loc-title">${esc(st.inBattle ? st.enemyName : (st.roomName || (zh ? "听风录" : "Tingfeng")))}</span>
+        <span class="mobile-loc-title">${esc(st.inBattle ? st.enemyName : (st.mapName && st.mapName !== st.roomName ? `${st.mapName} · ${st.roomName}` : (st.roomName || (zh ? "听风录" : "Tingfeng"))))}</span>
         <div style="display:flex;gap:6px;align-items:center;">
           ${st.busy && !st.inBattle ? `<button type="button" class="busy-chip" data-ui="mobile_tab" data-a1="arts">${esc(st.busy.label)}</button>` : ""}
           <button type="button" class="vital-nums" data-ui="mobile_tab" data-a1="character"><em class="hp-n">${st.hp}</em>/<em class="qi-n">${st.qi}</em></button>
@@ -952,7 +990,7 @@ function renderUiShell(st) {
   if (st.inBattle) {
     const b = renderBattleSection(st);
     centerTop = b.topHtml;
-    centerBottom = `<div class="battle-bottom-wrap">${b.skillsHtml}${!isMobileView ? renderMessageDock(st) : ""}</div>`;
+    centerBottom = `<div class="battle-bottom-wrap">${b.skillsHtml}${renderMessageDock(st, false, isMobileView)}</div>`;
   } else {
     const selNpc = st.npcs.find((n) => n.id === st.selectedNpc);
     const idle = !st.storyActive && !st.busy;
@@ -983,9 +1021,16 @@ function renderUiShell(st) {
         </div>`
       : "";
 
+    const mapTitle = st.mapName || "";
     centerTop = `<div>
       <div class="room-float">
-        <h2>${esc(st.roomName)}</h2>
+        <div class="room-head-row">
+          <h2>${esc(st.roomName)}</h2>
+          <div class="room-head-meta">
+            ${mapTitle ? `<span class="map-title-chip">${esc(mapTitle)}</span>` : ""}
+            ${st.mapPanned ? `<button type="button" class="map-reset-btn" data-ui="reset_cam">${zh ? "镜头归位" : "Center"}</button>` : ""}
+          </div>
+        </div>
         <p>${esc(st.roomDesc)}</p>
         ${st.npcs.length > 0 ? `<div class="npc-chips">${st.npcs.map((n) => `
           <button type="button" class="${st.selectedNpc === n.id ? "primary-btn" : ""}" data-ui="select_npc" data-a1="${esc(n.id)}">${esc(n.name)}</button>`).join("")}</div>` : ""}
@@ -993,13 +1038,7 @@ function renderUiShell(st) {
       ${npcModalHtml}
     </div>`;
 
-    centerBottom = isMobileView
-      ? `<div class="message-dock" style="cursor:pointer;" data-ui="mobile_tab" data-a1="log">
-          <div class="log-scroll" style="height:54px;">
-            ${st.logs.slice(-2).map((l) => `<div class="log-line log-${esc(l.kind)}">${esc(l.text)}</div>`).join("")}
-          </div>
-        </div>`
-      : renderMessageDock(st);
+    centerBottom = renderMessageDock(st);
   }
 
   let drawerHtml = "";
@@ -1030,8 +1069,22 @@ function renderUiShell(st) {
     ${mobileNavHtml}`;
 
   const logBox = document.getElementById("log-scroll-box");
-  if (logBox) logBox.scrollTop = logBox.scrollHeight;
+  if (logBox) {
+    if (newestLogId !== lastRenderedLogId || logViewKey !== lastRenderedLogKey) {
+      lastRenderedLogId = newestLogId;
+      lastRenderedLogKey = logViewKey;
+      scrollLogToBottom();
+    } else {
+      logBox.scrollTop = savedLogScrollTop;
+    }
+  }
 }
+
+uiRoot.addEventListener("scroll", (ev) => {
+  if (ev.target && ev.target.id === "log-scroll-box") {
+    savedLogScrollTop = ev.target.scrollTop;
+  }
+}, true);
 
 // --- 7. Delegated DOM Events & Keyboard Shortcuts ---
 uiRoot.addEventListener("input", (ev) => {
@@ -1062,10 +1115,10 @@ uiRoot.addEventListener("change", (ev) => {
 uiRoot.addEventListener("submit", (ev) => {
   if (ev.target.id === "say-form") {
     ev.preventDefault();
-    const txt = draftSayText.trim();
+    const inp = document.getElementById("say-input");
+    const txt = (inp ? inp.value : draftSayText).trim();
     if (!txt || !hsExports) return;
     draftSayText = "";
-    const inp = document.getElementById("say-input");
     if (inp) { inp.value = ""; inp.blur(); }
     runHs(() => hsExports.hs_ui_action("say", txt, ""));
   }
@@ -1250,16 +1303,20 @@ async function boot() {
 
   // Stage pointer drag-to-pan, wheel zoom & click hit-testing
   const stageWrap = document.getElementById("stage-wrap");
-  let dragging = false, dragMoved = false, lastX = 0, lastY = 0;
+  let dragging = false, dragMoved = false, startX = 0, startY = 0, lastX = 0, lastY = 0;
 
   stageWrap.addEventListener("pointerdown", (e) => {
-    dragging = true; dragMoved = false; lastX = e.clientX; lastY = e.clientY;
+    dragging = true; dragMoved = false;
+    startX = e.clientX; startY = e.clientY;
+    lastX = e.clientX; lastY = e.clientY;
   });
   stageWrap.addEventListener("pointermove", (e) => {
     if (dragging) {
-      const dx = e.clientX - lastX, dy = e.clientY - lastY;
-      if (Math.hypot(dx, dy) > 4) dragMoved = true;
+      if (!dragMoved && Math.hypot(e.clientX - startX, e.clientY - startY) > 12) {
+        dragMoved = true;
+      }
       if (dragMoved) {
+        const dx = e.clientX - lastX, dy = e.clientY - lastY;
         lastX = e.clientX; lastY = e.clientY;
         runHs(() => hsExports.hs_pan_zoom(dx, dy, 1.0));
         return;
@@ -1267,11 +1324,16 @@ async function boot() {
     }
     runHs(() => hsExports.hs_pointer_move(e.clientX, e.clientY));
   });
-  window.addEventListener("pointerup", () => { dragging = false; });
-  stageWrap.addEventListener("click", (e) => {
-    if (dragMoved) { dragMoved = false; return; }
-    runHs(() => hsExports.hs_pointer_click(e.clientX, e.clientY));
+  stageWrap.addEventListener("pointerup", (e) => {
+    const wasTap = dragging && !dragMoved;
+    dragging = false;
+    dragMoved = false;
+    if (wasTap && e.button <= 0) {
+      runHs(() => hsExports.hs_pointer_click(e.clientX, e.clientY));
+    }
   });
+  window.addEventListener("pointerup", () => { dragging = false; dragMoved = false; });
+  window.addEventListener("pointercancel", () => { dragging = false; dragMoved = false; });
   stageWrap.addEventListener("wheel", (e) => {
     if (pageKind === "poses") return;
     e.preventDefault();

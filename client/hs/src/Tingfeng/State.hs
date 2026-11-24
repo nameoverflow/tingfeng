@@ -296,7 +296,10 @@ pushLog kind txt m
           entry = LogLine lid kind txt
           prev = cmLogs m
           nextLogs = if length prev >= 80 then drop (length prev - 79) prev <> [entry] else prev <> [entry]
-          unread = if cmMobileTab m == "log" || not (cmConnected m) then 0 else min 99 (cmUnreadLogs m + 1)
+          unread =
+            if cmMobileTab m == "world" || cmMobileTab m == "log" || not (cmConnected m)
+              then 0
+              else min 99 (cmUnreadLogs m + 1)
        in m {cmLogs = nextLogs, cmNextLogId = lid + 1, cmUnreadLogs = unread, cmUiDirty = True}
 
 inferCurrentGrid :: [RoomExit] -> Maybe (Int, Int)
@@ -516,13 +519,20 @@ applyServerMessage msg m0 = case msg of
     let txt = if cmLocale m0 == Zh then "你进入了【" <> dst <> "】。" else "Entered [" <> dst <> "]."
      in (pushLog "move" txt (m0 {cmPanX = 0, cmPanY = 0}), [])
   SmView rName rDesc chars exits ->
-    let m1 =
+    let nextMo = case cmMapOverview m0 of
+          Just mo ->
+            case find (\r -> mrRoomName r == rName) (moRooms mo) of
+              Just r -> Just (mo {moCurrentPos = mrPos r})
+              Nothing -> Just mo
+          Nothing -> Nothing
+        m1 =
           updateCameraTarget $
             m0
               { cmRoomName = rName,
                 cmRoomDesc = rDesc,
                 cmRoomChars = chars,
                 cmRoomExits = exits,
+                cmMapOverview = nextMo,
                 cmConnected = True,
                 cmConnecting = False,
                 cmLastError = Nothing,
@@ -540,7 +550,10 @@ applyServerMessage msg m0 = case msg of
             else [CmdSendWs (encodePlayerAction (ActOther "map"))]
      in (m1 {cmRequestedInit = True}, cmds)
   SmMapOverview mo ->
-    (updateCameraTarget (m0 {cmMapOverview = Just mo, cmUiDirty = True}), [])
+    let mapChanged = fmap moMapId (cmMapOverview m0) /= Just (moMapId mo)
+        m1 = updateCameraTarget (m0 {cmMapOverview = Just mo, cmUiDirty = True})
+        m2 = if mapChanged then m1 {cmCamX = cmTargetCamX m1, cmCamY = cmTargetCamY m1, cmCamVx = 0, cmCamVy = 0} else m1
+     in (m2, [])
   SmAttack atk def ->
     let txt = atk <> (if cmLocale m0 == Zh then " 对 " else " attacks ") <> def <> "！"
         m1 =
@@ -672,15 +685,12 @@ stepClientFrame rawDtMs rawW rawH m0 =
       h = max 480.0 rawH
       nowMs = cmClockMs m0 + dtSec * 1000.0
 
-      -- Spring camera tracking target room
-      stiffness = 115.0
-      damping = 21.5
-      ax = (cmTargetCamX m0 - cmCamX m0) * stiffness - cmCamVx m0 * damping
-      ay = (cmTargetCamY m0 - cmCamY m0) * stiffness - cmCamVy m0 * damping
-      vx1 = cmCamVx m0 + ax * dtSec
-      vy1 = cmCamVy m0 + ay * dtSec
-      cx1 = if cmReducedMotion m0 then cmTargetCamX m0 else cmCamX m0 + vx1 * dtSec
-      cy1 = if cmReducedMotion m0 then cmTargetCamY m0 else cmCamY m0 + vy1 * dtSec
+      -- Unconditionally stable analytical exponential camera smoothing (immune to large frame hitches)
+      camAlpha = if cmReducedMotion m0 then 1.0 else 1.0 - exp (-14.0 * dtSec)
+      cx1 = cmCamX m0 + (cmTargetCamX m0 - cmCamX m0) * camAlpha
+      cy1 = cmCamY m0 + (cmTargetCamY m0 - cmCamY m0) * camAlpha
+      vx1 = 0.0
+      vy1 = 0.0
 
       -- Trailing damage bars
       pCurRatio = case (cmPresentation m0, cmBattleSnap m0) of
@@ -800,23 +810,33 @@ handlePointerClick x y m =
     Just HitResetCam ->
       (resetCameraPan m, [])
 
+isCameraPanned :: ClientModel -> Bool
+isCameraPanned m =
+  abs (cmPanX m) > 6.0 || abs (cmPanY m) > 6.0 || abs (cmMapZoom m - 1.0) > 0.04
+
 panCameraBy :: Double -> Double -> ClientModel -> ClientModel
 panCameraBy dx dy m
   | cmInBattle m || cmPage m /= PageGame = m
-  | otherwise = m {cmPanX = max (-900) (min 900 (cmPanX m + dx)), cmPanY = max (-700) (min 700 (cmPanY m + dy))}
+  | otherwise =
+      let m1 = m {cmPanX = max (-900) (min 900 (cmPanX m + dx)), cmPanY = max (-700) (min 700 (cmPanY m + dy))}
+       in if isCameraPanned m1 /= isCameraPanned m then m1 {cmUiDirty = True} else m1
 
 zoomCameraBy :: Double -> ClientModel -> ClientModel
 zoomCameraBy factor m
   | cmInBattle m || cmPage m /= PageGame = m
-  | otherwise = m {cmMapZoom = max 0.58 (min 1.75 (cmMapZoom m * factor))}
+  | otherwise =
+      let m1 = m {cmMapZoom = max 0.58 (min 1.75 (cmMapZoom m * factor))}
+       in if isCameraPanned m1 /= isCameraPanned m then m1 {cmUiDirty = True} else m1
 
 resetCameraPan :: ClientModel -> ClientModel
-resetCameraPan m = m {cmPanX = 0, cmPanY = 0, cmMapZoom = 1.0}
+resetCameraPan m = m {cmPanX = 0, cmPanY = 0, cmMapZoom = 1.0, cmUiDirty = True}
 
 -- UI Actions from Thin Overlay
 
 handleUiAction :: Text -> Text -> Text -> ClientModel -> (ClientModel, [ClientCmd])
 handleUiAction kind a1 a2 m0 = case kind of
+  "reset_cam" ->
+    (resetCameraPan m0, [])
   "request_creation_cfg" ->
     (m0, [CmdOpenConfigWs])
   "set_locale" ->
@@ -1228,6 +1248,16 @@ buildOverlayJson m =
             "mobileTab" .= JStr (cmMobileTab m),
             "unreadLogs" .= JNum (fromIntegral (cmUnreadLogs m)),
             "selectedNpc" .= maybe JNull JStr (cmSelectedNpc m),
+            "mapName"
+              .= JStr
+                ( case cmMapOverview m of
+                    Just mo
+                      | T.null (cmRoomName m)
+                          || any (\r -> mrPos r == moCurrentPos mo && mrRoomName r == cmRoomName m) (moRooms mo) ->
+                          moMapName mo
+                    _ -> ""
+                ),
+            "mapPanned" .= JBool (isCameraPanned m),
             "roomName" .= JStr (cmRoomName m),
             "roomDesc" .= JStr (cmRoomDesc m),
             "portrait" .= JStr (portraitScoreFile (psAppearance st)),

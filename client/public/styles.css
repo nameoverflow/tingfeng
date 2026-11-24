@@ -13,6 +13,7 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body {
   width: 100%; height: 100%;
+  height: 100dvh;
   overflow: hidden;
   max-width: 100vw;
   background: var(--bg);
@@ -482,6 +483,40 @@ canvas.stage-canvas {
 }
 
 /* Bottom Narrative MessageLog + Say Input */
+.room-head-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.room-head-row h2 { margin-bottom: 0 !important; }
+.room-head-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.map-title-chip {
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--gold);
+  background: rgba(28, 52, 45, 0.85);
+  border: 1px solid rgba(230, 207, 149, 0.38);
+  border-radius: 999px;
+  padding: 1px 9px;
+}
+.map-reset-btn {
+  pointer-events: auto;
+  padding: 2px 9px;
+  font-size: 11px;
+  border-radius: 999px;
+  background: rgba(24, 49, 43, 0.94);
+  border-color: rgba(124, 212, 188, 0.55);
+  color: #e8f7f2;
+}
+
 .message-dock {
   pointer-events: auto;
   width: min(760px, 100%);
@@ -490,14 +525,16 @@ canvas.stage-canvas {
   border: 1px solid var(--border);
   border-radius: 9px;
   overflow: hidden;
-  contain: content;
 }
 .log-scroll {
-  height: 118px;
+  height: clamp(152px, 21vh, 210px);
   overflow-y: auto;
-  padding: 8px 12px;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  padding: 9px 12px;
   font-size: 12.5px;
-  line-height: 1.56;
+  line-height: 1.58;
 }
 .log-line { margin-bottom: 3px; word-break: break-word; }
 .log-system { color: #8ec5b5; }
@@ -616,7 +653,11 @@ canvas.stage-canvas {
   .desktop-header { display: none; }
   .mobile-header { display: block; }
   .mobile-tabbar { display: grid; }
-  .workspace-area { padding: 8px 10px; }
+  .workspace-area { padding: 7px 10px; }
+  .room-float { padding: 8px 11px; }
+  .room-float h2 { font-size: 14px; margin-bottom: 3px; }
+  .room-float p { font-size: 12px; line-height: 1.48; }
+  .npc-chips { margin-top: 6px; gap: 6px; }
   .side-drawer {
     top: 56px;
     bottom: 52px;
@@ -624,7 +665,7 @@ canvas.stage-canvas {
     width: 100vw;
     border-left: none;
   }
-  .log-scroll { height: 78px; }
+  .log-scroll { height: clamp(136px, 22dvh, 184px); }
   .battle-top-bar { grid-template-columns: 1fr 1fr; gap: 6px; }
   .battle-top-bar .battle-vs-mid { display: none; }
 }

@@ -116,48 +116,53 @@ buildMapStage m =
       loc = cmLocale m
       isMobile = w <= 768.0
       zoom = cmMapZoom m
-      centerX = w * 0.5 + cmPanX m - cmCamX m * zoom
-      centerY = (if isMobile then h * 0.42 else h * 0.44) + cmPanY m - cmCamY m * zoom
+      effZoom = zoom * (if isMobile then 0.70 else 1.0)
+      centerX = w * 0.5 + cmPanX m - cmCamX m * effZoom
+      centerY = (if isMobile then h * 0.455 else h * 0.435) + cmPanY m - cmCamY m * effZoom
       tSec = cmClockMs m / 1000.0
       pulse = if cmReducedMotion m then 1.0 else 1.0 + 0.13 * sin (tSec * 3.2)
 
-      exitByRoomId = M.fromList [(reRoomId e, reDirection e) | e <- cmRoomExits m, not (T.null (reRoomId e))]
-      exitByPos = M.fromList [(pos, reDirection e) | e <- cmRoomExits m, Just pos <- [rePos e]]
+      inFrustum sx sy = sx >= -160.0 && sx <= w + 160.0 && sy >= -100.0 && sy <= h + 100.0
 
-      inFrustum sx sy = sx >= -150.0 && sx <= w + 150.0 && sy >= -90.0 && sy <= h + 90.0
+      mapValid mo =
+        not (null (moRooms mo))
+          && ( T.null (cmRoomName m)
+                 || any (\r -> mrPos r == moCurrentPos mo && mrRoomName r == cmRoomName m) (moRooms mo)
+             )
 
       (mapB, mapHits, mapCnt) = case cmMapOverview m of
-        Just mo | not (null (moRooms mo)) ->
+        Just mo | mapValid mo ->
           let curPos = moCurrentPos mo
+              sameMapExit e = T.null (reMapId e) || reMapId e == moMapId mo
+              exitByRoomId = M.fromList [(reRoomId e, reDirection e) | e <- cmRoomExits m, sameMapExit e, not (T.null (reRoomId e))]
+              exitByPos = M.fromList [(pos, reDirection e) | e <- cmRoomExits m, sameMapExit e, Just pos <- [rePos e]]
+
               edgeCmds =
                 mconcat
                   [ let (x1, y1) = worldPosFromGrid (meFrom e)
                         (x2, y2) = worldPosFromGrid (meTo e)
-                        sx1 = centerX + x1 * zoom
-                        sy1 = centerY + y1 * zoom
-                        sx2 = centerX + x2 * zoom
-                        sy2 = centerY + y2 * zoom
+                        sx1 = centerX + x1 * effZoom
+                        sy1 = centerY + y1 * effZoom
+                        sx2 = centerX + x2 * effZoom
+                        sy2 = centerY + y2 * effZoom
                         vis = inFrustum sx1 sy1 || inFrustum sx2 sy2
                         isNear = meFrom e == curPos || meTo e == curPos
-                        crossMap = not (T.null (meToMapId e)) && meToMapId e /= moMapId mo
-                        col
-                          | crossMap = "#d6b778"
-                          | isNear = "#6ec2ab"
-                          | otherwise = "#34524a"
+                        col = if isNear then "#6ec2ab" else "#34524a"
                         lw = (if isNear then 2.4 else 1.4) * min 1.2 zoom
                         al = if isNear then 0.88 else 0.46
                      in if not vis
                           then mempty
                           else
-                            "LN|" <> f1 sx1 <> "|" <> f1 sy1 <> "|" <> f1 sx2 <> "|" <> f1 sy2 <> "|" <> f1 lw <> "|" <> col <> "|" <> f2 al <> "|" <> (if crossMap then "1" else "0") <> "\n"
-                    | e <- moEdges mo
+                            "LN|" <> f1 sx1 <> "|" <> f1 sy1 <> "|" <> f1 sx2 <> "|" <> f1 sy2 <> "|" <> f1 lw <> "|" <> col <> "|" <> f2 al <> "|0\n"
+                    | e <- moEdges mo,
+                      T.null (meToMapId e) || meToMapId e == moMapId mo
                   ]
 
               roomItems =
                 [ let pos = mrPos r
                       (wx, wy) = worldPosFromGrid pos
-                      sx = centerX + wx * zoom
-                      sy = centerY + wy * zoom
+                      sx = centerX + wx * effZoom
+                      sy = centerY + wy * effZoom
                       isCur = pos == curPos
                       mDir = case M.lookup (mrRoomId r) exitByRoomId of
                         Just d -> Just d
@@ -165,9 +170,9 @@ buildMapStage m =
                       hov = case mDir of
                         Just d -> cmHovered m == Just (HitExit d)
                         Nothing -> False
-                      fontSz = (if isCur then 14.0 else 12.5) * max 0.82 (min 1.18 zoom)
-                      nw = max 78.0 (fromIntegral (T.length (mrRoomName r)) * (fontSz + 1.8) + 24.0)
-                      nh = (if isCur then 38.0 else 32.0) * max 0.85 (min 1.15 zoom)
+                      fontSz = (if isCur then 13.5 else 12.0) * max 0.80 (min 1.15 zoom)
+                      nw = max 72.0 (fromIntegral (T.length (mrRoomName r)) * (fontSz + 1.4) + 22.0)
+                      nh = (if isCur then 36.0 else 30.0) * max 0.84 (min 1.14 zoom)
                       rx = sx - nw * 0.5
                       ry = sy - nh * 0.5
                       kindBorder = case mrRoomKind r of
@@ -182,11 +187,11 @@ buildMapStage m =
                         | otherwise = ("#0d1917", kindBorder, "#93afa5", 1.1)
                       pulseCmd =
                         if isCur
-                          then "CI|" <> f1 sx <> "|" <> f1 sy <> "|" <> f1 (27.0 * pulse * zoom) <> "||#e6cf95|1.4|0.34\n"
+                          then "CI|" <> f1 sx <> "|" <> f1 sy <> "|" <> f1 (26.0 * pulse * effZoom) <> "||#e6cf95|1.4|0.34\n"
                           else mempty
                       dirCmd = case mDir of
                         Just d ->
-                          "TX|" <> f1 sx <> "|" <> f1 (ry - 5.0) <> "|10.5|600|center|#8fd9c4|0.92|" <> sanitize (directionLabel loc d) <> "\n"
+                          "TX|" <> f1 sx <> "|" <> f1 (ry - 5.0) <> "|10.5|600|center|#8fd9c4|0.94|" <> sanitize (directionLabel loc d) <> "\n"
                         Nothing -> mempty
                       cmd =
                         pulseCmd
@@ -197,34 +202,109 @@ buildMapStage m =
                    in (cmd, mHit)
                   | r <- moRooms mo,
                     let (wx0, wy0) = worldPosFromGrid (mrPos r),
-                    inFrustum (centerX + wx0 * zoom) (centerY + wy0 * zoom)
+                    inFrustum (centerX + wx0 * effZoom) (centerY + wy0 * effZoom)
                 ]
 
-              titleY = if isMobile then 68.0 else 74.0
-              headerCmd =
-                "TX|" <> f1 (w * 0.5) <> "|" <> f1 titleY <> "|12.5|600|center|#c9b88c|0.85|— " <> sanitize (moMapName mo) <> " —\n"
-           in ( headerCmd <> edgeCmds <> mconcat (map fst roomItems),
-                [hb | (_, Just hb) <- roomItems],
-                length roomItems * 3 + 8
+              -- Cross-map portal edges & clickable destination portal nodes (placed along exit direction, never foreign grid coords!)
+              portalItems =
+                [ let d = meDirection e
+                      (x1, y1) = worldPosFromGrid (meFrom e)
+                      (dgx, dgy) = directionGridDelta d
+                      (x2, y2) = worldPosFromGrid (fst (meFrom e) + dgx, snd (meFrom e) + dgy)
+                      sx1 = centerX + x1 * effZoom
+                      sy1 = centerY + y1 * effZoom
+                      sx2 = centerX + x2 * effZoom
+                      sy2 = centerY + y2 * effZoom
+                      isFromCur = meFrom e == curPos && any (\ex -> reDirection ex == d) (cmRoomExits m)
+                      hov = isFromCur && cmHovered m == Just (HitExit d)
+                      destRoom = if not (T.null (meToRoomName e)) then meToRoomName e else if not (T.null (meToMapName e)) then meToMapName e else meToMapId e
+                      labelTxt = "⇄ " <> destRoom
+                      fontSz = 12.0 * max 0.82 (min 1.14 zoom)
+                      nw = max 84.0 (fromIntegral (T.length labelTxt) * (fontSz + 1.2) + 22.0)
+                      nh = 31.0 * max 0.85 (min 1.12 zoom)
+                      rx = sx2 - nw * 0.5
+                      ry = sy2 - nh * 0.5
+                      bg = if hov then "#352c19" else if isFromCur then "#221d12" else "#151612"
+                      bd = if hov then "#ffe39e" else if isFromCur then "#e6cf95" else "#8f7d52"
+                      txtCol = if isFromCur then "#fff3d1" else "#cbbd96"
+                      lw = if isFromCur then 1.8 else 1.2
+                      al = if isFromCur then 0.94 else 0.62
+                      subMap =
+                        if not (T.null (meToMapName e)) && meToMapName e /= destRoom
+                          then "TX|" <> f1 sx2 <> "|" <> f1 (ry + nh + 12.0) <> "|10|500|center|#d6b778|0.82|" <> sanitize (meToMapName e) <> "\n"
+                          else mempty
+                      dirCmd =
+                        if isFromCur
+                          then "TX|" <> f1 sx2 <> "|" <> f1 (ry - 5.0) <> "|10.5|600|center|#f0d898|0.95|" <> sanitize (directionLabel loc d) <> "\n"
+                          else mempty
+                      cmd =
+                        "LN|" <> f1 sx1 <> "|" <> f1 sy1 <> "|" <> f1 sx2 <> "|" <> f1 sy2 <> "|" <> f1 lw <> "|#d6b778|" <> f2 al <> "|1\n"
+                          <> "RR|" <> f1 rx <> "|" <> f1 ry <> "|" <> f1 nw <> "|" <> f1 nh <> "|7|" <> bg <> "|" <> bd <> "|" <> f1 lw <> "|0.96\n"
+                          <> "TX|" <> f1 sx2 <> "|" <> f1 (sy2 + fontSz * 0.36) <> "|" <> f1 fontSz <> "|600|center|" <> txtCol <> "|1|" <> sanitize labelTxt <> "\n"
+                          <> dirCmd
+                          <> subMap
+                      mHit = if isFromCur then Just (CanvasHitbox rx ry nw nh (HitExit d) "pointer") else Nothing
+                   in (cmd, mHit)
+                  | e <- moEdges mo,
+                    not (T.null (meToMapId e)) && meToMapId e /= moMapId mo,
+                    let (wx0, wy0) = worldPosFromGrid (meFrom e),
+                    inFrustum (centerX + wx0 * effZoom) (centerY + wy0 * effZoom)
+                ]
+
+              coveredDirs = [d | (_, Just hb) <- roomItems <> portalItems, HitExit d <- [chTarget hb]]
+
+              -- Guarantee any remaining exit in cmRoomExits (e.g. dynamic story exit) is also rendered & clickable
+              extraItems =
+                [ let d = reDirection ex
+                      (cx0, cy0) = worldPosFromGrid curPos
+                      (dgx, dgy) = directionGridDelta d
+                      (tx0, ty0) = worldPosFromGrid (fst curPos + dgx, snd curPos + dgy)
+                      sx1 = centerX + cx0 * effZoom
+                      sy1 = centerY + cy0 * effZoom
+                      sx2 = centerX + tx0 * effZoom
+                      sy2 = centerY + ty0 * effZoom
+                      hov = cmHovered m == Just (HitExit d)
+                      isCross = not (T.null (reMapId ex)) && reMapId ex /= moMapId mo
+                      lbl = (if isCross then "⇄ " else "") <> reRoomName ex
+                      ew = max 78.0 (fromIntegral (T.length lbl) * 13.2 + 22.0)
+                      eh = 31.0
+                      rx = sx2 - ew * 0.5
+                      ry = sy2 - eh * 0.5
+                      bg = if hov then "#254b41" else if isCross then "#221d12" else "#132823"
+                      bd = if hov then "#92ebcf" else if isCross then "#e6cf95" else "#5ca38f"
+                      cmd =
+                        "LN|" <> f1 sx1 <> "|" <> f1 sy1 <> "|" <> f1 sx2 <> "|" <> f1 sy2 <> "|1.8|" <> bd <> "|0.82|" <> (if isCross then "1" else "0") <> "\n"
+                          <> "RR|" <> f1 rx <> "|" <> f1 ry <> "|" <> f1 ew <> "|" <> f1 eh <> "|7|" <> bg <> "|" <> bd <> "|1.7|0.96\n"
+                          <> "TX|" <> f1 sx2 <> "|" <> f1 (sy2 + 4.5) <> "|12|600|center|#f0faf6|1|" <> sanitize lbl <> "\n"
+                          <> "TX|" <> f1 sx2 <> "|" <> f1 (ry - 5.0) <> "|10.5|600|center|#8fd9c4|0.94|" <> sanitize (directionLabel loc d) <> "\n"
+                   in (cmd, Just (CanvasHitbox rx ry ew eh (HitExit d) "pointer"))
+                  | ex <- cmRoomExits m,
+                    reDirection ex `notElem` coveredDirs
+                ]
+
+              allNodes = roomItems <> portalItems <> extraItems
+           in ( edgeCmds <> mconcat (map fst allNodes),
+                [hb | (_, Just hb) <- allNodes],
+                length allNodes * 3 + 8
               )
         _ ->
           -- Radial 8-direction fallback around current room
           let cx = w * 0.5 + cmPanX m
-              cy = (if isMobile then h * 0.42 else h * 0.44) + cmPanY m
+              cy = (if isMobile then h * 0.44 else h * 0.43) + cmPanY m
               rName = if T.null (cmRoomName m) then tr loc "app.title" else cmRoomName m
-              curW = max 94.0 (fromIntegral (T.length rName) * 16.5 + 32.0)
+              curW = max 88.0 (fromIntegral (T.length rName) * 15.5 + 28.0)
               curCmd =
-                "CI|" <> f1 cx <> "|" <> f1 cy <> "|" <> f1 (30.0 * pulse) <> "||#e6cf95|1.5|0.34\n"
-                  <> "RR|" <> f1 (cx - curW * 0.5) <> "|" <> f1 (cy - 20.0) <> "|" <> f1 curW <> "|40|8|#1d3d35|#e6cf95|2.2|0.96\n"
-                  <> "TX|" <> f1 cx <> "|" <> f1 (cy + 5.5) <> "|14.5|700|center|#fff7e2|1|" <> sanitize rName <> "\n"
-              spanDist = if isMobile then 118.0 else 162.0
+                "CI|" <> f1 cx <> "|" <> f1 cy <> "|" <> f1 (28.0 * pulse) <> "||#e6cf95|1.5|0.34\n"
+                  <> "RR|" <> f1 (cx - curW * 0.5) <> "|" <> f1 (cy - 19.0) <> "|" <> f1 curW <> "|38|8|#1d3d35|#e6cf95|2.2|0.96\n"
+                  <> "TX|" <> f1 cx <> "|" <> f1 (cy + 5.2) <> "|14|700|center|#fff7e2|1|" <> sanitize rName <> "\n"
+              spanDist = if isMobile then 104.0 else 156.0
               exits =
                 [ let d = reDirection ex
                       (vx, vy) = directionVec d
                       exX = cx + vx * spanDist * zoom
                       exY = cy + vy * (spanDist * 0.78) * zoom
-                      ew = max 82.0 (fromIntegral (T.length (reRoomName ex)) * 14.0 + 26.0)
-                      eh = 33.0
+                      ew = max 78.0 (fromIntegral (T.length (reRoomName ex)) * 13.2 + 24.0)
+                      eh = 31.0
                       rx = exX - ew * 0.5
                       ry = exY - eh * 0.5
                       hov = cmHovered m == Just (HitExit d)
@@ -233,25 +313,12 @@ buildMapStage m =
                       cmd =
                         "LN|" <> f1 cx <> "|" <> f1 cy <> "|" <> f1 exX <> "|" <> f1 exY <> "|1.9|#5ca38f|0.72|0\n"
                           <> "RR|" <> f1 rx <> "|" <> f1 ry <> "|" <> f1 ew <> "|" <> f1 eh <> "|7|" <> bg <> "|" <> bd <> "|1.6|0.95\n"
-                          <> "TX|" <> f1 exX <> "|" <> f1 (exY + 4.8) <> "|12.5|600|center|#e6f7f1|1|" <> sanitize (reRoomName ex) <> "\n"
+                          <> "TX|" <> f1 exX <> "|" <> f1 (exY + 4.5) <> "|12|600|center|#e6f7f1|1|" <> sanitize (reRoomName ex) <> "\n"
                           <> "TX|" <> f1 exX <> "|" <> f1 (ry - 5.0) <> "|10.5|600|center|#8fd9c4|0.9|" <> sanitize (directionLabel loc d) <> "\n"
                    in (cmd, CanvasHitbox rx ry ew eh (HitExit d) "pointer")
                   | ex <- cmRoomExits m
                 ]
            in (curCmd <> mconcat (map fst exits), map snd exits, 4 + length exits * 4)
-
-      -- Reset-camera chip if panned/zoomed
-      hasPan = abs (cmPanX m) > 6.0 || abs (cmPanY m) > 6.0 || abs (cmMapZoom m - 1.0) > 0.04
-      (resetCmd, resetHit) =
-        if hasPan
-          then
-            let rx = w - 92.0
-                ry = if isMobile then 66.0 else 72.0
-             in ( "RR|" <> f1 rx <> "|" <> f1 ry <> "|74|28|6|#18312b|#7cd4bc|1.2|0.92\n"
-                    <> "TX|" <> f1 (rx + 37.0) <> "|" <> f1 (ry + 18.0) <> "|11.5|600|center|#e8f7f2|1|" <> (if loc == Zh then "镜头归位" else "Center") <> "\n",
-                  [CanvasHitbox rx ry 74 28 HitResetCam "pointer"]
-                )
-          else (mempty, [])
 
       -- Gentle standing silhouette companion on wide screens
       (avatarCmd, avatarCnt) =
@@ -263,11 +330,11 @@ buildMapStage m =
                 prof = parseVisualProfile (psGender (cmStats m))
                 pose = blendPose (cmPoseLib m) "idle" "guard" breath st
                 ax = w - 82.0
-                ay = h * 0.58
+                ay = h * 0.54
                 (ac, cnt) = encodeActor ax ay 0.68 0.0 "#d7ebe4" "#0a1311" 0.0 0.92 pose st prof (cmLookStyle m) (0, 0) (cmClockMs m)
              in ("CI|" <> f1 ax <> "|" <> f1 (ay + 3.0) <> "|34|#091210|#315249|1.1|0.52\n" <> ac, cnt + 1)
           else (mempty, 0)
-   in (mapB <> resetCmd <> avatarCmd, resetHit <> mapHits, mapCnt + avatarCnt)
+   in (mapB <> avatarCmd, mapHits, mapCnt + avatarCnt)
 
 -- Full Deterministic Combat Stage (1:1 visual parity with SilhouetteBattleStage + BattleDirector)
 buildBattleStage :: ClientModel -> (B.Builder, [CanvasHitbox], Int)
