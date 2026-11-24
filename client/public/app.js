@@ -166,22 +166,33 @@ function playSynthesizedSfx(kind) {
 // --- 5. Full-Canvas Command Tape Executor (Zero DOM UI!) ---
 let cssW = window.innerWidth;
 let cssH = pageKind === "poses" ? 1420 : window.innerHeight;
-let dpr = Math.min(isTouch ? 2.0 : 2.0, window.devicePixelRatio || 1);
+let layoutH = cssH;
+let dpr = Math.min(2.0, window.devicePixelRatio || 1);
 
 function syncCanvasSize() {
+  // Always match the canvas backing store 1:1 with its actual CSS box (never distort when iOS keyboard opens!)
+  const boxW = Math.max(320, c2dCanvas.clientWidth || window.innerWidth);
+  const boxH = pageKind === "poses" ? Math.max(window.innerHeight, 1420) : Math.max(320, c2dCanvas.clientHeight || window.innerHeight);
+  cssW = boxW;
+  cssH = boxH;
   const vv = window.visualViewport;
-  cssW = vv ? Math.round(vv.width) : window.innerWidth;
-  cssH = pageKind === "poses" ? Math.max(window.innerHeight, 1420) : (vv ? Math.round(vv.height) : window.innerHeight);
+  layoutH = pageKind === "poses" ? boxH : Math.max(220, Math.min(boxH, Math.round(vv ? vv.height : boxH)));
   dpr = Math.min(2.0, window.devicePixelRatio || 1);
   const pw = Math.round(cssW * dpr), ph = Math.round(cssH * dpr);
   if (c2dCanvas.width !== pw || c2dCanvas.height !== ph) {
     c2dCanvas.width = pw; c2dCanvas.height = ph;
   }
 }
+function syncVisualViewport() {
+  const vv = window.visualViewport;
+  if (!vv) return;
+  layoutH = pageKind === "poses" ? cssH : Math.max(220, Math.min(cssH, Math.round(vv.height)));
+  if (window.scrollY !== 0) window.scrollTo(0, 0);
+}
 window.addEventListener("resize", syncCanvasSize);
 if (window.visualViewport) {
-  window.visualViewport.addEventListener("resize", syncCanvasSize);
-  window.visualViewport.addEventListener("scroll", syncCanvasSize);
+  window.visualViewport.addEventListener("resize", syncVisualViewport);
+  window.visualViewport.addEventListener("scroll", syncVisualViewport);
 }
 syncCanvasSize();
 
@@ -248,7 +259,7 @@ function executeFrameBatch(batchStr) {
     const p = line.split("|");
     switch (p[0]) {
       case "BG": {
-        const w = +p[1], h = +p[2], isBattle = p[4] === "1";
+        const w = cssW, h = cssH, isBattle = p[4] === "1";
         const g = ctx.createLinearGradient(0, 0, 0, h);
         g.addColorStop(0, isBattle ? "#f1ead9" : "#f4eee0");
         g.addColorStop(0.55, isBattle ? "#e8dec8" : "#ede5d4");
@@ -799,8 +810,7 @@ async function boot() {
     const dt = Math.min(220, Math.max(1, ts - lastTs));
     lastTs = ts;
     if (!document.hidden) {
-      syncCanvasSize();
-      await runHs(() => hsExports.hs_step_frame(dt, cssW, cssH, reducedMotionQuery.matches ? 1 : 0));
+      await runHs(() => hsExports.hs_step_frame(dt, cssW, layoutH, reducedMotionQuery.matches ? 1 : 0));
     }
     requestAnimationFrame(frameLoop);
   };

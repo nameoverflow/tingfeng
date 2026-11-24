@@ -286,27 +286,26 @@ buildOnboardingUi m =
           <> cmdSerif 54 31 18 "700" "left" "#1e1a16" 1 (if zh then "听风录" else "Tingfeng")
       (bLoc, hLoc) = drawBtn m (w - 54) 11 40 28 (if zh then "EN" else "中") 11.5 ToneGhost False (HitUi "toggle_locale" "" "")
 
-      -- Centered Xuan paper scroll card
+      -- Centered Xuan paper scroll card (stays cleanly above iOS software keyboard when viewport shrinks)
       cardW = min 500.0 (w - 28.0)
-      cardMaxH = h - hdrH - 36.0
+      cardMaxH = max 180.0 (h - hdrH - 16.0)
       cardX = (w - cardW) * 0.5
       isCreate = cmLoginMode m == "create"
-      pad = 20.0
+      pad = if h < 480.0 then 14.0 else 20.0
       innerW = cardW - pad * 2
 
       -- Mode tabs
       tabW = (innerW - 8) * 0.5
-      -- Build card content at local y starting at 0, then place inside card
-      tabY = 18.0
-      contentStartY = tabY + 42.0
+      tabY = if h < 480.0 then 12.0 else 18.0
+      contentStartY = tabY + (if h < 480.0 then 36.0 else 42.0)
 
       (_, _, contentH) =
         if not isCreate
           then buildLoginBody m zh cardX pad innerW contentStartY
           else buildCreateBody m zh cardX pad innerW contentStartY
 
-      cardH = min cardMaxH (max 250.0 (contentStartY + contentH + 20.0))
-      cardY = hdrH + max 16.0 ((h - hdrH - cardH) * 0.45)
+      cardH = min cardMaxH (max 210.0 (contentStartY + contentH + 14.0))
+      cardY = hdrH + max 8.0 ((h - hdrH - cardH) * (if h < 480.0 then 0.25 else 0.45))
 
       -- Recompute in screen coords with scroll
       viewH = cardH - contentStartY - 12.0

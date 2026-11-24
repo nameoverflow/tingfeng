@@ -277,7 +277,7 @@ initClientModel page lib cat w h reduced =
       cmSoundOn = False,
       cmLookStyle = LookMaiden,
       cmWidth = max 320 w,
-      cmHeight = max 480 h,
+      cmHeight = max 220 h,
       cmClockMs = 0,
       cmLastSyncTickMs = 0,
       cmWasmStepMs = 0.06,
@@ -871,7 +871,7 @@ stepClientFrame rawDtMs rawW rawH m0 =
   let dtSec = max 0.001 (min 0.25 (rawDtMs / 1000.0))
       dtMs = dtSec * 1000.0
       w = max 320.0 rawW
-      h = max 480.0 rawH
+      h = max 220.0 rawH
       nowMs = cmClockMs m0 + dtMs
 
       -- Unconditionally stable analytical exponential camera smoothing (immune to large frame hitches)
