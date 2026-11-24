@@ -243,7 +243,6 @@ buildBattleLabUi m =
       (bSide, hSide) = drawBtn m (r2x + 62) r2y 60 28 sideLbl 11.5 ToneDefault False (HitUi "lab_cycle_side" "" "")
       (bLook, hLook) = drawBtn m (r2x + 128) r2y 68 28 lookLbl 11.5 ToneDefault False (HitUi "toggle_look" "" "")
       (bOne, hOne) = drawBtn m (r2x + 202) r2y 82 28 "播放这一招" 11.5 ToneJade False (HitUi "lab_play_selected" "" "")
-      (bGl, hGl) = drawBtn m (r2x + 290) r2y 74 28 (if cmRenderMode m == ModeWebGL2Ink then "水墨 GL" else "Canvas2D") 11.5 ToneGhost False HitToggleRender
 
       -- Timeline scrubber row
       sy = dockY + dockH - 26.0
@@ -261,8 +260,8 @@ buildBattleLabUi m =
       scrubHit = CanvasHitbox (scX - 6) (sy - 6) (scW + 12) 24 (HitLabScrub scX scW) "ew-resize"
       dockSwallow = CanvasHitbox dockX dockY dockW dockH HitSwallow "default"
    in emptyUi
-        { uoBuilder = topB <> dockBg <> bDemo <> bPause <> bPrev <> actBox <> bNext <> bOut <> bSide <> bLook <> bOne <> bGl <> scrubB,
-          uoHits = topHits <> [dockSwallow] <> hDemo <> hPause <> hPrev <> hNext <> hOut <> hSide <> hLook <> hOne <> hGl <> [scrubHit],
+        { uoBuilder = topB <> dockBg <> bDemo <> bPause <> bPrev <> actBox <> bNext <> bOut <> bSide <> bLook <> bOne <> scrubB,
+          uoHits = topHits <> [dockSwallow] <> hDemo <> hPause <> hPrev <> hNext <> hOut <> hSide <> hLook <> hOne <> [scrubHit],
           uoCmdCount = 60
         }
 
@@ -281,7 +280,6 @@ buildOnboardingUi m =
           <> cmdRect 16 11 28 28 3 "#a32c22" "#7d2018" 1 0.96
           <> cmdSerif 30 30 16 "700" "center" "#f7f1e3" 1 "武"
           <> cmdSerif 54 31 18 "700" "left" "#1e1a16" 1 (if zh then "听风录" else "Tingfeng")
-      (bGl, hGl) = drawBtn m (w - 146) 11 84 28 (if cmRenderMode m == ModeWebGL2Ink then "水墨 GL" else "Canvas 2D") 11.5 ToneGhost False HitToggleRender
       (bLoc, hLoc) = drawBtn m (w - 54) 11 40 28 (if zh then "EN" else "中") 11.5 ToneGhost False (HitUi "toggle_locale" "" "")
 
       -- Centered Xuan paper scroll card
@@ -329,8 +327,8 @@ buildOnboardingUi m =
       swallow = CanvasHitbox cardX cardY cardW cardH HitSwallow "default"
       sZone = ScrollZone cardX clipY cardW clipH ScrollOnboard
    in emptyUi
-        { uoBuilder = hdrBg <> bGl <> bLoc <> cardFrame <> bTabL <> bTabC <> clippedBody <> sb,
-          uoHits = hGl <> hLoc <> [swallow] <> hTabL <> hTabC <> visBodyHits,
+        { uoBuilder = hdrBg <> bLoc <> cardFrame <> bTabL <> bTabC <> clippedBody <> sb,
+          uoHits = hLoc <> [swallow] <> hTabL <> hTabC <> visBodyHits,
           uoScrollZones = [sZone],
           uoOnboardMaxScroll = maxScroll,
           uoCmdCount = 90
@@ -559,12 +557,11 @@ drawDesktopHeader m =
 
       -- Right nav buttons
       activeQ = length (filter (not . qiCompleted) (cmQuests m))
-      (bArts, hArts) = drawBtn m (w - 294) 11 62 30 (if zh then "武学" else "Arts") 12.5 (if cmDesktopDrawer m == "arts" then ToneActive else ToneDefault) False (HitUi "desktop_drawer" "arts" "")
-      (bQuests, hQuests) = drawBtn m (w - 224) 11 66 30 (if zh then "任务" else "Quests") 12.5 (if cmDesktopDrawer m == "quests" then ToneActive else ToneDefault) False (HitUi "desktop_drawer" "quests" "")
-      qDot = if activeQ > 0 then cmdCirc (w - 165) 17 3.2 "#a32c22" "" 0 1 else mempty
-      (bGl, hGl) = drawBtn m (w - 150) 11 88 30 (if cmRenderMode m == ModeWebGL2Ink then "水墨 GL ✦" else "Canvas 2D") 11.5 ToneGhost False HitToggleRender
+      (bArts, hArts) = drawBtn m (w - 198) 11 62 30 (if zh then "武学" else "Arts") 12.5 (if cmDesktopDrawer m == "arts" then ToneActive else ToneDefault) False (HitUi "desktop_drawer" "arts" "")
+      (bQuests, hQuests) = drawBtn m (w - 128) 11 66 30 (if zh then "任务" else "Quests") 12.5 (if cmDesktopDrawer m == "quests" then ToneActive else ToneDefault) False (HitUi "desktop_drawer" "quests" "")
+      qDot = if activeQ > 0 then cmdCirc (w - 69) 17 3.2 "#a32c22" "" 0 1 else mempty
       (bLoc, hLoc) = drawBtn m (w - 54) 11 40 30 (if zh then "EN" else "中") 11.5 ToneGhost False (HitUi "toggle_locale" "" "")
-   in (bg <> pillB <> busyB <> bArts <> bQuests <> qDot <> bGl <> bLoc, [swallow, pillHit] <> busyH <> hArts <> hQuests <> hGl <> hLoc)
+   in (bg <> pillB <> busyB <> bArts <> bQuests <> qDot <> bLoc, [swallow, pillHit] <> busyH <> hArts <> hQuests <> hLoc)
 
 -- Mobile Header (56px)
 
@@ -585,11 +582,10 @@ drawMobileHeader m =
       bg =
         cmdRect 0 0 w 56 0 "#f5efe1" "" 0 0.97
           <> cmdLine 0 56 w 56 1 "#c6baa3" 0.95 False
-          <> cmdSerif 12 27 15 "700" "left" "#1e1a16" 1 (truncateText (w - 186) 15 titleTxt)
+          <> cmdSerif 12 27 15 "700" "left" "#1e1a16" 1 (truncateText (w - 144) 15 titleTxt)
       swallow = CanvasHitbox 0 0 w 56 HitSwallow "default"
 
-      (bVit, hVit) = drawBtn m (w - 168) 8 78 26 (T.pack (show presHp) <> "/" <> T.pack (show presQi)) 11 ToneDefault False (HitUi "mobile_tab" "character" "")
-      (bGl, hGl) = drawBtn m (w - 84) 8 36 26 (if cmRenderMode m == ModeWebGL2Ink then "GL" else "2D") 11 ToneGhost False HitToggleRender
+      (bVit, hVit) = drawBtn m (w - 126) 8 78 26 (T.pack (show presHp) <> "/" <> T.pack (show presQi)) 11 ToneDefault False (HitUi "mobile_tab" "character" "")
       (bLoc, hLoc) = drawBtn m (w - 42) 8 32 26 (if zh then "EN" else "中") 11 ToneGhost False (HitUi "toggle_locale" "" "")
 
       barW = (w - 30) * 0.5
@@ -598,7 +594,7 @@ drawMobileHeader m =
           <> cmdRect 12 41 (barW * max 0 (min 1 hpPct)) 6 2 "#a32c22" "" 0 1
           <> cmdRect (18 + barW) 41 barW 6 2 "#dfd5be" "" 0 1
           <> cmdRect (18 + barW) 41 (barW * max 0 (min 1 qiPct)) 6 2 "#2b594b" "" 0 1
-   in (bg <> bVit <> bGl <> bLoc <> bars, [swallow] <> hVit <> hGl <> hLoc)
+   in (bg <> bVit <> bLoc <> bars, [swallow] <> hVit <> hLoc)
 
 -- Mobile Bottom Tabbar (54px with Crisp Canvas Vector Icons & Status Dots)
 

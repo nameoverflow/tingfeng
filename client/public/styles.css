@@ -28,7 +28,6 @@ canvas.stage-canvas {
 }
 
 #c2d-stage { z-index: 1; }
-#gl-stage { z-index: 2; pointer-events: none; }
 
 /* Invisible off-screen IME bridge for native iOS/macOS CJK keyboards (zero visible DOM UI) */
 .ime-proxy {

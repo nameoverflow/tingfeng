@@ -3,7 +3,6 @@
 
 module Tingfeng.State
   ( AppPage (..),
-    RenderMode (..),
     LogLine (..),
     HitTarget (..),
     CanvasHitbox (..),
@@ -56,9 +55,6 @@ import Tingfeng.Protocol
 data AppPage = PageGame | PageBattleLab | PagePoseSheet
   deriving (Show, Eq)
 
-data RenderMode = ModeWebGL2Ink | ModeCanvas2D
-  deriving (Show, Eq)
-
 data LogLine = LogLine
   { llId :: !Int,
     llKind :: !Text,
@@ -69,7 +65,6 @@ data LogLine = LogLine
 data HitTarget
   = HitExit !Direction
   | HitNpc !Text
-  | HitToggleRender
   | HitResetCam
   | HitUi !Text !Text !Text
   | HitFocusInput !Text
@@ -131,7 +126,6 @@ data ClientModel = ClientModel
     cmLocale :: !Locale,
     cmPoseLib :: !PoseLibrary,
     cmCatalog :: !ActionCatalog,
-    cmRenderMode :: !RenderMode,
     cmReducedMotion :: !Bool,
     cmDocHidden :: !Bool,
     cmSoundOn :: !Bool,
@@ -277,7 +271,6 @@ initClientModel page lib cat w h reduced =
       cmLocale = Zh,
       cmPoseLib = lib,
       cmCatalog = cat,
-      cmRenderMode = ModeWebGL2Ink,
       cmReducedMotion = reduced,
       cmDocHidden = False,
       cmSoundOn = False,
@@ -1055,10 +1048,6 @@ handlePointerClick x y m0 =
               let (m1, bc) = blurIfOther Nothing
                   nextSel = if cmSelectedNpc m1 == Just cid then Nothing else Just cid
                in (m1 {cmSelectedNpc = nextSel, cmNpcScroll = 0, cmUiDirty = True}, bc)
-            HitToggleRender ->
-              let (m1, bc) = blurIfOther Nothing
-                  next = if cmRenderMode m1 == ModeWebGL2Ink then ModeCanvas2D else ModeWebGL2Ink
-               in (m1 {cmRenderMode = next, cmUiDirty = True}, bc)
             HitResetCam ->
               let (m1, bc) = blurIfOther Nothing
                in (resetCameraPan m1, bc)
@@ -1252,9 +1241,6 @@ handleUiAction kind a1 a2 m0 = case kind of
   "toggle_locale" ->
     let next = if cmLocale m0 == Zh then En else Zh
      in (m0 {cmLocale = next, cmUiDirty = True}, [])
-  "toggle_render" ->
-    let next = if cmRenderMode m0 == ModeWebGL2Ink then ModeCanvas2D else ModeWebGL2Ink
-     in (m0 {cmRenderMode = next, cmUiDirty = True}, [])
   "toggle_sound" ->
     (m0 {cmSoundOn = not (cmSoundOn m0), cmUiDirty = True}, [])
   "set_look" ->

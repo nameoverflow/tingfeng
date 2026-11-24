@@ -2,7 +2,6 @@ import ghcWasmJsffi from "/wasm/ghc_wasm_jsffi.js";
 
 const pageKind = document.body.dataset.page || "game";
 const c2dCanvas = document.getElementById("c2d-stage");
-const glCanvas = document.getElementById("gl-stage");
 const stageProbe = document.getElementById("stage-probe");
 const imeProxy = document.getElementById("ime-proxy");
 const ctx = c2dCanvas.getContext("2d", { alpha: false });
@@ -97,130 +96,35 @@ function createWasiShim(getMemory) {
   });
 }
 
-// --- 3. Song-Dynasty Xuan-Paper + Radial Sword-Impact Shockwave WebGL2 Pipeline ---
-function initWebGL2Pipeline(canvas) {
-  if (pageKind === "poses") return null;
-  const gl = canvas.getContext("webgl2", { alpha: false, antialias: false, premultipliedAlpha: false });
-  if (!gl) return null;
-
-  const vsSrc = `#version 300 es
-  in vec2 aPos;
-  out vec2 vUv;
-  void main() { vUv = aPos * 0.5 + 0.5; gl_Position = vec4(aPos, 0.0, 1.0); }`;
-
-  const fsSrc = `#version 300 es
-  precision highp float;
-  in vec2 vUv;
-  out vec4 fragColor;
-  uniform sampler2D uStageTex;
-  uniform vec2 uResolution;
-  uniform vec2 uShockPos;
-  uniform float uShockAge;
-  uniform float uShockPower;
-
-  float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }
-  float noise(vec2 p) {
-    vec2 i = floor(p), f = fract(p);
-    vec2 u = f * f * (3.0 - 2.0 * f);
-    return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), u.x),
-               mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x), u.y);
+// --- 3. One-Time Offscreen Xuan-Paper Fiber Texture Pattern (Zero per-frame GPU upload!) ---
+function createPaperPattern(targetCtx) {
+  const tile = document.createElement("canvas");
+  tile.width = 192;
+  tile.height = 192;
+  const tctx = tile.getContext("2d");
+  if (!tctx) return null;
+  let seed = 1337;
+  const rand = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
+  // Subtle organic Xuan paper grain & horizontal mulberry fibers
+  for (let i = 0; i < 650; i++) {
+    const x = rand() * 192, y = rand() * 192;
+    const dark = rand() > 0.45;
+    tctx.fillStyle = dark ? "rgba(62, 50, 36, 0.028)" : "rgba(255, 252, 244, 0.055)";
+    tctx.fillRect(x, y, 1 + rand() * 2, 1);
   }
-  void main() {
-    vec2 uv = vec2(vUv.x, 1.0 - vUv.y);
-    float aspect = uResolution.x / max(1.0, uResolution.y);
-    vec2 shockUv = vec2(uShockPos.x, 1.0 - uShockPos.y);
-    vec2 delta = (uv - shockUv) * vec2(aspect, 1.0);
-    float dist = length(delta);
-    float wave = uShockPower * exp(-uShockAge * 4.0) * exp(-abs(dist - uShockAge * 1.15) * 28.0);
-    vec2 dir = dist > 0.0001 ? normalize(delta) / vec2(aspect, 1.0) : vec2(0.0);
-    vec2 wUv = clamp(uv + dir * wave * 0.014, 0.001, 0.999);
-
-    float split = wave * 0.0045;
-    float r = texture(uStageTex, clamp(wUv + dir * split, 0.001, 0.999)).r;
-    vec4 base = texture(uStageTex, wUv);
-    float b = texture(uStageTex, clamp(wUv - dir * split, 0.001, 0.999)).b;
-    vec3 col = vec3(r, base.g, b);
-
-    // Subtle organic Xuan paper fiber weave (light-friendly, warm parchment feel)
-    float fiberFine = noise(uv * uResolution * 0.28) - 0.5;
-    float fiberLong = noise(vec2(uv.x * uResolution.x * 0.06, uv.y * uResolution.y * 0.34)) - 0.5;
-    col += (fiberFine * 0.015 + fiberLong * 0.011);
-    col = mix(col, vec3(0.64, 0.17, 0.13), clamp(wave * 0.18, 0.0, 0.22));
-
-    // Gentle warm antique edge vignette (keeps Xuan paper luminous)
-    vec2 vigUv = vUv * (1.0 - vUv.yx);
-    float vig = pow(clamp(vigUv.x * vigUv.y * 16.0, 0.0, 1.0), 0.16);
-    col = mix(col * vec3(0.93, 0.91, 0.87), col, vig);
-    fragColor = vec4(col, 1.0);
-  }`;
-
-  const mk = (t, s) => {
-    const sh = gl.createShader(t); gl.shaderSource(sh, s); gl.compileShader(sh);
-    return gl.getShaderParameter(sh, gl.COMPILE_STATUS) ? sh : null;
-  };
-  const vs = mk(gl.VERTEX_SHADER, vsSrc), fs = mk(gl.FRAGMENT_SHADER, fsSrc);
-  if (!vs || !fs) return null;
-  const prog = gl.createProgram();
-  gl.attachShader(prog, vs); gl.attachShader(prog, fs); gl.linkProgram(prog);
-  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return null;
-
-  const buf = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
-  const vao = gl.createVertexArray();
-  gl.bindVertexArray(vao);
-  const aPos = gl.getAttribLocation(prog, "aPos");
-  gl.enableVertexAttribArray(aPos);
-  gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
-
-  const tex = gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D, tex);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-
-  const locs = {
-    uStageTex: gl.getUniformLocation(prog, "uStageTex"),
-    uResolution: gl.getUniformLocation(prog, "uResolution"),
-    uShockPos: gl.getUniformLocation(prog, "uShockPos"),
-    uShockAge: gl.getUniformLocation(prog, "uShockAge"),
-    uShockPower: gl.getUniformLocation(prog, "uShockPower")
-  };
-
-  let texW = 0, texH = 0, lost = false;
-  canvas.addEventListener("webglcontextlost", (e) => { e.preventDefault(); lost = true; canvas.style.opacity = "0"; });
-
-  return {
-    isAvailable() { return !lost && !gl.isContextLost(); },
-    render(srcCanvas, shockU, shockV, shockAge, shockPower) {
-      if (lost || gl.isContextLost()) return false;
-      if (canvas.width !== srcCanvas.width || canvas.height !== srcCanvas.height) {
-        canvas.width = srcCanvas.width; canvas.height = srcCanvas.height;
-      }
-      gl.viewport(0, 0, canvas.width, canvas.height);
-      gl.useProgram(prog);
-      gl.bindVertexArray(vao);
-      gl.activeTexture(gl.TEXTURE0);
-      gl.bindTexture(gl.TEXTURE_2D, tex);
-      if (texW !== srcCanvas.width || texH !== srcCanvas.height) {
-        texW = srcCanvas.width; texH = srcCanvas.height;
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, srcCanvas);
-      } else {
-        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, srcCanvas);
-      }
-      gl.uniform1i(locs.uStageTex, 0);
-      gl.uniform2f(locs.uResolution, canvas.width, canvas.height);
-      gl.uniform2f(locs.uShockPos, shockU, shockV);
-      gl.uniform1f(locs.uShockAge, shockAge);
-      gl.uniform1f(locs.uShockPower, shockPower);
-      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-      return true;
-    }
-  };
+  tctx.strokeStyle = "rgba(88, 72, 52, 0.022)";
+  tctx.lineWidth = 0.7;
+  for (let i = 0; i < 42; i++) {
+    const x = rand() * 192, y = rand() * 192, len = 10 + rand() * 24;
+    tctx.beginPath();
+    tctx.moveTo(x, y);
+    tctx.lineTo(x + len, y + (rand() - 0.5) * 3);
+    tctx.stroke();
+  }
+  return targetCtx.createPattern(tile, "repeat");
 }
 
-const glPipeline = initWebGL2Pipeline(glCanvas);
+const paperPattern = createPaperPattern(ctx);
 
 // --- 4. Procedural WebAudio Synthesizer ---
 let audioCtx = null;
@@ -314,6 +218,10 @@ function executeFrameBatch(batchStr) {
         ctx.globalAlpha = 1;
         ctx.fillStyle = g;
         ctx.fillRect(0, 0, w, h);
+        if (paperPattern) {
+          ctx.fillStyle = paperPattern;
+          ctx.fillRect(0, 0, w, h);
+        }
         break;
       }
       case "MT": {
@@ -669,14 +577,8 @@ let latestLabStateObj = {
 let wasmReady = false;
 
 globalThis.__tfHost = {
-  submitFrame(batchStr, modeInt, shockU, shockV, shockAge, shockPower) {
+  submitFrame(batchStr) {
     executeFrameBatch(batchStr);
-    const wantGl = modeInt === 1 && glPipeline !== null && glPipeline.isAvailable();
-    if (wantGl && glPipeline.render(c2dCanvas, shockU, shockV, shockAge, shockPower)) {
-      glCanvas.style.opacity = "1";
-    } else {
-      glCanvas.style.opacity = "0";
-    }
   },
   syncLabState(jsonStr) {
     latestLabStateObj = JSON.parse(jsonStr);

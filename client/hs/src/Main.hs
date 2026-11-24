@@ -24,8 +24,8 @@ import Tingfeng.State
 foreign import javascript unsafe "performance.now()"
   js_nowMs :: IO Double
 
-foreign import javascript unsafe "globalThis.__tfHost.submitFrame($1, $2, $3, $4, $5, $6, $7)"
-  js_submitFrame :: JSString -> Int -> Double -> Double -> Double -> Double -> Double -> IO ()
+foreign import javascript unsafe "globalThis.__tfHost.submitFrame($1)"
+  js_submitFrame :: JSString -> IO ()
 
 foreign import javascript unsafe "globalThis.__tfHost.syncLabState($1)"
   js_syncLabState :: JSString -> IO ()
@@ -185,9 +185,7 @@ hsStepFrame dtMs w h redInt = do
               cmWasmStepMs = smoothMs,
               cmDrawCmdCount = fbCmdCount fb
             }
-        modeInt = if cmRenderMode m2 == ModeWebGL2Ink then 1 else 0
-        (su, sv) = cmShockPos m2
-    js_submitFrame (tToJS (fbText fb)) modeInt su sv (cmShockAge m2) (cmShockPower m2) (cmClockMs m2 / 1000.0)
+    js_submitFrame (tToJS (fbText fb))
     runCmds cmds
     m3 <- flushState m2
     writeIORef globalModelRef (Just m3)

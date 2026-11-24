@@ -475,6 +475,25 @@ buildBattleStage m =
                   else mempty
            in slashTrail <> parryRing <> auraRing
 
+      -- Canvas2D expanding ink/cinnabar impact shockwave ripple
+      shockCmd =
+        if not reduced && cmShockAge m < 0.44 && cmShockPower m > 0.05
+          then
+            let age = cmShockAge m
+                pwr = min 1.2 (cmShockPower m)
+                (su, sv) = cmShockPos m
+                sx = su * w
+                sy = (1.0 - sv) * h
+                rad1 = (18.0 + age * 260.0) * fitScale
+                rad2 = (10.0 + age * 180.0) * fitScale
+                al1 = max 0.0 (1.0 - age / 0.44) * 0.45 * pwr
+                al2 = max 0.0 (1.0 - age / 0.34) * 0.28 * pwr
+                col1 = if inv then "#f6f0e2" else "#a32c22"
+                col2 = if inv then "#d6cab2" else "#946623"
+             in "CI|" <> f1 sx <> "|" <> f1 sy <> "|" <> f1 rad1 <> "||" <> col1 <> "|2.0|" <> f2 al1 <> "\n"
+                  <> "CI|" <> f1 sx <> "|" <> f1 sy <> "|" <> f1 rad2 <> "||" <> col2 <> "|1.2|" <> f2 al2 <> "\n"
+          else mempty
+
       partCmds =
         mconcat
           [ let al = max 0.0 (1.0 - ipLife p / max 0.01 (ipMaxLife p))
@@ -519,7 +538,7 @@ buildBattleStage m =
                           <> "TX|" <> f1 (w * 0.5) <> "|" <> f1 (bannerY + 23.0) <> "|15.5|700|center|#1e1a16|0.98|「" <> sanitize lbl <> "」\n"
                       else mempty
                in stampCmd <> floatCmd
-   in (shadeCmd <> arenaCmd <> ghostCmd <> pCmd <> eCmd <> vfxCmd <> partCmds <> textCmd, [], 12 + pCnt + eCnt + length (cmParticles m))
+   in (shadeCmd <> arenaCmd <> ghostCmd <> pCmd <> eCmd <> vfxCmd <> shockCmd <> partCmds <> textCmd, [], 14 + pCnt + eCnt + length (cmParticles m))
 
 -- Pose Sheet Inspector Grid (/pose-sheet.html) rendered in Xuan-paper ink style
 buildPoseSheetBatch :: ClientModel -> (Text, [CanvasHitbox], Int)
