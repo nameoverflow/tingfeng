@@ -185,7 +185,16 @@ drawMeter x y w h ratio mTrail fillCol trailCol labelTxt =
       lblB =
         if T.null labelTxt
           then mempty
-          else cmdTx (x + w - 5) (y + h * 0.5 + 3.6) 10 "700" "right" (if r >= 0.88 then "#f7f1e3" else "#1e1a16") 0.96 labelTxt
+          else
+            if r >= 0.96
+              then cmdTx (x + w - 5) (y + h * 0.5 + 3.6) 10 "700" "right" "#f7f1e3" 0.96 labelTxt
+              else
+                if r <= 0.62
+                  then cmdTx (x + w - 5) (y + h * 0.5 + 3.6) 10 "700" "right" "#1e1a16" 0.96 labelTxt
+                  else
+                    let tw = textWidth 10 labelTxt + 8
+                     in cmdRect (x + w - tw - 1) (y + 1) tw (h - 2) 2 "#f6f0e2" "" 0 0.86
+                          <> cmdTx (x + w - 5) (y + h * 0.5 + 3.6) 10 "700" "right" "#1e1a16" 0.98 labelTxt
    in track <> trailB <> fillB <> lblB
 
 drawScrollbar :: Double -> Double -> Double -> Double -> Double -> Double -> B.Builder

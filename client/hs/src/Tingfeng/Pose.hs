@@ -602,10 +602,18 @@ handShapes elbow wrist shape k =
       bend deg = ptRot dir (deg * upSide)
    in case shape of
         HandFinger ->
-          let f = bend 12
-              w2 = ptAdd wrist dir 2
-              tip = ptAdd wrist f (13 * k)
-           in [sCircle w2 (3.6 * k), sPoly (taperPts w2 tip (2.1 * k) (1.3 * k)), sCircle tip (1.3 * k)]
+          let c = ptAdd wrist dir (3.4 * k)
+              n = ptRot dir 90
+              w = 4.2 * k
+              h = 4.4 * k
+              pts =
+                [ ptAdd (ptAdd c dir (-h)) n (w * 0.8),
+                  ptAdd (ptAdd c dir (h * 0.7)) n w,
+                  ptAdd (ptAdd c dir h) n 0,
+                  ptAdd (ptAdd c dir (h * 0.7)) n (-w),
+                  ptAdd (ptAdd c dir (-h)) n (-w * 0.8)
+                ]
+           in [sPoly (closedCurvePts pts)]
         HandPalm ->
           let f = bend 28
               n = ptRot f (90 * upSide)
@@ -734,7 +742,7 @@ buildActorParts p style profile look (flowX, flowY) hairPhase =
              in [ SPoly (taperPts pommel tasselEnd 1.6 1.2) Nothing 0.85,
                   sPoly (rotatedPoly (spHand p) (spBlade p) [(-9, -2), (5, -2), (5, 2), (-9, 2)]),
                   sPoly (rotatedPoly (spHand p) (spBlade p) [(4, -7), (7, -7), (7, 7), (4, 7)]),
-                  SPoly (rotatedPoly (spHand p) (spBlade p) [(7, -2), (l - 8, -2), (l, 0), (l - 8, 2), (7, 2)]) (Just "#f2ead2") 1.0
+                  SPoly (rotatedPoly (spHand p) (spBlade p) [(7, -2), (l - 8, -2), (l, 0), (l - 8, 2), (7, 2)]) (Just "#4a575b") 1.0
                 ]
           else []
 
