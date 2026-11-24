@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>剪影姿势总览</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body data-page="poses" style="overflow-y:auto;">
+  <div id="stage-wrap" style="position:relative;min-height:1420px;">
+    <canvas id="c2d-stage" class="stage-canvas"></canvas>
+    <canvas id="gl-stage" class="stage-canvas"></canvas>
+  </div>
+  <div id="ui-root" style="display:none;"></div>
+  <script>globalThis.setImmediate = (fn, ...args) => queueMicrotask(() => fn(...args));</script>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

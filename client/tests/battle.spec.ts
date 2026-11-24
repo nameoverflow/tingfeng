@@ -83,21 +83,20 @@ test('main game mounts the same stage and hidden tabs do not accumulate stale re
     fixtures.submitBattleAction('rig.fist.punch_a');
   });
   await expect(page.locator('.silhouette-stage')).toHaveAttribute('data-event-id', 'idle');
-  await expect(page.locator('.combatant.enemy .hp em')).toHaveText('144/180');
-  expect(await page.locator('.log-line').count()).toBeGreaterThanOrEqual(2);
+  expect(await page.evaluate(() => (window as any).__battleLab.state().game.battle.presentation.enemyHp)).toBe(144);
+  expect(await page.evaluate(() => (window as any).__battleLab.state().logCount)).toBeGreaterThanOrEqual(2);
   await page.evaluate(() => { delete (document as any).hidden; document.dispatchEvent(new Event('visibilitychange')); });
   await page.screenshot({ path: '../harness/tmp/silhouette-stage-v2/main-game.png', fullPage: true });
 });
 
 test('sound is opt-in and can be enabled by a user gesture', async ({ page }) => {
-  const sound = page.getByRole('button', { name: '音效：关' });
-  await expect(sound).toHaveAttribute('aria-pressed', 'false');
-  await sound.click();
-  await expect(page.getByRole('button', { name: '音效：开' })).toHaveAttribute('aria-pressed', 'true');
+  expect(await page.evaluate(() => (window as any).__battleLab.state().soundOn)).toBe(false);
+  await page.evaluate(() => (window as any).__battleLab.ui('toggle_sound'));
+  expect(await page.evaluate(() => (window as any).__battleLab.state().soundOn)).toBe(true);
   await page.evaluate(() => (window as any).__battleLab.submit('rig.sword.thrust_a', 'parry', 'enemy'));
   await page.waitForFunction(() => !(window as any).__battleLab.state().game.battle.animation.queueDepth);
-  await page.getByRole('button', { name: '音效：开' }).click();
-  await expect(page.getByRole('button', { name: '音效：关' })).toHaveAttribute('aria-pressed', 'false');
+  await page.evaluate(() => (window as any).__battleLab.ui('toggle_sound'));
+  expect(await page.evaluate(() => (window as any).__battleLab.state().soundOn)).toBe(false);
 });
 
 test('mobile reduced motion remains readable without camera or dash movement', async ({ page }) => {

@@ -1,0 +1,65 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  width: 100%;
+  height: 100%;
+  height: 100dvh;
+  overflow: hidden;
+  max-width: 100vw;
+  background: #ede5d4;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+#stage-wrap {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  contain: strict;
+  touch-action: none;
+}
+
+canvas.stage-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+#c2d-stage { z-index: 1; }
+
+/* Transparent native IME hit-target positioned directly over the active canvas input box */
+.ime-proxy {
+  position: fixed;
+  left: -9999px;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  opacity: 0.001;
+  border: 0;
+  outline: none;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  color: transparent;
+  caret-color: transparent;
+  font-size: 16px; /* Prevents iOS Safari auto-zoom on focus */
+  -webkit-appearance: none;
+  appearance: none;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.silhouette-stage {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+}
+.silhouette-stage [data-side] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  transform: matrix(1, 0, 0, 1, 0, 0);
+}

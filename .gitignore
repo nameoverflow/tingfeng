@@ -13,8 +13,12 @@ dist-newstyle/
 saves/
 
 # Frontend dependencies and build output
+client/node_modules
 client/node_modules/
 client/dist/
+client/hs/build-*/
+client/test-results/
+client/playwright-report/
 client/.svelte-kit/
 client/coverage/
 client/*.tsbuildinfo
