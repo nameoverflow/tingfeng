@@ -58,7 +58,8 @@ const jsffiOut = path.join(outWasmDir, "ghc_wasm_jsffi.js");
 const exportsList = [
   "hs_init_app", "hs_step_frame", "hs_on_ws_open", "hs_on_ws_message",
   "hs_on_ws_close", "hs_set_hidden", "hs_pointer_move", "hs_pointer_click",
-  "hs_pan_zoom", "hs_ui_action", "hs_lab_cmd"
+  "hs_pan_zoom", "hs_drag_at", "hs_scroll_at", "hs_text_input",
+  "hs_text_submit", "hs_blur_input", "hs_key_down", "hs_ui_action", "hs_lab_cmd"
 ].map((e) => `--export=${e}`).join(",");
 
 console.log("[1/3] Compiling Haskell client to wasm32-wasi...");

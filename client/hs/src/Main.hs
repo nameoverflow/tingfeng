@@ -17,7 +17,7 @@ import Tingfeng.Protocol
     encodeLogin,
     encodeRequestCreationConfig,
   )
-import Tingfeng.Render (buildFrameBatch)
+import Tingfeng.Render (FrameBatch (..), buildFrameBatch)
 import Tingfeng.State
 
 -- Synchronous (unsafe) host imports so every state transition completes synchronously
@@ -26,9 +26,6 @@ foreign import javascript unsafe "performance.now()"
 
 foreign import javascript unsafe "globalThis.__tfHost.submitFrame($1, $2, $3, $4, $5, $6, $7)"
   js_submitFrame :: JSString -> Int -> Double -> Double -> Double -> Double -> Double -> IO ()
-
-foreign import javascript unsafe "globalThis.__tfHost.syncOverlay($1)"
-  js_syncOverlay :: JSString -> IO ()
 
 foreign import javascript unsafe "globalThis.__tfHost.syncLabState($1)"
   js_syncLabState :: JSString -> IO ()
@@ -47,6 +44,12 @@ foreign import javascript unsafe "globalThis.__tfHost.playSfx($1)"
 
 foreign import javascript unsafe "globalThis.__tfHost.saveLocal($1, $2)"
   js_saveLocal :: JSString -> JSString -> IO ()
+
+foreign import javascript unsafe "globalThis.__tfHost.focusInput($1, $2, $3, $4, $5, $6)"
+  js_focusInput :: JSString -> JSString -> Double -> Double -> Double -> Double -> IO ()
+
+foreign import javascript unsafe "globalThis.__tfHost.blurInput()"
+  js_blurInput :: IO ()
 
 -- Exported Haskell Wasm entry points
 foreign export javascript "hs_init_app"
@@ -75,6 +78,24 @@ foreign export javascript "hs_pointer_click"
 
 foreign export javascript "hs_pan_zoom"
   hsPanZoom :: Double -> Double -> Double -> IO ()
+
+foreign export javascript "hs_drag_at"
+  hsDragAt :: Double -> Double -> Double -> Double -> IO ()
+
+foreign export javascript "hs_scroll_at"
+  hsScrollAt :: Double -> Double -> Double -> IO ()
+
+foreign export javascript "hs_text_input"
+  hsTextInput :: JSString -> JSString -> IO ()
+
+foreign export javascript "hs_text_submit"
+  hsTextSubmit :: JSString -> IO ()
+
+foreign export javascript "hs_blur_input"
+  hsBlurInput :: IO ()
+
+foreign export javascript "hs_key_down"
+  hsKeyDown :: JSString -> IO ()
 
 foreign export javascript "hs_ui_action"
   hsUiAction :: JSString -> JSString -> JSString -> IO ()
@@ -111,15 +132,13 @@ runCmds = mapM_ $ \cmd -> case cmd of
   CmdSetCursor cur -> js_setCursor (tToJS cur)
   CmdPlaySfx sfx -> js_playSfx (tToJS sfx)
   CmdSaveLocal k v -> js_saveLocal (tToJS k) (tToJS v)
+  CmdFocusInput inpId val x y w h -> js_focusInput (tToJS inpId) (tToJS val) x y w h
+  CmdBlurInput -> js_blurInput
 
 flushState :: ClientModel -> IO ClientModel
 flushState m = do
   js_syncLabState (tToJS (buildLabStateJson m))
-  if cmUiDirty m
-    then do
-      js_syncOverlay (tToJS (buildOverlayJson m))
-      pure (m {cmUiDirty = False})
-    else pure m
+  pure (m {cmUiDirty = False})
 
 hsInitApp :: JSString -> JSString -> JSString -> JSString -> JSString -> JSString -> Double -> Double -> Int -> IO ()
 hsInitApp pageJS poseJS stgJS fistJS swordJS effJS w h redInt = do
@@ -149,14 +168,26 @@ hsStepFrame dtMs w h redInt = do
     t0 <- js_nowMs
     let mRed = m0 {cmReducedMotion = redInt /= 0}
         (m1, cmds) = stepClientFrame dtMs w h mRed
-        (batchTxt, hitboxes, cmdCount) = buildFrameBatch m1
+        fb = buildFrameBatch m1
     t1 <- js_nowMs
     let elapsed = max 0.03 (t1 - t0)
         smoothMs = cmWasmStepMs m1 * 0.88 + elapsed * 0.12
-        m2 = m1 {cmHitboxes = hitboxes, cmWasmStepMs = smoothMs, cmDrawCmdCount = cmdCount}
+        nextLogScroll = if cmLogStickBottom m1 then fbLogMaxScroll fb else min (fbLogMaxScroll fb) (cmLogScroll m1)
+        m2 =
+          m1
+            { cmHitboxes = fbHits fb,
+              cmScrollZones = fbScrollZones fb,
+              cmLogMaxScroll = fbLogMaxScroll fb,
+              cmLogScroll = nextLogScroll,
+              cmDrawerMaxScroll = fbDrawerMaxScroll fb,
+              cmOnboardMaxScroll = fbOnboardMaxScroll fb,
+              cmNpcMaxScroll = fbNpcMaxScroll fb,
+              cmWasmStepMs = smoothMs,
+              cmDrawCmdCount = fbCmdCount fb
+            }
         modeInt = if cmRenderMode m2 == ModeWebGL2Ink then 1 else 0
         (su, sv) = cmShockPos m2
-    js_submitFrame (tToJS batchTxt) modeInt su sv (cmShockAge m2) (cmShockPower m2) (cmClockMs m2 / 1000.0)
+    js_submitFrame (tToJS (fbText fb)) modeInt su sv (cmShockAge m2) (cmShockPower m2) (cmClockMs m2 / 1000.0)
     runCmds cmds
     m3 <- flushState m2
     writeIORef globalModelRef (Just m3)
@@ -231,6 +262,51 @@ hsPanZoom dx dy zFactor = do
   mm <- readIORef globalModelRef
   forM_ mm $ \m0 -> do
     let m1 = zoomCameraBy zFactor (panCameraBy dx dy m0)
+    m2 <- flushState m1
+    writeIORef globalModelRef (Just m2)
+
+hsDragAt :: Double -> Double -> Double -> Double -> IO ()
+hsDragAt x y dx dy = do
+  mm <- readIORef globalModelRef
+  forM_ mm $ \m0 -> do
+    let m1 = handleDragAt x y dx dy m0
+    writeIORef globalModelRef (Just m1)
+
+hsScrollAt :: Double -> Double -> Double -> IO ()
+hsScrollAt x y deltaY = do
+  mm <- readIORef globalModelRef
+  forM_ mm $ \m0 -> do
+    let m1 = handleScrollAt x y deltaY m0
+    writeIORef globalModelRef (Just m1)
+
+hsTextInput :: JSString -> JSString -> IO ()
+hsTextInput inpIdJS valJS = do
+  mm <- readIORef globalModelRef
+  forM_ mm $ \m0 -> do
+    let m1 = handleTextInput (tFromJS inpIdJS) (tFromJS valJS) m0
+    writeIORef globalModelRef (Just m1)
+
+hsTextSubmit :: JSString -> IO ()
+hsTextSubmit inpIdJS = do
+  mm <- readIORef globalModelRef
+  forM_ mm $ \m0 -> do
+    let (m1, cmds) = handleTextSubmit (tFromJS inpIdJS) m0
+    runCmds cmds
+    m2 <- flushState m1
+    writeIORef globalModelRef (Just m2)
+
+hsBlurInput :: IO ()
+hsBlurInput = do
+  mm <- readIORef globalModelRef
+  forM_ mm $ \m0 ->
+    writeIORef globalModelRef (Just (handleBlurInput m0))
+
+hsKeyDown :: JSString -> IO ()
+hsKeyDown keyJS = do
+  mm <- readIORef globalModelRef
+  forM_ mm $ \m0 -> do
+    let (m1, cmds) = handleKeyDown (tFromJS keyJS) m0
+    runCmds cmds
     m2 <- flushState m1
     writeIORef globalModelRef (Just m2)
 

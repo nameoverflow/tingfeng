@@ -2,7 +2,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Tingfeng.Render
-  ( buildFrameBatch,
+  ( FrameBatch (..),
+    buildFrameBatch,
   )
 where
 
@@ -19,6 +20,18 @@ import Tingfeng.I18n
 import Tingfeng.Pose
 import Tingfeng.Protocol
 import Tingfeng.State
+import Tingfeng.UiCanvas
+
+data FrameBatch = FrameBatch
+  { fbText :: !Text,
+    fbHits :: ![CanvasHitbox],
+    fbScrollZones :: ![ScrollZone],
+    fbLogMaxScroll :: !Double,
+    fbDrawerMaxScroll :: !Double,
+    fbOnboardMaxScroll :: !Double,
+    fbNpcMaxScroll :: !Double,
+    fbCmdCount :: !Int
+  }
 
 f1 :: Double -> B.Builder
 f1 !v =
@@ -47,21 +60,24 @@ fmodPos x m
       let r = x - fromIntegral (floor (x / m) :: Int) * m
        in if r < 0 then r + m else r
 
-buildFrameBatch :: ClientModel -> (Text, [CanvasHitbox], Int)
+buildFrameBatch :: ClientModel -> FrameBatch
 buildFrameBatch m =
   case cmPage m of
-    PagePoseSheet -> buildPoseSheetBatch m
+    PagePoseSheet ->
+      let (t, hs, cnt) = buildPoseSheetBatch m
+       in FrameBatch t hs [] 0 0 0 0 cnt
     _ ->
       let w = cmWidth m
           h = cmHeight m
           tSec = cmClockMs m / 1000.0
           isBattle = cmInBattle m || cmPage m == PageBattleLab
 
+          -- Song-dynasty Xuan paper backdrop + layered misty ink mountains
           bgCmd =
             "BG|" <> f1 w <> "|" <> f1 h <> "|" <> f2 tSec <> "|" <> (if isBattle then "1" else "0") <> "\n"
-              <> "MT|" <> f1 (h * 0.48) <> "|42|0.08|" <> f1 (cmCamX m - cmPanX m) <> "|#13221f|0.62\n"
-              <> "MT|" <> f1 (h * 0.58) <> "|30|0.16|" <> f1 (cmCamX m - cmPanX m + 240) <> "|#0e1b18|0.78\n"
-              <> "MT|" <> f1 (h * 0.69) <> "|22|0.26|" <> f1 (cmCamX m - cmPanX m + 520) <> "|#0a1412|0.90\n"
+              <> "MT|" <> f1 (h * 0.50) <> "|38|0.06|" <> f1 (cmCamX m - cmPanX m) <> "|#cfc4ae|0.42\n"
+              <> "MT|" <> f1 (h * 0.61) <> "|26|0.13|" <> f1 (cmCamX m - cmPanX m + 260) <> "|#c2b59c|0.48\n"
+              <> "MT|" <> f1 (h * 0.73) <> "|18|0.22|" <> f1 (cmCamX m - cmPanX m + 540) <> "|#b5a78c|0.52\n"
 
           mistCmds =
             if cmReducedMotion m
@@ -69,12 +85,12 @@ buildFrameBatch m =
               else
                 mconcat
                   [ let fi = fromIntegral i :: Double
-                        mx = fmodPos (fi * 197.3 - (cmCamX m - cmPanX m) * 0.22 + tSec * (9.0 + fromIntegral (i `mod` 4) * 3.0)) w
-                        my = fmodPos (fi * 131.7 - (cmCamY m - cmPanY m) * 0.14 + sin (tSec * 0.65 + fi) * 14.0) (h * 0.76)
-                        mr = 1.3 + fromIntegral (i `mod` 3) * 0.8
-                        ma = 0.07 + 0.05 * sin (tSec * 1.1 + fi)
-                     in "CI|" <> f1 mx <> "|" <> f1 my <> "|" <> f1 mr <> "|#cfe6de||0|" <> f2 ma <> "\n"
-                    | i <- [1 .. 16 :: Int]
+                        mx = fmodPos (fi * 211.3 - (cmCamX m - cmPanX m) * 0.18 + tSec * (6.5 + fromIntegral (i `mod` 3) * 2.5)) w
+                        my = fmodPos (fi * 137.7 - (cmCamY m - cmPanY m) * 0.12 + sin (tSec * 0.55 + fi) * 12.0) (h * 0.72)
+                        mr = 1.1 + fromIntegral (i `mod` 3) * 0.65
+                        ma = 0.08 + 0.04 * sin (tSec * 0.9 + fi)
+                     in "CI|" <> f1 mx <> "|" <> f1 my <> "|" <> f1 mr <> "|#6e6354||0|" <> f2 ma <> "\n"
+                    | i <- [1 .. 12 :: Int]
                   ]
 
           (sceneB, sceneHits, sceneCnt)
@@ -86,29 +102,39 @@ buildFrameBatch m =
             Nothing -> mempty
             Just (txt, remMs) ->
               let al = min 1.0 (remMs / 350.0)
-                  bw = min (w - 40.0) (max 200.0 (fromIntegral (T.length txt) * 20.0 + 56.0))
-               in "RR|" <> f1 ((w - bw) * 0.5) <> "|" <> f1 (h * 0.22) <> "|" <> f1 bw <> "|44|8|#121d1a|#e6cf95|1.8|" <> f2 (al * 0.94) <> "\n"
-                    <> "TX|" <> f1 (w * 0.5) <> "|" <> f1 (h * 0.22 + 28.0) <> "|17|700|center|#f8eed8|" <> f2 al <> "|" <> sanitize txt <> "\n"
+                  bw = min (w - 40.0) (max 210.0 (fromIntegral (T.length txt) * 20.0 + 60.0))
+               in "RR|" <> f1 ((w - bw) * 0.5) <> "|" <> f1 (h * 0.22) <> "|" <> f1 bw <> "|44|3|#f7f1e3|#a32c22|1.6|" <> f2 (al * 0.96) <> "\n"
+                    <> "TXS|" <> f1 (w * 0.5) <> "|" <> f1 (h * 0.22 + 28.0) <> "|17|700|center|#1e1a16|" <> f2 al <> "|" <> sanitize txt <> "\n"
 
-          totalB = bgCmd <> mistCmds <> sceneB <> bannerCmd
-       in (TL.toStrict (B.toLazyText totalB), sceneHits, 20 + sceneCnt)
+          ui = buildUiOverlay m
+          totalB = bgCmd <> mistCmds <> sceneB <> bannerCmd <> uoBuilder ui
+       in FrameBatch
+            { fbText = TL.toStrict (B.toLazyText totalB),
+              fbHits = sceneHits <> uoHits ui,
+              fbScrollZones = uoScrollZones ui,
+              fbLogMaxScroll = uoLogMaxScroll ui,
+              fbDrawerMaxScroll = uoDrawerMaxScroll ui,
+              fbOnboardMaxScroll = uoOnboardMaxScroll ui,
+              fbNpcMaxScroll = uoNpcMaxScroll ui,
+              fbCmdCount = 18 + sceneCnt + uoCmdCount ui
+            }
 
--- Calm Martial Silhouette Backdrop during Onboarding / Character Creation
+-- Calm Ink-Wash Martial Silhouette Backdrop during Onboarding / Character Creation
 buildOnboardingBackdrop :: ClientModel -> (B.Builder, [CanvasHitbox], Int)
 buildOnboardingBackdrop m =
   let w = cmWidth m
       h = cmHeight m
-      breath = if cmReducedMotion m then 0.1 else sin (cmClockMs m / 520.0) * 0.14 + 0.14
+      breath = if cmReducedMotion m then 0.1 else sin (cmClockMs m / 540.0) * 0.14 + 0.14
       cc = cmCreateChoice m
       prof = if cmLoginMode m == "create" then parseVisualProfile (ccGender cc) else ProfileFemale
       pose = blendPose (cmPoseLib m) "idle" "guard" breath StyleSword
-      ax = if w > 900 then w * 0.78 else w * 0.5
-      ay = if w > 900 then h * 0.62 else h * 0.86
-      sc = if w > 900 then 1.08 else 0.78
-      (ac, cnt) = encodeActor ax ay sc 0.0 "#cfdfd9" "#08110f" 0.0 0.55 pose StyleSword prof (cmLookStyle m) (0, 0) (cmClockMs m)
-   in ("CI|" <> f1 ax <> "|" <> f1 (ay - 84.0) <> "|110|#162b26||0|0.32\n" <> ac, [], cnt + 1)
+      ax = if w > 960 then w * 0.80 else w * 0.5
+      ay = if w > 960 then h * 0.65 else h * 0.88
+      sc = if w > 960 then 1.04 else 0.72
+      (ac, cnt) = encodeActor ax ay sc 0.0 "#cfc4af" "#ece4d2" 0.0 0.96 pose StyleSword prof (cmLookStyle m) (0, 0) (cmClockMs m)
+   in ("CI|" <> f1 ax <> "|" <> f1 (ay - 84.0) <> "|116|#dfd4be||0|0.48\n" <> ac, [], cnt + 1)
 
--- Exploration Map Stage (with Frustum Culling, Pan/Zoom, Room-Kind Accents & Cross-Map Portals)
+-- Song-Dynasty Xuan-Paper Cartographic Map Stage
 buildMapStage :: ClientModel -> (B.Builder, [CanvasHitbox], Int)
 buildMapStage m =
   let w = cmWidth m
@@ -116,11 +142,11 @@ buildMapStage m =
       loc = cmLocale m
       isMobile = w <= 768.0
       zoom = cmMapZoom m
-      effZoom = zoom * (if isMobile then 0.70 else 1.0)
+      effZoom = zoom * (if isMobile then 0.72 else 1.0)
       centerX = w * 0.5 + cmPanX m - cmCamX m * effZoom
-      centerY = (if isMobile then h * 0.455 else h * 0.435) + cmPanY m - cmCamY m * effZoom
+      centerY = (if isMobile then h * 0.46 else h * 0.45) + cmPanY m - cmCamY m * effZoom
       tSec = cmClockMs m / 1000.0
-      pulse = if cmReducedMotion m then 1.0 else 1.0 + 0.13 * sin (tSec * 3.2)
+      pulse = if cmReducedMotion m then 1.0 else 1.0 + 0.12 * sin (tSec * 2.8)
 
       inFrustum sx sy = sx >= -160.0 && sx <= w + 160.0 && sy >= -100.0 && sy <= h + 100.0
 
@@ -147,9 +173,9 @@ buildMapStage m =
                         sy2 = centerY + y2 * effZoom
                         vis = inFrustum sx1 sy1 || inFrustum sx2 sy2
                         isNear = meFrom e == curPos || meTo e == curPos
-                        col = if isNear then "#6ec2ab" else "#34524a"
-                        lw = (if isNear then 2.4 else 1.4) * min 1.2 zoom
-                        al = if isNear then 0.88 else 0.46
+                        col = if isNear then "#2b594b" else "#7d715f"
+                        lw = (if isNear then 2.2 else 1.2) * min 1.2 zoom
+                        al = if isNear then 0.85 else 0.42
                      in if not vis
                           then mempty
                           else
@@ -170,33 +196,38 @@ buildMapStage m =
                       hov = case mDir of
                         Just d -> cmHovered m == Just (HitExit d)
                         Nothing -> False
-                      fontSz = (if isCur then 13.5 else 12.0) * max 0.80 (min 1.15 zoom)
-                      nw = max 72.0 (fromIntegral (T.length (mrRoomName r)) * (fontSz + 1.4) + 22.0)
-                      nh = (if isCur then 36.0 else 30.0) * max 0.84 (min 1.14 zoom)
+                      fontSz = (if isCur then 13.5 else 12.0) * max 0.82 (min 1.15 zoom)
+                      nw = max 74.0 (fromIntegral (T.length (mrRoomName r)) * (fontSz + 1.8) + 26.0)
+                      nh = (if isCur then 35.0 else 30.0) * max 0.84 (min 1.14 zoom)
                       rx = sx - nw * 0.5
                       ry = sy - nh * 0.5
                       kindBorder = case mrRoomKind r of
-                        "landmark" -> "#98cebe"
-                        "building" -> "#9d8f6c"
-                        "transit" -> "#c99b68"
-                        _ -> "#2f4942"
+                        "landmark" -> "#a32c22"
+                        "transit" -> "#946623"
+                        "building" -> "#6f6454"
+                        _ -> "#9c907c"
                       (bg, bd, txtCol, lw)
-                        | isCur = ("#1d3d35", "#e6cf95", "#fff7e2", 2.2)
-                        | hov = ("#254b41", "#92ebcf", "#ffffff", 1.9)
-                        | isJust mDir = ("#132823", "#5ca38f", "#e3f5ef", 1.6)
-                        | otherwise = ("#0d1917", kindBorder, "#93afa5", 1.1)
+                        | isCur = ("#1e1a16", "#946623", "#f7f1e3", 2.0)
+                        | hov = ("#efe4cc", "#946623", "#1e1a16", 1.9)
+                        | isJust mDir = ("#f8f3e6", "#2b594b", "#1e1a16", 1.5)
+                        | otherwise = ("#ece4d2", kindBorder, "#5b5144", 1.0)
                       pulseCmd =
                         if isCur
-                          then "CI|" <> f1 sx <> "|" <> f1 sy <> "|" <> f1 (26.0 * pulse * effZoom) <> "||#e6cf95|1.4|0.34\n"
+                          then "CI|" <> f1 sx <> "|" <> f1 sy <> "|" <> f1 (24.0 * pulse * effZoom) <> "||#946623|1.3|0.36\n"
+                          else mempty
+                      sealDot =
+                        if isCur
+                          then "CI|" <> f1 (rx + 9.0) <> "|" <> f1 sy <> "|2.8|#a32c22||0|0.95\n"
                           else mempty
                       dirCmd = case mDir of
                         Just d ->
-                          "TX|" <> f1 sx <> "|" <> f1 (ry - 5.0) <> "|10.5|600|center|#8fd9c4|0.94|" <> sanitize (directionLabel loc d) <> "\n"
+                          "TX|" <> f1 sx <> "|" <> f1 (ry - 5.0) <> "|10.5|700|center|#2b594b|0.92|" <> sanitize (directionLabel loc d) <> "\n"
                         Nothing -> mempty
                       cmd =
                         pulseCmd
-                          <> "RR|" <> f1 rx <> "|" <> f1 ry <> "|" <> f1 nw <> "|" <> f1 nh <> "|7|" <> bg <> "|" <> bd <> "|" <> f1 lw <> "|0.96\n"
-                          <> "TX|" <> f1 sx <> "|" <> f1 (sy + fontSz * 0.36) <> "|" <> f1 fontSz <> "|" <> (if isCur then "700" else "500") <> "|center|" <> txtCol <> "|1|" <> sanitize (mrRoomName r) <> "\n"
+                          <> "RR|" <> f1 rx <> "|" <> f1 ry <> "|" <> f1 nw <> "|" <> f1 nh <> "|3|" <> bg <> "|" <> bd <> "|" <> f1 lw <> "|0.97\n"
+                          <> sealDot
+                          <> "TX|" <> f1 (if isCur then sx + 3.0 else sx) <> "|" <> f1 (sy + fontSz * 0.36) <> "|" <> f1 fontSz <> "|" <> (if isCur then "700" else "600") <> "|center|" <> txtCol <> "|1|" <> sanitize (mrRoomName r) <> "\n"
                           <> dirCmd
                       mHit = fmap (\d -> CanvasHitbox rx ry nw nh (HitExit d) "pointer") mDir
                    in (cmd, mHit)
@@ -205,7 +236,7 @@ buildMapStage m =
                     inFrustum (centerX + wx0 * effZoom) (centerY + wy0 * effZoom)
                 ]
 
-              -- Cross-map portal edges & clickable destination portal nodes (placed along exit direction, never foreign grid coords!)
+              -- Cross-map portal edges & clickable destination portal plaques
               portalItems =
                 [ let d = meDirection e
                       (x1, y1) = worldPosFromGrid (meFrom e)
@@ -220,26 +251,26 @@ buildMapStage m =
                       destRoom = if not (T.null (meToRoomName e)) then meToRoomName e else if not (T.null (meToMapName e)) then meToMapName e else meToMapId e
                       labelTxt = "⇄ " <> destRoom
                       fontSz = 12.0 * max 0.82 (min 1.14 zoom)
-                      nw = max 84.0 (fromIntegral (T.length labelTxt) * (fontSz + 1.2) + 22.0)
-                      nh = 31.0 * max 0.85 (min 1.12 zoom)
+                      nw = max 86.0 (fromIntegral (T.length labelTxt) * (fontSz + 1.4) + 24.0)
+                      nh = 30.0 * max 0.85 (min 1.12 zoom)
                       rx = sx2 - nw * 0.5
                       ry = sy2 - nh * 0.5
-                      bg = if hov then "#352c19" else if isFromCur then "#221d12" else "#151612"
-                      bd = if hov then "#ffe39e" else if isFromCur then "#e6cf95" else "#8f7d52"
-                      txtCol = if isFromCur then "#fff3d1" else "#cbbd96"
-                      lw = if isFromCur then 1.8 else 1.2
-                      al = if isFromCur then 0.94 else 0.62
+                      bg = if hov then "#ebdcb9" else if isFromCur then "#f3e8cf" else "#e9dfca"
+                      bd = if hov then "#a32c22" else if isFromCur then "#946623" else "#9c8760"
+                      txtCol = if isFromCur then "#4f320d" else "#6f5d42"
+                      lw = if isFromCur then 1.6 else 1.1
+                      al = if isFromCur then 0.92 else 0.58
                       subMap =
                         if not (T.null (meToMapName e)) && meToMapName e /= destRoom
-                          then "TX|" <> f1 sx2 <> "|" <> f1 (ry + nh + 12.0) <> "|10|500|center|#d6b778|0.82|" <> sanitize (meToMapName e) <> "\n"
+                          then "TX|" <> f1 sx2 <> "|" <> f1 (ry + nh + 12.0) <> "|10|600|center|#8a5d1c|0.88|" <> sanitize (meToMapName e) <> "\n"
                           else mempty
                       dirCmd =
                         if isFromCur
-                          then "TX|" <> f1 sx2 <> "|" <> f1 (ry - 5.0) <> "|10.5|600|center|#f0d898|0.95|" <> sanitize (directionLabel loc d) <> "\n"
+                          then "TX|" <> f1 sx2 <> "|" <> f1 (ry - 5.0) <> "|10.5|700|center|#946623|0.95|" <> sanitize (directionLabel loc d) <> "\n"
                           else mempty
                       cmd =
-                        "LN|" <> f1 sx1 <> "|" <> f1 sy1 <> "|" <> f1 sx2 <> "|" <> f1 sy2 <> "|" <> f1 lw <> "|#d6b778|" <> f2 al <> "|1\n"
-                          <> "RR|" <> f1 rx <> "|" <> f1 ry <> "|" <> f1 nw <> "|" <> f1 nh <> "|7|" <> bg <> "|" <> bd <> "|" <> f1 lw <> "|0.96\n"
+                        "LN|" <> f1 sx1 <> "|" <> f1 sy1 <> "|" <> f1 sx2 <> "|" <> f1 sy2 <> "|" <> f1 lw <> "|#946623|" <> f2 al <> "|1\n"
+                          <> "RR|" <> f1 rx <> "|" <> f1 ry <> "|" <> f1 nw <> "|" <> f1 nh <> "|3|" <> bg <> "|" <> bd <> "|" <> f1 lw <> "|0.97\n"
                           <> "TX|" <> f1 sx2 <> "|" <> f1 (sy2 + fontSz * 0.36) <> "|" <> f1 fontSz <> "|600|center|" <> txtCol <> "|1|" <> sanitize labelTxt <> "\n"
                           <> dirCmd
                           <> subMap
@@ -253,7 +284,6 @@ buildMapStage m =
 
               coveredDirs = [d | (_, Just hb) <- roomItems <> portalItems, HitExit d <- [chTarget hb]]
 
-              -- Guarantee any remaining exit in cmRoomExits (e.g. dynamic story exit) is also rendered & clickable
               extraItems =
                 [ let d = reDirection ex
                       (cx0, cy0) = worldPosFromGrid curPos
@@ -266,17 +296,17 @@ buildMapStage m =
                       hov = cmHovered m == Just (HitExit d)
                       isCross = not (T.null (reMapId ex)) && reMapId ex /= moMapId mo
                       lbl = (if isCross then "⇄ " else "") <> reRoomName ex
-                      ew = max 78.0 (fromIntegral (T.length lbl) * 13.2 + 22.0)
-                      eh = 31.0
+                      ew = max 78.0 (fromIntegral (T.length lbl) * 13.4 + 24.0)
+                      eh = 30.0
                       rx = sx2 - ew * 0.5
                       ry = sy2 - eh * 0.5
-                      bg = if hov then "#254b41" else if isCross then "#221d12" else "#132823"
-                      bd = if hov then "#92ebcf" else if isCross then "#e6cf95" else "#5ca38f"
+                      bg = if hov then "#efe4cc" else if isCross then "#f3e8cf" else "#f8f3e6"
+                      bd = if hov then "#946623" else if isCross then "#946623" else "#2b594b"
                       cmd =
                         "LN|" <> f1 sx1 <> "|" <> f1 sy1 <> "|" <> f1 sx2 <> "|" <> f1 sy2 <> "|1.8|" <> bd <> "|0.82|" <> (if isCross then "1" else "0") <> "\n"
-                          <> "RR|" <> f1 rx <> "|" <> f1 ry <> "|" <> f1 ew <> "|" <> f1 eh <> "|7|" <> bg <> "|" <> bd <> "|1.7|0.96\n"
-                          <> "TX|" <> f1 sx2 <> "|" <> f1 (sy2 + 4.5) <> "|12|600|center|#f0faf6|1|" <> sanitize lbl <> "\n"
-                          <> "TX|" <> f1 sx2 <> "|" <> f1 (ry - 5.0) <> "|10.5|600|center|#8fd9c4|0.94|" <> sanitize (directionLabel loc d) <> "\n"
+                          <> "RR|" <> f1 rx <> "|" <> f1 ry <> "|" <> f1 ew <> "|" <> f1 eh <> "|3|" <> bg <> "|" <> bd <> "|1.6|0.97\n"
+                          <> "TX|" <> f1 sx2 <> "|" <> f1 (sy2 + 4.5) <> "|12|600|center|#1e1a16|1|" <> sanitize lbl <> "\n"
+                          <> "TX|" <> f1 sx2 <> "|" <> f1 (ry - 5.0) <> "|10.5|700|center|" <> bd <> "|0.94|" <> sanitize (directionLabel loc d) <> "\n"
                    in (cmd, Just (CanvasHitbox rx ry ew eh (HitExit d) "pointer"))
                   | ex <- cmRoomExits m,
                     reDirection ex `notElem` coveredDirs
@@ -288,55 +318,41 @@ buildMapStage m =
                 length allNodes * 3 + 8
               )
         _ ->
-          -- Radial 8-direction fallback around current room
+          -- Radial 8-direction woodblock fallback around current room
           let cx = w * 0.5 + cmPanX m
-              cy = (if isMobile then h * 0.44 else h * 0.43) + cmPanY m
+              cy = (if isMobile then h * 0.45 else h * 0.44) + cmPanY m
               rName = if T.null (cmRoomName m) then tr loc "app.title" else cmRoomName m
-              curW = max 88.0 (fromIntegral (T.length rName) * 15.5 + 28.0)
+              curW = max 92.0 (fromIntegral (T.length rName) * 15.5 + 30.0)
               curCmd =
-                "CI|" <> f1 cx <> "|" <> f1 cy <> "|" <> f1 (28.0 * pulse) <> "||#e6cf95|1.5|0.34\n"
-                  <> "RR|" <> f1 (cx - curW * 0.5) <> "|" <> f1 (cy - 19.0) <> "|" <> f1 curW <> "|38|8|#1d3d35|#e6cf95|2.2|0.96\n"
-                  <> "TX|" <> f1 cx <> "|" <> f1 (cy + 5.2) <> "|14|700|center|#fff7e2|1|" <> sanitize rName <> "\n"
+                "CI|" <> f1 cx <> "|" <> f1 cy <> "|" <> f1 (26.0 * pulse) <> "||#946623|1.4|0.34\n"
+                  <> "RR|" <> f1 (cx - curW * 0.5) <> "|" <> f1 (cy - 18.0) <> "|" <> f1 curW <> "|36|3|#1e1a16|#946623|2.0|0.97\n"
+                  <> "CI|" <> f1 (cx - curW * 0.5 + 9.0) <> "|" <> f1 cy <> "|2.8|#a32c22||0|0.95\n"
+                  <> "TX|" <> f1 (cx + 3.0) <> "|" <> f1 (cy + 5.2) <> "|14|700|center|#f7f1e3|1|" <> sanitize rName <> "\n"
               spanDist = if isMobile then 104.0 else 156.0
               exits =
                 [ let d = reDirection ex
                       (vx, vy) = directionVec d
                       exX = cx + vx * spanDist * zoom
                       exY = cy + vy * (spanDist * 0.78) * zoom
-                      ew = max 78.0 (fromIntegral (T.length (reRoomName ex)) * 13.2 + 24.0)
-                      eh = 31.0
+                      ew = max 78.0 (fromIntegral (T.length (reRoomName ex)) * 13.4 + 24.0)
+                      eh = 30.0
                       rx = exX - ew * 0.5
                       ry = exY - eh * 0.5
                       hov = cmHovered m == Just (HitExit d)
-                      bg = if hov then "#254b41" else "#132823"
-                      bd = if hov then "#92ebcf" else "#5ca38f"
+                      bg = if hov then "#efe4cc" else "#f8f3e6"
+                      bd = if hov then "#946623" else "#2b594b"
                       cmd =
-                        "LN|" <> f1 cx <> "|" <> f1 cy <> "|" <> f1 exX <> "|" <> f1 exY <> "|1.9|#5ca38f|0.72|0\n"
-                          <> "RR|" <> f1 rx <> "|" <> f1 ry <> "|" <> f1 ew <> "|" <> f1 eh <> "|7|" <> bg <> "|" <> bd <> "|1.6|0.95\n"
-                          <> "TX|" <> f1 exX <> "|" <> f1 (exY + 4.5) <> "|12|600|center|#e6f7f1|1|" <> sanitize (reRoomName ex) <> "\n"
-                          <> "TX|" <> f1 exX <> "|" <> f1 (ry - 5.0) <> "|10.5|600|center|#8fd9c4|0.9|" <> sanitize (directionLabel loc d) <> "\n"
+                        "LN|" <> f1 cx <> "|" <> f1 cy <> "|" <> f1 exX <> "|" <> f1 exY <> "|1.8|#2b594b|0.72|0\n"
+                          <> "RR|" <> f1 rx <> "|" <> f1 ry <> "|" <> f1 ew <> "|" <> f1 eh <> "|3|" <> bg <> "|" <> bd <> "|1.5|0.97\n"
+                          <> "TX|" <> f1 exX <> "|" <> f1 (exY + 4.5) <> "|12|600|center|#1e1a16|1|" <> sanitize (reRoomName ex) <> "\n"
+                          <> "TX|" <> f1 exX <> "|" <> f1 (ry - 5.0) <> "|10.5|700|center|#2b594b|0.92|" <> sanitize (directionLabel loc d) <> "\n"
                    in (cmd, CanvasHitbox rx ry ew eh (HitExit d) "pointer")
                   | ex <- cmRoomExits m
                 ]
            in (curCmd <> mconcat (map fst exits), map snd exits, 4 + length exits * 4)
+   in (mapB, mapHits, mapCnt)
 
-      -- Gentle standing silhouette companion on wide screens
-      (avatarCmd, avatarCnt) =
-        if not isMobile
-          then
-            let breath = if cmReducedMotion m then 0.1 else sin (cmClockMs m / 480.0) * 0.14 + 0.14
-                hasSword = any (\a -> aiEnabled a && "sword" `T.isInfixOf` T.toLower (aiType a)) (cmArts m)
-                st = if hasSword then StyleSword else StyleFist
-                prof = parseVisualProfile (psGender (cmStats m))
-                pose = blendPose (cmPoseLib m) "idle" "guard" breath st
-                ax = w - 82.0
-                ay = h * 0.54
-                (ac, cnt) = encodeActor ax ay 0.68 0.0 "#d7ebe4" "#0a1311" 0.0 0.92 pose st prof (cmLookStyle m) (0, 0) (cmClockMs m)
-             in ("CI|" <> f1 ax <> "|" <> f1 (ay + 3.0) <> "|34|#091210|#315249|1.1|0.52\n" <> ac, cnt + 1)
-          else (mempty, 0)
-   in (mapB <> avatarCmd, mapHits, mapCnt + avatarCnt)
-
--- Full Deterministic Combat Stage (1:1 visual parity with SilhouetteBattleStage + BattleDirector)
+-- Song-Dynasty Ink-Wash Combat Stage (Deep-Ink Silhouettes on Xuan Paper + Hit-Stop Inversion)
 buildBattleStage :: ClientModel -> (B.Builder, [CanvasHitbox], Int)
 buildBattleStage m =
   let w = cmWidth m
@@ -355,9 +371,9 @@ buildBattleStage m =
       scene = sampleBattleScene mTl elapsed idleP idleE reduced
 
       -- Scale stage smoothly to fit mobile portrait (390px) & desktop (1280px)
-      fitScale = min 1.0 ((w - 36.0) / 620.0) * scCameraScale scene
+      fitScale = min 1.04 ((w - 32.0) / 580.0) * scCameraScale scene
       stageCx = w * 0.5 + scCameraX scene * fitScale
-      groundY = (if isMobile then h * 0.49 else min (h * 0.56) (h - 225.0)) + scShakeY scene * fitScale
+      groundY = (if isMobile then h * 0.51 else min (h * 0.58) (h - 230.0)) + scShakeY scene * fitScale
 
       pFig = scPlayer scene
       eFig = scEnemy scene
@@ -369,42 +385,53 @@ buildBattleStage m =
       ex = stageCx + (sideHome SideEnemy + fsX eFig) * fitScale
       ey = groundY + fsY eFig * fitScale
 
-      -- Hit-stop dramatic ink-wash shade & inversion
+      -- Hit-stop dramatic ink-wash shade & classic Wuxia inversion
       inv = scInvert scene > 0.5
       shadeCmd =
-        if scShade scene > 0.01
-          then "RR|0|0|" <> f1 w <> "|" <> f1 h <> "|0|#050a09||0|" <> f2 (min 0.65 (scShade scene)) <> "\n"
-          else mempty
+        if inv
+          then "RR|0|0|" <> f1 w <> "|" <> f1 h <> "|0|#1a1612||0|0.82\n"
+          else
+            if scShade scene > 0.01
+              then "RR|0|0|" <> f1 w <> "|" <> f1 h <> "|0|#2b241c||0|" <> f2 (min 0.24 (scShade scene * 0.45)) <> "\n"
+              else mempty
+
+      moonCol = if inv then "#352e26" else "#dfd4be"
+      horizonCol = if inv then "#d6cab2" else "#3a3228"
+      shadowCol = if inv then "#000000" else "#1e1a16"
+      shadowAlpha = if inv then "0.35" else "0.18"
 
       arenaCmd =
-        "CI|" <> f1 (w * 0.5) <> "|" <> f1 (groundY - 88.0 * fitScale) <> "|" <> f1 (142.0 * fitScale) <> "|#172c27||0|0.34\n"
-          <> "LN|" <> f1 (w * 0.08) <> "|" <> f1 (groundY + 2.0) <> "|" <> f1 (w * 0.92) <> "|" <> f1 (groundY + 2.0) <> "|2.4|#497367|0.68|0\n"
-          <> "CI|" <> f1 px <> "|" <> f1 (groundY + 3.0) <> "|" <> f1 (24.0 * fitScale) <> "|#050b0a||0|0.55\n"
-          <> "CI|" <> f1 ex <> "|" <> f1 (groundY + 3.0) <> "|" <> f1 (24.0 * fitScale) <> "|#050b0a||0|0.55\n"
+        "CI|" <> f1 (w * 0.5) <> "|" <> f1 (groundY - 90.0 * fitScale) <> "|" <> f1 (138.0 * fitScale) <> "|" <> moonCol <> "||0|0.55\n"
+          <> "LN|" <> f1 (w * 0.08) <> "|" <> f1 (groundY + 2.0) <> "|" <> f1 (w * 0.92) <> "|" <> f1 (groundY + 2.0) <> "|2.0|" <> horizonCol <> "|0.58|0\n"
+          <> "ELL|" <> f1 px <> "|" <> f1 (groundY + 3.0) <> "|" <> f1 (28.0 * fitScale) <> "|" <> f1 (5.5 * fitScale) <> "|" <> shadowCol <> "|" <> shadowAlpha <> "\n"
+          <> "ELL|" <> f1 ex <> "|" <> f1 (groundY + 3.0) <> "|" <> f1 (28.0 * fitScale) <> "|" <> f1 (5.5 * fitScale) <> "|" <> shadowCol <> "|" <> shadowAlpha <> "\n"
 
-      -- Dodge afterimage ghost
+      -- Dodge ink afterimage ghost
       ghostCmd =
         if scGhost scene > 0.04
           then
             case mTl of
               Just tl | tlTargetSide tl == SidePlayer ->
-                fst (encodeActor (stageCx + sideHome SidePlayer * fitScale) groundY fitScale 0.0 "#9ed8c8" "#08110f" 0.0 (scGhost scene) pPose (avStyle (fsVisual pFig)) pProf (cmLookStyle m) (0, 0) (cmClockMs m))
+                fst (encodeActor (stageCx + sideHome SidePlayer * fitScale) groundY fitScale 0.0 "#2b594b" "#f6f0e2" 0.0 (scGhost scene * 0.65) pPose (avStyle (fsVisual pFig)) pProf (cmLookStyle m) (0, 0) (cmClockMs m))
               Just _ ->
-                fst (encodeActor (stageCx + sideHome SideEnemy * fitScale) groundY (-fitScale) 0.0 "#9ed8c8" "#08110f" 0.0 (scGhost scene) ePose (avStyle (fsVisual eFig)) eProf (cmLookStyle m) (0, 0) (cmClockMs m))
+                fst (encodeActor (stageCx + sideHome SideEnemy * fitScale) groundY (-fitScale) 0.0 "#6e6354" "#f6f0e2" 0.0 (scGhost scene * 0.65) ePose (avStyle (fsVisual eFig)) eProf (cmLookStyle m) (0, 0) (cmClockMs m))
               Nothing -> mempty
           else mempty
 
-      pFill = if inv then "#ffffff" else "#dfeee8"
-      eFill = if inv then "#f4ece0" else "#cbbdad"
+      -- Deep ink silhouettes on warm paper; stark Xuan-paper white during hit-stop inversion
+      (pFill, eFill, outlineCol) =
+        if inv
+          then ("#f6f0e2", "#e6d8be", "#181410")
+          else ("#1b2521", "#2f221b", "#f6f0e2")
       pFlow = if reduced then (0, 0) else (-fsX pFig * 0.09, abs (fsY pFig) * 0.2)
       eFlow = if reduced then (0, 0) else (fsX eFig * 0.09, abs (fsY eFig) * 0.2)
 
       (pCmd, pCnt) =
-        encodeActor px py fitScale (fsAngle pFig) pFill "#08110f" (fsFlash pFig) (fsAlpha pFig) pPose (avStyle (fsVisual pFig)) pProf (cmLookStyle m) pFlow (cmClockMs m)
+        encodeActor px py fitScale (fsAngle pFig) pFill outlineCol (fsFlash pFig) (fsAlpha pFig) pPose (avStyle (fsVisual pFig)) pProf (cmLookStyle m) pFlow (cmClockMs m)
       (eCmd, eCnt) =
-        encodeActor ex ey (-fitScale) (fsAngle eFig) eFill "#08110f" (fsFlash eFig) (fsAlpha eFig) ePose (avStyle (fsVisual eFig)) eProf (cmLookStyle m) eFlow (cmClockMs m + 360.0)
+        encodeActor ex ey (-fitScale) (fsAngle eFig) eFill outlineCol (fsFlash eFig) (fsAlpha eFig) ePose (avStyle (fsVisual eFig)) eProf (cmLookStyle m) eFlow (cmClockMs m + 360.0)
 
-      -- Slash arc ribbon & parry ring & aura
+      -- Slash arc ribbon, parry ring & focus aura
       vfxCmd = case mTl of
         Nothing -> mempty
         Just tl ->
@@ -425,9 +452,12 @@ buildBattleStage m =
                   then
                     let midX = (shWx + tipWx) * 0.5 + (if actorIsP then 18.0 else -18.0) * fitScale
                         midY = min shWy tipWy - 24.0 * fitScale
-                        col = if spForce (tlStaging tl) >= 0.85 then "#f5d896" else "#d8f3ea"
-                     in "SLASH|" <> col <> "|" <> f1 shWx <> "," <> f1 shWy <> "," <> f2 (scTrail scene * 0.25)
-                          <> ";" <> f1 midX <> "," <> f1 midY <> "," <> f2 (scTrail scene * 0.68)
+                        col
+                          | inv = "#f6f0e2"
+                          | spForce (tlStaging tl) >= 0.85 = "#a32c22"
+                          | otherwise = "#2b594b"
+                     in "SLASH|" <> col <> "|" <> f1 shWx <> "," <> f1 shWy <> "," <> f2 (scTrail scene * 0.28)
+                          <> ";" <> f1 midX <> "," <> f1 midY <> "," <> f2 (scTrail scene * 0.72)
                           <> ";" <> f1 tipWx <> "," <> f1 tipWy <> "," <> f2 (scTrail scene) <> "\n"
                   else mempty
               (cx0, cy0) = scContact scene
@@ -435,13 +465,13 @@ buildBattleStage m =
               cWy = groundY + cy0 * fitScale
               parryRing =
                 if scGuard scene > 0.04
-                  then "CI|" <> f1 cWx <> "|" <> f1 cWy <> "|" <> f1 ((18.0 + (1.0 - scGuard scene) * 26.0) * fitScale) <> "||#f6df9e|2.6|" <> f2 (scGuard scene) <> "\n"
+                  then "CI|" <> f1 cWx <> "|" <> f1 cWy <> "|" <> f1 ((18.0 + (1.0 - scGuard scene) * 26.0) * fitScale) <> "||#946623|2.6|" <> f2 (scGuard scene) <> "\n"
                   else mempty
               auraRing =
                 if scAura scene > 0.04
                   then
                     let ux = if tlActorSide tl == SidePlayer then px else ex
-                     in "CI|" <> f1 ux <> "|" <> f1 (groundY - 58.0 * fitScale) <> "|" <> f1 (44.0 * fitScale) <> "|#4cb89b|#9ef0d8|1.6|" <> f2 (scAura scene * 0.42) <> "\n"
+                     in "CI|" <> f1 ux <> "|" <> f1 (groundY - 58.0 * fitScale) <> "|" <> f1 (44.0 * fitScale) <> "|#2b594b|#386944|1.6|" <> f2 (scAura scene * 0.28) <> "\n"
                   else mempty
            in slashTrail <> parryRing <> auraRing
 
@@ -453,14 +483,14 @@ buildBattleStage m =
             | p <- cmParticles m
           ]
 
-      -- Move Stamp Seal + Per-Hit Floating Damage / Parry / Dodge Callout + Settlement Seal
+      -- Move Stamp Seal + Floating Damage / Parry / Dodge Callout + Cinnabar Settlement Seal
       textCmd = case mTl of
         Nothing -> mempty
         Just tl
           | tlKind tl == "settlement" ->
               let al = scResultAlpha scene
-               in "RR|" <> f1 (w * 0.5 - 46.0) <> "|" <> f1 (groundY - 128.0 * fitScale) <> "|92|92|12|#241412|#e6cf95|2.4|" <> f2 (al * 0.94) <> "\n"
-                    <> "TX|" <> f1 (w * 0.5) <> "|" <> f1 (groundY - 68.0 * fitScale) <> "|42|700|center|#f8e8c4|" <> f2 al <> "|" <> sanitize (tlLabel tl) <> "\n"
+               in "RR|" <> f1 (w * 0.5 - 46.0) <> "|" <> f1 (groundY - 130.0 * fitScale) <> "|92|92|4|#a32c22|#f6f0e2|2.5|" <> f2 (al * 0.96) <> "\n"
+                    <> "TX|" <> f1 (w * 0.5) <> "|" <> f1 (groundY - 70.0 * fitScale) <> "|42|700|center|#f6f0e2|" <> f2 al <> "|" <> sanitize (tlLabel tl) <> "\n"
           | otherwise ->
               let hIdx = scHitIndex scene
                   curFloat =
@@ -468,30 +498,30 @@ buildBattleStage m =
                       then rhFloatText (tlHits tl !! hIdx)
                       else tlFloatText tl
                   tx = if tlTargetSide tl == SidePlayer then px else ex
-                  ty = groundY - (118.0 + scTextLift scene) * fitScale
+                  ty = groundY - (122.0 + scTextLift scene) * fitScale
                   fCol = case tlResult tl of
-                    ResParry -> "#f6df9e"
-                    ResDodge -> "#9fe3d0"
-                    ResEffect -> "#8fe0b0"
-                    ResHit -> if tlTargetSide tl == SideEnemy then "#ffcf87" else "#ff8e84"
+                    ResParry -> "#946623"
+                    ResDodge -> "#2b594b"
+                    ResEffect -> "#386944"
+                    ResHit -> if inv then "#ffdf9e" else if tlTargetSide tl == SideEnemy then "#a32c22" else "#8f1f16"
                   floatCmd =
                     if scTextAlpha scene > 0.03 && not (T.null curFloat)
                       then
-                        "TX|" <> f1 tx <> "|" <> f1 ty <> "|" <> f1 (21.0 * scTextScale scene) <> "|700|center|" <> fCol <> "|" <> f2 (scTextAlpha scene) <> "|" <> sanitize curFloat <> "\n"
+                        "TX|" <> f1 tx <> "|" <> f1 ty <> "|" <> f1 (22.0 * scTextScale scene) <> "|700|center|" <> fCol <> "|" <> f2 (scTextAlpha scene) <> "|" <> sanitize curFloat <> "\n"
                       else mempty
                   lbl = tlLabel tl
-                  bw = max 116.0 (fromIntegral (T.length lbl) * 19.0 + 36.0)
-                  bannerY = if isMobile then 98.0 else 108.0
+                  bw = max 118.0 (fromIntegral (T.length lbl) * 18.5 + 40.0)
+                  bannerY = if isMobile then 186.0 else 156.0
                   stampCmd =
                     if tlKind tl /= "effect_tick"
                       then
-                        "RR|" <> f1 (w * 0.5 - bw * 0.5) <> "|" <> f1 bannerY <> "|" <> f1 bw <> "|34|6|#191210|#d96b5c|1.6|0.90\n"
-                          <> "TX|" <> f1 (w * 0.5) <> "|" <> f1 (bannerY + 23.0) <> "|16|700|center|#f9ebd2|0.96|「" <> sanitize lbl <> "」\n"
+                        "RR|" <> f1 (w * 0.5 - bw * 0.5) <> "|" <> f1 bannerY <> "|" <> f1 bw <> "|34|3|#f7f1e3|#a32c22|1.5|0.94\n"
+                          <> "TX|" <> f1 (w * 0.5) <> "|" <> f1 (bannerY + 23.0) <> "|15.5|700|center|#1e1a16|0.98|「" <> sanitize lbl <> "」\n"
                       else mempty
                in stampCmd <> floatCmd
    in (shadeCmd <> arenaCmd <> ghostCmd <> pCmd <> eCmd <> vfxCmd <> partCmds <> textCmd, [], 12 + pCnt + eCnt + length (cmParticles m))
 
--- Pose Sheet Inspector Grid (/pose-sheet.html) rendered 100% by Haskell!
+-- Pose Sheet Inspector Grid (/pose-sheet.html) rendered in Xuan-paper ink style
 buildPoseSheetBatch :: ClientModel -> (Text, [CanvasHitbox], Int)
 buildPoseSheetBatch m =
   let w = cmWidth m
@@ -507,15 +537,15 @@ buildPoseSheetBatch m =
               cx = 20.0 + fromIntegral col * cellW + cellW * 0.5
               cy = 72.0 + fromIntegral row * cellH + 126.0
               pose = svgPose (cmPoseLib m) pid StyleSword
-              (ac, _) = encodeActor cx cy 0.58 0.0 "#dfeee8" "#08110f" 0.0 1.0 pose StyleSword ProfileFemale (cmLookStyle m) (0, 0) 0.0
-           in "RR|" <> f1 (cx - cellW * 0.46) <> "|" <> f1 (cy - 118.0) <> "|" <> f1 (cellW * 0.92) <> "|150|8|#0e1b18|#2a443d|1.1|0.92\n"
-                <> "LN|" <> f1 (cx - cellW * 0.36) <> "|" <> f1 cy <> "|" <> f1 (cx + cellW * 0.36) <> "|" <> f1 cy <> "|1.2|#3c6157|0.65|0\n"
+              (ac, _) = encodeActor cx cy 0.58 0.0 "#1e2320" "#f6f0e2" 0.0 1.0 pose StyleSword ProfileFemale (cmLookStyle m) (0, 0) 0.0
+           in "RR|" <> f1 (cx - cellW * 0.46) <> "|" <> f1 (cy - 118.0) <> "|" <> f1 (cellW * 0.92) <> "|150|3|#f6f0e2|#c8bca4|1.1|0.95\n"
+                <> "LN|" <> f1 (cx - cellW * 0.36) <> "|" <> f1 cy <> "|" <> f1 (cx + cellW * 0.36) <> "|" <> f1 cy <> "|1.2|#6e6354|0.55|0\n"
                 <> ac
-                <> "TX|" <> f1 cx <> "|" <> f1 (cy + 22.0) <> "|11.5|600|center|#d9ceae|1|" <> sanitize pid <> "\n"
+                <> "TX|" <> f1 cx <> "|" <> f1 (cy + 22.0) <> "|11.5|600|center|#3d352c|1|" <> sanitize pid <> "\n"
           | (idx, pid) <- zip [0 ..] pids,
             72.0 + fromIntegral (idx `div` cols) * cellH < h + 160.0
         ]
-      hdr = "TX|" <> f1 (w * 0.5) <> "|42|18|700|center|#e6cf95|1|听风录 · 纯 Haskell 剪影姿势总览（svg-poses.json 共 " <> B.fromString (show (length pids)) <> " 式）\n"
+      hdr = "TX|" <> f1 (w * 0.5) <> "|42|18|700|center|#1e1a16|1|听风录 · 宣纸剪影姿势总览（svg-poses.json 共 " <> B.fromString (show (length pids)) <> " 式）\n"
    in (TL.toStrict (B.toLazyText (bg <> hdr <> mconcat cells)), [], length pids * 12)
 
 encodeActor ::

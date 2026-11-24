@@ -2,8 +2,8 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>剪影交锋 · 动作回放</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>听风录 · 演武场</title>
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body data-page="lab">
@@ -11,11 +11,11 @@
     <canvas id="c2d-stage" class="stage-canvas"></canvas>
     <canvas id="gl-stage" class="stage-canvas"></canvas>
   </div>
+  <input id="ime-proxy" class="ime-proxy" type="text" autocomplete="off" aria-hidden="true" />
   <div class="silhouette-stage" id="stage-probe" data-event-id="idle" aria-hidden="true">
     <div data-side="player"></div>
     <div data-side="enemy"></div>
   </div>
-  <div id="ui-root"></div>
   <script>globalThis.setImmediate = (fn, ...args) => queueMicrotask(() => fn(...args));</script>
   <script type="module" src="/app.js"></script>
 </body>

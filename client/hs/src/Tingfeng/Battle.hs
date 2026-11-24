@@ -867,13 +867,13 @@ spawnHitParticles (ix, iy) actorSide res force seed0 =
             ang = (-0.9 + h1 * 1.8) + (if dir > 0 then 0.0 else pi)
             spd = 85.0 + h2 * (if isHeavy then 280.0 else 185.0)
             col = case res of
-              ResParry -> if i `mod` 2 == 0 then "#f6df9e" else "#fff5d6"
-              ResDodge -> "#a8cfc4"
-              ResEffect -> "#8fe0b0"
+              ResParry -> if i `mod` 2 == 0 then "#b37c24" else "#d9a94e"
+              ResDodge -> "#2b594b"
+              ResEffect -> "#386944"
               ResHit ->
-                if i `mod` 5 == 0
-                  then "#d45348"
-                  else if i `mod` 3 == 0 then "#efe5cf" else "#0c1513"
+                if i `mod` 4 == 0
+                  then "#a32c22"
+                  else if i `mod` 3 == 0 then "#4a4035" else "#1e1a16"
          in InkParticle
               { ipX = ix,
                 ipY = iy + (h1 - 0.5) * 16.0,

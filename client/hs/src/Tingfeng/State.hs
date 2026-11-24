@@ -7,24 +7,37 @@ module Tingfeng.State
     LogLine (..),
     HitTarget (..),
     CanvasHitbox (..),
+    ScrollTarget (..),
+    ScrollZone (..),
     ClientCmd (..),
     PresentationState (..),
     QueuedBattle (..),
     ClientModel (..),
     worldPosFromGrid,
+    isCameraPanned,
     initClientModel,
     stepClientFrame,
     applyServerMessage,
     setDocumentHidden,
     handlePointerMove,
     handlePointerClick,
+    handleDragAt,
+    handleScrollAt,
+    handleTextInput,
+    handleTextSubmit,
+    handleBlurInput,
+    handleKeyDown,
     panCameraBy,
     zoomCameraBy,
     resetCameraPan,
     handleUiAction,
     handleLabCommand,
-    buildOverlayJson,
     buildLabStateJson,
+    portraitScoreFile,
+    liveEffectsOf,
+    evalSkillState,
+    SkillEval (..),
+    labActionOrder,
   )
 where
 
@@ -58,6 +71,11 @@ data HitTarget
   | HitNpc !Text
   | HitToggleRender
   | HitResetCam
+  | HitUi !Text !Text !Text
+  | HitFocusInput !Text
+  | HitLab !Text !Text !Text !Text !Double
+  | HitLabScrub !Double !Double
+  | HitSwallow
   deriving (Show, Eq)
 
 data CanvasHitbox = CanvasHitbox
@@ -70,6 +88,18 @@ data CanvasHitbox = CanvasHitbox
   }
   deriving (Show, Eq)
 
+data ScrollTarget = ScrollLog | ScrollDrawer | ScrollOnboard | ScrollNpc
+  deriving (Show, Eq)
+
+data ScrollZone = ScrollZone
+  { szX :: !Double,
+    szY :: !Double,
+    szW :: !Double,
+    szH :: !Double,
+    szTarget :: !ScrollTarget
+  }
+  deriving (Show, Eq)
+
 data ClientCmd
   = CmdSendWs !Text
   | CmdConnectWs !Text !Text !(Maybe CreationChoice)
@@ -77,18 +107,22 @@ data ClientCmd
   | CmdSetCursor !Text
   | CmdPlaySfx !Text
   | CmdSaveLocal !Text !Text
+  | CmdFocusInput !Text !Text !Double !Double !Double !Double
+  | CmdBlurInput
   deriving (Show, Eq)
 
 data PresentationState = PresentationState
   { prPlayerHp :: !Int,
     prEnemyHp :: !Int,
     prPlayerQi :: !Int,
-    prEnemyQi :: !Int
+    prEnemyQi :: !Int,
+    prPlayerEffects :: ![EffectInfo],
+    prEnemyEffects :: ![EffectInfo]
   }
   deriving (Show, Eq)
 
 data QueuedBattle
-  = QCombat !CombatEvt !(Maybe (Int, Int, Int, Int))
+  = QCombat !CombatEvt !(Maybe PresentationState)
   | QSettlement !Text !Text !Bool
   deriving (Show, Eq)
 
@@ -105,6 +139,7 @@ data ClientModel = ClientModel
     cmWidth :: !Double,
     cmHeight :: !Double,
     cmClockMs :: !Double,
+    cmLastSyncTickMs :: !Double,
     cmWasmStepMs :: !Double,
     cmDrawCmdCount :: !Int,
     -- Connection & Onboarding
@@ -139,11 +174,14 @@ data ClientModel = ClientModel
     -- Battle & Deterministic Timeline Queue
     cmInBattle :: !Bool,
     cmStoryActive :: !Bool,
+    cmStoryQueue :: ![ServerMsg],
+    cmStoryDelayRemMs :: !Double,
     cmTransitionBanner :: !(Maybe (Text, Double)),
     cmBattleSnap :: !(Maybe BattleSnap),
     cmCooldownSyncedMs :: !Double,
+    cmActionLockUntilMs :: !Double,
     cmPresentation :: !(Maybe PresentationState),
-    cmPreEventSnap :: !(Maybe (Int, Int, Int, Int)),
+    cmPreEventSnap :: !(Maybe PresentationState),
     cmActiveTimeline :: !(Maybe ResolvedTimeline),
     cmTimelineElapsedMs :: !Double,
     cmAppliedHits :: !Int,
@@ -155,11 +193,13 @@ data ClientModel = ClientModel
     cmEnemyHpTrail :: !Double,
     cmPlayerApAnim :: !Double,
     cmEnemyApAnim :: !Double,
+    cmPlayerHitFlashMs :: !Double,
+    cmEnemyHitFlashMs :: !Double,
     cmParticles :: ![InkParticle],
     cmShockPos :: !Pt,
     cmShockAge :: !Double,
     cmShockPower :: !Double,
-    -- Panels, Drawers & Logs
+    -- Panels, Drawers, Scrolling, IME & Logs
     cmLogs :: ![LogLine],
     cmNextLogId :: !Int,
     cmUnreadLogs :: !Int,
@@ -170,11 +210,33 @@ data ClientModel = ClientModel
     cmCharSubTab :: !Text, -- "status" | "inventory"
     cmMobileTab :: !Text, -- "world" | "log" | "arts" | "character" | "quests"
     cmSelectedNpc :: !(Maybe Text),
+    cmFocusedInput :: !(Maybe Text), -- Nothing | Just "login" | Just "say"
+    cmSayDraft :: !Text,
+    cmDevReset :: !Bool,
+    cmLogScroll :: !Double,
+    cmLogMaxScroll :: !Double,
+    cmLogStickBottom :: !Bool,
+    cmDrawerScroll :: !Double,
+    cmDrawerMaxScroll :: !Double,
+    cmOnboardScroll :: !Double,
+    cmOnboardMaxScroll :: !Double,
+    cmNpcScroll :: !Double,
+    cmNpcMaxScroll :: !Double,
+    cmLabActionIdx :: !Int,
+    cmLabOutcomeIdx :: !Int,
+    cmLabSideIdx :: !Int,
     cmHovered :: !(Maybe HitTarget),
     cmHitboxes :: ![CanvasHitbox],
+    cmScrollZones :: ![ScrollZone],
     cmUiDirty :: !Bool
   }
   deriving (Show)
+
+apBaselineAgility :: Double
+apBaselineAgility = 19.0
+
+apGainPerAgilitySecond :: Double
+apGainPerAgilitySecond = 100.0 / (2.0 * apBaselineAgility)
 
 gridScaleX, gridScaleY :: Double
 gridScaleX = 164.0
@@ -223,6 +285,7 @@ initClientModel page lib cat w h reduced =
       cmWidth = max 320 w,
       cmHeight = max 480 h,
       cmClockMs = 0,
+      cmLastSyncTickMs = 0,
       cmWasmStepMs = 0.06,
       cmDrawCmdCount = 0,
       cmConnected = page /= PageGame,
@@ -253,9 +316,12 @@ initClientModel page lib cat w h reduced =
       cmMapZoom = 1.0,
       cmInBattle = False,
       cmStoryActive = False,
+      cmStoryQueue = [],
+      cmStoryDelayRemMs = 0,
       cmTransitionBanner = Nothing,
       cmBattleSnap = Nothing,
       cmCooldownSyncedMs = 0,
+      cmActionLockUntilMs = 0,
       cmPresentation = Nothing,
       cmPreEventSnap = Nothing,
       cmActiveTimeline = Nothing,
@@ -269,6 +335,8 @@ initClientModel page lib cat w h reduced =
       cmEnemyHpTrail = 1.0,
       cmPlayerApAnim = 0.0,
       cmEnemyApAnim = 0.0,
+      cmPlayerHitFlashMs = 0.0,
+      cmEnemyHitFlashMs = 0.0,
       cmParticles = [],
       cmShockPos = (0.5, 0.5),
       cmShockAge = 99.0,
@@ -283,8 +351,24 @@ initClientModel page lib cat w h reduced =
       cmCharSubTab = "status",
       cmMobileTab = "world",
       cmSelectedNpc = Nothing,
+      cmFocusedInput = Nothing,
+      cmSayDraft = "",
+      cmDevReset = False,
+      cmLogScroll = 0,
+      cmLogMaxScroll = 0,
+      cmLogStickBottom = True,
+      cmDrawerScroll = 0,
+      cmDrawerMaxScroll = 0,
+      cmOnboardScroll = 0,
+      cmOnboardMaxScroll = 0,
+      cmNpcScroll = 0,
+      cmNpcMaxScroll = 0,
+      cmLabActionIdx = 0,
+      cmLabOutcomeIdx = 0,
+      cmLabSideIdx = 0,
       cmHovered = Nothing,
       cmHitboxes = [],
+      cmScrollZones = [],
       cmUiDirty = True
     }
 
@@ -359,10 +443,32 @@ formatCombatLogText loc ev
        in base <> suffix
   | otherwise = ceActorName ev <> " → " <> ceTargetName ev
 
+snapToPresentation :: BattleSnap -> PresentationState
+snapToPresentation bs =
+  PresentationState
+    (cbHp (bsPlayer bs))
+    (cbHp (bsEnemy bs))
+    (cbQi (bsPlayer bs))
+    (cbQi (bsEnemy bs))
+    (cbEffects (bsPlayer bs))
+    (cbEffects (bsEnemy bs))
+
 startNextBattleItem :: ClientModel -> (ClientModel, [ClientCmd])
 startNextBattleItem m0 =
   case cmBattleQueue m0 of
-    [] -> (m0 {cmActiveTimeline = Nothing, cmTimelineElapsedMs = 0, cmAppliedHits = 0, cmUiDirty = True}, [])
+    [] ->
+      let alignedPres = case cmBattleSnap m0 of
+            Just bs -> Just (snapToPresentation bs)
+            Nothing -> cmPresentation m0
+       in ( m0
+              { cmActiveTimeline = Nothing,
+                cmTimelineElapsedMs = 0,
+                cmAppliedHits = 0,
+                cmPresentation = alignedPres,
+                cmUiDirty = True
+              },
+            []
+          )
     (item : rest) ->
       let (pStyle, eStyle, pProf, eProf, pName, eName) = currentStylesAndProfiles m0
           tid = cmNextTimelineId m0
@@ -382,12 +488,19 @@ startNextBattleItem m0 =
                          (if targetSide == SidePlayer then pStyle else eStyle)
                   pres0 = case (cmPresentation m0, mPreSnap) of
                     (Just pr, _) -> pr
-                    (Nothing, Just (php, ehp, pqi, eqi)) -> PresentationState php ehp pqi eqi
+                    (Nothing, Just pr) -> pr
                     (Nothing, Nothing) ->
                       case cmBattleSnap m0 of
-                        Just bs -> PresentationState (cbHp (bsPlayer bs)) (cbHp (bsEnemy bs)) (cbQi (bsPlayer bs)) (cbQi (bsEnemy bs))
-                        Nothing -> PresentationState (psHp (cmStats m0)) 100 (psQi (cmStats m0)) 100
+                        Just bs -> snapToPresentation bs
+                        Nothing -> PresentationState (psHp (cmStats m0)) 100 (psQi (cmStats m0)) 100 [] []
                   sfxCmds = if cmSoundOn m0 && tlKind tl /= "effect_tick" then [CmdPlaySfx "whoosh"] else []
+                  -- Snap acting combatant's AP when their action begins
+                  (pApNext, eApNext) = case cmBattleSnap m0 of
+                    Just bs ->
+                      ( if actorSide == SidePlayer then cbApProgress (bsPlayer bs) else cmPlayerApAnim m0,
+                        if actorSide == SideEnemy then cbApProgress (bsEnemy bs) else cmEnemyApAnim m0
+                      )
+                    Nothing -> (cmPlayerApAnim m0, cmEnemyApAnim m0)
                   m1 =
                     pushLog "combat" logTxt $
                       m0
@@ -398,6 +511,8 @@ startNextBattleItem m0 =
                           cmNextTimelineId = tid + 1,
                           cmBattleQueue = rest,
                           cmPresentation = Just pres0,
+                          cmPlayerApAnim = pApNext,
+                          cmEnemyApAnim = eApNext,
                           cmUiDirty = True
                         }
                   -- If impactAtMs == 0 (e.g. effect_tick), commit immediately!
@@ -449,10 +564,31 @@ commitHitsUpTo elapsed m0 =
                          in if tlTargetSide tl == SidePlayer
                               then pr {prPlayerHp = max 0 (min pMax (prPlayerHp pr + delta))}
                               else pr {prEnemyHp = max 0 (min eMax (prEnemyHp pr + delta))}
-                      pr0 = fromMaybe (PresentationState 100 100 100 100) (cmPresentation m0)
+                      pr0 = fromMaybe (PresentationState 100 100 100 100 [] []) (cmPresentation m0)
                       pr1 = foldl' applyOne pr0 dueIdx
                       lastIdx = last dueIdx
                       lastHit = hits !! lastIdx
+                      -- On final hit of this timeline, align Qi and Effects if queue is empty
+                      prFinal =
+                        if lastIdx + 1 >= length hits && null (cmBattleQueue m0)
+                          then case cmBattleSnap m0 of
+                            Just bs ->
+                              pr1
+                                { prPlayerQi = cbQi (bsPlayer bs),
+                                  prEnemyQi = cbQi (bsEnemy bs),
+                                  prPlayerEffects = cbEffects (bsPlayer bs),
+                                  prEnemyEffects = cbEffects (bsEnemy bs)
+                                }
+                            Nothing -> pr1
+                          else pr1
+                      hitFlashP =
+                        if tlTargetSide tl == SidePlayer && rhResult lastHit == ResHit
+                          then 220.0
+                          else cmPlayerHitFlashMs m0
+                      hitFlashE =
+                        if tlTargetSide tl == SideEnemy && rhResult lastHit == ResHit
+                          then 220.0
+                          else cmEnemyHitFlashMs m0
                       w = cmWidth m0
                       hgt = cmHeight m0
                       stageCx = w * 0.5
@@ -468,8 +604,10 @@ commitHitsUpTo elapsed m0 =
                           then [CmdPlaySfx (if rhResult lastHit == ResParry then "parry" else if rhResult lastHit == ResHit then "impact" else "whoosh")]
                           else []
                    in ( m0
-                          { cmPresentation = Just pr1,
+                          { cmPresentation = Just prFinal,
                             cmAppliedHits = lastIdx + 1,
+                            cmPlayerHitFlashMs = hitFlashP,
+                            cmEnemyHitFlashMs = hitFlashE,
                             cmParticles = cmParticles m0 <> newParts,
                             cmShockPos = (fst worldPt / max 1.0 w, 1.0 - snd worldPt / max 1.0 hgt),
                             cmShockAge = 0.0,
@@ -499,10 +637,59 @@ drainImmediately m0 =
 setDocumentHidden :: Bool -> ClientModel -> ClientModel
 setDocumentHidden hidden m0 =
   let m1 = m0 {cmDocHidden = hidden, cmUiDirty = True}
-   in if hidden then fst (drainImmediately m1) else m1
+   in if hidden
+        then
+          let m2 = fst (drainStoryQueue m1)
+           in fst (drainImmediately m2)
+        else m1
+
+isStorySequencedMsg :: ServerMsg -> Bool
+isStorySequencedMsg (SmStory _ _) = True
+isStorySequencedMsg (SmDialogue _ _) = True
+isStorySequencedMsg (SmStoryTransition _ _) = True
+isStorySequencedMsg (SmStorySequence _) = True
+isStorySequencedMsg (SmStoryDelay _) = True
+isStorySequencedMsg _ = False
+
+drainStoryQueue :: ClientModel -> (ClientModel, [ClientCmd])
+drainStoryQueue m0 =
+  case cmStoryQueue m0 of
+    [] -> (m0 {cmStoryDelayRemMs = 0}, [])
+    (sm : rest) ->
+      let mPop = m0 {cmStoryQueue = rest, cmStoryDelayRemMs = 0}
+          (m1, c1) = case sm of
+            SmStoryDelay _ -> (mPop, [])
+            _ -> applyServerMessageNow sm mPop
+          (m2, c2) = drainStoryQueue m1
+       in (m2, c1 <> c2)
+
+stepStoryQueue :: Double -> ClientModel -> (ClientModel, [ClientCmd])
+stepStoryQueue dtMs m0
+  | cmStoryDelayRemMs m0 <= 0 && null (cmStoryQueue m0) = (m0, [])
+  | cmStoryDelayRemMs m0 > dtMs = (m0 {cmStoryDelayRemMs = cmStoryDelayRemMs m0 - dtMs}, [])
+  | otherwise = go (m0 {cmStoryDelayRemMs = 0})
+  where
+    go m = case cmStoryQueue m of
+      [] -> (m, [])
+      (SmStoryDelay ms : rest) ->
+        if ms > 0
+          then (m {cmStoryQueue = rest, cmStoryDelayRemMs = fromIntegral ms}, [])
+          else go (m {cmStoryQueue = rest})
+      (sm : rest) ->
+        let (m1, c1) = applyServerMessageNow sm (m {cmStoryQueue = rest})
+            (m2, c2) = if cmStoryDelayRemMs m1 > 0 then (m1, []) else go m1
+         in (m2, c1 <> c2)
 
 applyServerMessage :: ServerMsg -> ClientModel -> (ClientModel, [ClientCmd])
-applyServerMessage msg m0 = case msg of
+applyServerMessage msg m0
+  | not (cmDocHidden m0)
+      && isStorySequencedMsg msg
+      && (cmStoryDelayRemMs m0 > 0 || not (null (cmStoryQueue m0))) =
+      (m0 {cmStoryQueue = cmStoryQueue m0 <> [msg]}, [])
+  | otherwise = applyServerMessageNow msg m0
+
+applyServerMessageNow :: ServerMsg -> ClientModel -> (ClientModel, [ClientCmd])
+applyServerMessageNow msg m0 = case msg of
   SmCreationConfig cfg ->
     let defGender = maybe "female" fst (listToMaybe (cfgGenders cfg))
         defOrig = maybe "" coId (listToMaybe (cfgOrigins cfg))
@@ -570,21 +757,24 @@ applyServerMessage msg m0 = case msg of
     let p = bsPlayer bs
         e = bsEnemy bs
         idleQueue = isNothing (cmActiveTimeline m0) && null (cmBattleQueue m0)
+        fullPres = snapToPresentation bs
         nextPres =
           if idleQueue
-            then Just (PresentationState (cbHp p) (cbHp e) (cbQi p) (cbQi e))
+            then Just fullPres
             else case cmPresentation m0 of
-              Just pr -> Just (pr {prPlayerQi = cbQi p, prEnemyQi = cbQi e})
-              Nothing -> Just (PresentationState (cbHp p) (cbHp e) (cbQi p) (cbQi e))
+              Just pr -> Just pr
+              Nothing -> Just fullPres
         pRatio = fromIntegral (maybe (cbHp p) prPlayerHp nextPres) / fromIntegral (max 1 (cbMaxHp p))
         eRatio = fromIntegral (maybe (cbHp e) prEnemyHp nextPres) / fromIntegral (max 1 (cbMaxHp e))
+        lockUntil = cmClockMs m0 + max 0.0 (bsActionLock bs) * 1000.0
         m1 =
           m0
             { cmInBattle = True,
               cmBattleSnap = Just bs,
               cmCooldownSyncedMs = cmClockMs m0,
+              cmActionLockUntilMs = lockUntil,
               cmPresentation = nextPres,
-              cmPreEventSnap = Just (cbHp p, cbHp e, cbQi p, cbQi e),
+              cmPreEventSnap = Just fullPres,
               cmPlayerHpTrail = max (cmPlayerHpTrail m0) pRatio,
               cmEnemyHpTrail = max (cmEnemyHpTrail m0) eRatio,
               cmPlayerApAnim = cbApProgress p,
@@ -632,6 +822,10 @@ applyServerMessage msg m0 = case msg of
      in (pushLog "story" (pre <> txt) m0, [])
   SmStorySequence active ->
     (m0 {cmStoryActive = active, cmUiDirty = True}, [])
+  SmStoryDelay ms ->
+    if cmDocHidden m0 || ms <= 0
+      then (m0, [])
+      else (m0 {cmStoryDelayRemMs = fromIntegral ms}, [])
   SmStoryTransition txt durMs ->
     ( pushLog "story" ("—— " <> txt <> " ——") $
         m0 {cmTransitionBanner = Just (txt, fromIntegral (max 800 durMs)), cmUiDirty = True},
@@ -681,9 +875,10 @@ isNothing (Just _) = False
 stepClientFrame :: Double -> Double -> Double -> ClientModel -> (ClientModel, [ClientCmd])
 stepClientFrame rawDtMs rawW rawH m0 =
   let dtSec = max 0.001 (min 0.25 (rawDtMs / 1000.0))
+      dtMs = dtSec * 1000.0
       w = max 320.0 rawW
       h = max 480.0 rawH
-      nowMs = cmClockMs m0 + dtSec * 1000.0
+      nowMs = cmClockMs m0 + dtMs
 
       -- Unconditionally stable analytical exponential camera smoothing (immune to large frame hitches)
       camAlpha = if cmReducedMotion m0 then 1.0 else 1.0 - exp (-14.0 * dtSec)
@@ -692,35 +887,53 @@ stepClientFrame rawDtMs rawW rawH m0 =
       vx1 = 0.0
       vy1 = 0.0
 
-      -- Trailing damage bars
-      pCurRatio = case (cmPresentation m0, cmBattleSnap m0) of
-        (Just pr, Just bs) -> fromIntegral (prPlayerHp pr) / fromIntegral (max 1 (cbMaxHp (bsPlayer bs)))
-        _ -> fromIntegral (psHp (cmStats m0)) / fromIntegral (max 1 (psMaxHp (cmStats m0)))
-      eCurRatio = case (cmPresentation m0, cmBattleSnap m0) of
-        (Just pr, Just bs) -> fromIntegral (prEnemyHp pr) / fromIntegral (max 1 (cbMaxHp (bsEnemy bs)))
-        _ -> 1.0
-      stepTrail cur tgt = if cur > tgt then max tgt (cur - dtSec * 0.45) else tgt
-      pTrail1 = stepTrail (cmPlayerHpTrail m0) pCurRatio
-      eTrail1 = stepTrail (cmEnemyHpTrail m0) eCurRatio
-
-      -- AP smooth interpolation based on agility
-      (pAgi, eAgi) = case cmBattleSnap m0 of
-        Just bs -> (fromIntegral (cbAgility (bsPlayer bs)), fromIntegral (cbAgility (bsEnemy bs)))
-        Nothing -> (fromIntegral (psAgility (cmStats m0)), 18.0)
-      apRate agi = (0.55 + agi * 0.022) * dtSec
-      pAp1 = if cmInBattle m0 && not (cmLabPaused m0) then min 100.0 (cmPlayerApAnim m0 + apRate pAgi * 18.0) else cmPlayerApAnim m0
-      eAp1 = if cmInBattle m0 && not (cmLabPaused m0) then min 100.0 (cmEnemyApAnim m0 + apRate eAgi * 18.0) else cmEnemyApAnim m0
-
-      -- Transition banner decay
-      nextBanner = case cmTransitionBanner m0 of
-        Nothing -> Nothing
-        Just (txt, remMs) ->
-          let r' = remMs - dtSec * 1000.0
-           in if r' <= 0 then Nothing else Just (txt, r')
+      -- Advance story delay queue
+      (mAfterStory, storyCmds) = stepStoryQueue dtMs (m0 {cmWidth = w, cmHeight = h, cmClockMs = nowMs})
 
       -- Advance active combat timeline
-      effDtMs = if cmLabPaused m0 then 0.0 else dtSec * 1000.0 * cmLabSpeed m0
-      (mAfterTl, tlCmds) = stepBattleTimeline effDtMs (m0 {cmWidth = w, cmHeight = h, cmClockMs = nowMs})
+      effDtMs = if cmLabPaused mAfterStory then 0.0 else dtMs * cmLabSpeed mAfterStory
+      (mAfterTl, tlCmds) = stepBattleTimeline effDtMs mAfterStory
+
+      -- Trailing damage bars (decay gently after damage commits)
+      pCurRatio = case (cmPresentation mAfterTl, cmBattleSnap mAfterTl) of
+        (Just pr, Just bs) -> fromIntegral (prPlayerHp pr) / fromIntegral (max 1 (cbMaxHp (bsPlayer bs)))
+        _ -> fromIntegral (psHp (cmStats mAfterTl)) / fromIntegral (max 1 (psMaxHp (cmStats mAfterTl)))
+      eCurRatio = case (cmPresentation mAfterTl, cmBattleSnap mAfterTl) of
+        (Just pr, Just bs) -> fromIntegral (prEnemyHp pr) / fromIntegral (max 1 (cbMaxHp (bsEnemy bs)))
+        _ -> 1.0
+      stepTrail cur tgt = if cur > tgt then max tgt (cur - dtSec * 0.42) else tgt
+      pTrail1 = stepTrail (cmPlayerHpTrail mAfterTl) pCurRatio
+      eTrail1 = stepTrail (cmEnemyHpTrail mAfterTl) eCurRatio
+
+      -- AP smooth prediction aligned with backend/master agility formula and action lock
+      (pAgi, eAgi) = case cmBattleSnap mAfterTl of
+        Just bs -> (fromIntegral (cbAgility (bsPlayer bs)), fromIntegral (cbAgility (bsEnemy bs)))
+        Nothing -> (fromIntegral (psAgility (cmStats mAfterTl)), apBaselineAgility)
+      canGrowAp =
+        cmInBattle mAfterTl
+          && not (cmLabPaused mAfterTl)
+          && isNothing (cmActiveTimeline mAfterTl)
+          && nowMs >= cmActionLockUntilMs mAfterTl
+      stepAp cur agi =
+        if canGrowAp
+          then if cur >= 99.9 then 100.0 else min 99.0 (cur + max 1.0 agi * apGainPerAgilitySecond * dtSec)
+          else cur
+      pAp1 = stepAp (cmPlayerApAnim mAfterTl) pAgi
+      eAp1 = stepAp (cmEnemyApAnim mAfterTl) eAgi
+
+      -- Hit flash decay
+      pFlash1 = max 0.0 (cmPlayerHitFlashMs mAfterTl - dtMs)
+      eFlash1 = max 0.0 (cmEnemyHitFlashMs mAfterTl - dtMs)
+      flashEnded =
+        (cmPlayerHitFlashMs mAfterTl > 0 && pFlash1 <= 0)
+          || (cmEnemyHitFlashMs mAfterTl > 0 && eFlash1 <= 0)
+
+      -- Transition banner decay
+      nextBanner = case cmTransitionBanner mAfterTl of
+        Nothing -> Nothing
+        Just (txt, remMs) ->
+          let r' = remMs - dtMs
+           in if r' <= 0 then Nothing else Just (txt, r')
 
       -- Step particles
       stepPart p =
@@ -733,22 +946,34 @@ stepClientFrame rawDtMs rawW rawH m0 =
           }
       liveParts = filter (\p -> ipLife p < ipMaxLife p) (map stepPart (cmParticles mAfterTl))
 
-      bannerChanged = isJust (cmTransitionBanner m0) /= isJust nextBanner
+      -- Periodic lightweight HUD sync for live cooldowns, AP, HP trail, buffs, training progress & injury countdown
+      hasLiveTimers =
+        cmInBattle mAfterTl
+          || isJust (psBusy (cmStats mAfterTl))
+          || psInjuredSeconds (cmStats mAfterTl) > 0
+      syncIntervalMs = if cmInBattle mAfterTl then 80.0 else 180.0
+      tickSyncDue = hasLiveTimers && (nowMs - cmLastSyncTickMs mAfterTl >= syncIntervalMs)
+      nextSyncTick = if tickSyncDue then nowMs else cmLastSyncTickMs mAfterTl
+
+      bannerChanged = isJust (cmTransitionBanner mAfterTl) /= isJust nextBanner
    in ( mAfterTl
           { cmCamX = cx1,
             cmCamY = cy1,
             cmCamVx = vx1,
             cmCamVy = vy1,
+            cmLastSyncTickMs = nextSyncTick,
             cmPlayerHpTrail = pTrail1,
             cmEnemyHpTrail = eTrail1,
             cmPlayerApAnim = pAp1,
             cmEnemyApAnim = eAp1,
+            cmPlayerHitFlashMs = pFlash1,
+            cmEnemyHitFlashMs = eFlash1,
             cmTransitionBanner = nextBanner,
             cmParticles = liveParts,
             cmShockAge = min 99.0 (cmShockAge mAfterTl + dtSec),
-            cmUiDirty = cmUiDirty mAfterTl || bannerChanged
+            cmUiDirty = cmUiDirty mAfterTl || bannerChanged || flashEnded || tickSyncDue
           },
-        tlCmds
+        storyCmds <> tlCmds
       )
 
 stepBattleTimeline :: Double -> ClientModel -> (ClientModel, [ClientCmd])
@@ -778,12 +1003,20 @@ stepBattleTimeline stepMs m0 =
                   let (mNext, nextCmds) = startNextBattleItem (m1 {cmActiveTimeline = Nothing, cmTimelineElapsedMs = 0.0})
                    in (mNext, hitCmds <> nextCmds)
 
--- Pointer & Camera Controls
+-- Pointer, Scroll, IME, Keyboard & Camera Controls
 
 findHit :: Double -> Double -> [CanvasHitbox] -> Maybe CanvasHitbox
 findHit x y =
   listToMaybe
     . filter (\hb -> x >= chX hb && x <= chX hb + chW hb && y >= chY hb && y <= chY hb + chH hb)
+    . reverse
+
+findScrollZone :: Double -> Double -> [ScrollZone] -> Maybe ScrollTarget
+findScrollZone x y =
+  fmap szTarget
+    . listToMaybe
+    . filter (\sz -> x >= szX sz && x <= szX sz + szW sz && y >= szY sz && y <= szY sz + szH sz)
+    . reverse
 
 handlePointerMove :: Double -> Double -> ClientModel -> (ClientModel, [ClientCmd])
 handlePointerMove x y m =
@@ -794,21 +1027,163 @@ handlePointerMove x y m =
    in (m {cmHovered = nextTarget}, cmds)
 
 handlePointerClick :: Double -> Double -> ClientModel -> (ClientModel, [ClientCmd])
-handlePointerClick x y m =
-  case fmap chTarget (findHit x y (cmHitboxes m)) of
-    Nothing -> (m, [])
-    Just (HitExit dir) ->
-      if cmConnected m && not (cmStoryActive m)
-        then (m, [CmdSendWs (encodePlayerAction (ActGo dir))])
-        else (m, [])
-    Just (HitNpc cid) ->
-      let nextSel = if cmSelectedNpc m == Just cid then Nothing else Just cid
-       in (m {cmSelectedNpc = nextSel, cmUiDirty = True}, [])
-    Just HitToggleRender ->
-      let next = if cmRenderMode m == ModeWebGL2Ink then ModeCanvas2D else ModeWebGL2Ink
-       in (m {cmRenderMode = next, cmUiDirty = True}, [])
-    Just HitResetCam ->
-      (resetCameraPan m, [])
+handlePointerClick x y m0 =
+  case findHit x y (cmHitboxes m0) of
+    Nothing ->
+      if isJust (cmFocusedInput m0)
+        then (m0 {cmFocusedInput = Nothing}, [CmdBlurInput])
+        else (m0, [])
+    Just hb ->
+      let blurIfOther targetInput =
+            if cmFocusedInput m0 /= targetInput && isJust (cmFocusedInput m0)
+              then (m0 {cmFocusedInput = Nothing}, [CmdBlurInput])
+              else (m0, [])
+       in case chTarget hb of
+            HitSwallow ->
+              blurIfOther Nothing
+            HitFocusInput inpId ->
+              let curVal = if inpId == "login" then cmUsername m0 else cmSayDraft m0
+               in ( m0 {cmFocusedInput = Just inpId},
+                    [CmdFocusInput inpId curVal (chX hb) (chY hb) (chW hb) (chH hb)]
+                  )
+            HitExit dir ->
+              let (m1, bc) = blurIfOther Nothing
+               in if cmConnected m1 && not (cmStoryActive m1)
+                    then (m1, bc <> [CmdSendWs (encodePlayerAction (ActGo dir))])
+                    else (m1, bc)
+            HitNpc cid ->
+              let (m1, bc) = blurIfOther Nothing
+                  nextSel = if cmSelectedNpc m1 == Just cid then Nothing else Just cid
+               in (m1 {cmSelectedNpc = nextSel, cmNpcScroll = 0, cmUiDirty = True}, bc)
+            HitToggleRender ->
+              let (m1, bc) = blurIfOther Nothing
+                  next = if cmRenderMode m1 == ModeWebGL2Ink then ModeCanvas2D else ModeWebGL2Ink
+               in (m1 {cmRenderMode = next, cmUiDirty = True}, bc)
+            HitResetCam ->
+              let (m1, bc) = blurIfOther Nothing
+               in (resetCameraPan m1, bc)
+            HitUi k a1 a2 ->
+              let (m1, bc) = blurIfOther Nothing
+                  (m2, ucs) = handleUiAction k a1 a2 m1
+               in (m2, bc <> ucs)
+            HitLab cmd a1 a2 a3 num ->
+              let (m1, bc) = blurIfOther Nothing
+                  (m2, lcs) = handleLabCommand cmd a1 a2 a3 num m1
+               in (m2, bc <> lcs)
+            HitLabScrub x0 w0 ->
+              let (m1, bc) = blurIfOther Nothing
+                  ratio = max 0.0 (min 1.0 ((x - x0) / max 1.0 w0))
+                  dur = maybe 0.0 tlDurationMs (cmActiveTimeline m1)
+                  (m2, l1) = handleLabCommand "pause" "true" "" "" 0 m1
+                  (m3, l2) = handleLabCommand "seek" "" "" "" (ratio * dur) m2
+               in (m3, bc <> l1 <> l2)
+
+applyScrollDelta :: ScrollTarget -> Double -> ClientModel -> ClientModel
+applyScrollDelta tgt deltaY m = case tgt of
+  ScrollLog ->
+    let maxS = cmLogMaxScroll m
+        cur = if cmLogStickBottom m then maxS else cmLogScroll m
+        next = max 0.0 (min maxS (cur + deltaY))
+        stick = maxS <= 1.0 || (maxS - next) <= 22.0
+     in m {cmLogScroll = next, cmLogStickBottom = stick}
+  ScrollDrawer ->
+    let next = max 0.0 (min (cmDrawerMaxScroll m) (cmDrawerScroll m + deltaY))
+     in m {cmDrawerScroll = next}
+  ScrollOnboard ->
+    let next = max 0.0 (min (cmOnboardMaxScroll m) (cmOnboardScroll m + deltaY))
+     in m {cmOnboardScroll = next}
+  ScrollNpc ->
+    let next = max 0.0 (min (cmNpcMaxScroll m) (cmNpcScroll m + deltaY))
+     in m {cmNpcScroll = next}
+
+handleScrollAt :: Double -> Double -> Double -> ClientModel -> ClientModel
+handleScrollAt x y deltaY m =
+  case findScrollZone x y (cmScrollZones m) of
+    Just tgt -> applyScrollDelta tgt deltaY m
+    Nothing ->
+      let factor = if deltaY < 0 then 1.09 else 0.92
+       in zoomCameraBy factor m
+
+handleDragAt :: Double -> Double -> Double -> Double -> ClientModel -> ClientModel
+handleDragAt x y dx dy m =
+  case findHit x y (cmHitboxes m) of
+    Just hb | HitLabScrub x0 w0 <- chTarget hb ->
+      let ratio = max 0.0 (min 1.0 ((x - x0) / max 1.0 w0))
+          dur = maybe 0.0 tlDurationMs (cmActiveTimeline m)
+          (m1, _) = handleLabCommand "pause" "true" "" "" 0 m
+          (m2, _) = handleLabCommand "seek" "" "" "" (ratio * dur) m1
+       in m2
+    _ ->
+      case findScrollZone x y (cmScrollZones m) of
+        Just tgt -> applyScrollDelta tgt (-dy) m
+        Nothing -> panCameraBy dx dy m
+
+handleTextInput :: Text -> Text -> ClientModel -> ClientModel
+handleTextInput inpId val m = case inpId of
+  "login" -> m {cmUsername = val}
+  "say" -> m {cmSayDraft = val}
+  _ -> m
+
+handleTextSubmit :: Text -> ClientModel -> (ClientModel, [ClientCmd])
+handleTextSubmit inpId m0 = case inpId of
+  "login" ->
+    let m1 = m0 {cmFocusedInput = Nothing}
+     in if cmLoginMode m1 == "create"
+          then
+            let (m2, cs) = handleUiAction "create_step" "1" "" m1
+             in (m2, CmdBlurInput : cs)
+          else
+            let passFlag = if cmDevReset m1 then "reset" else ""
+                (m2, cs) = handleUiAction "login_submit" (cmUsername m1) passFlag m1
+             in (m2, CmdBlurInput : cs)
+  "say" ->
+    let txt = T.strip (cmSayDraft m0)
+        m1 = m0 {cmSayDraft = "", cmFocusedInput = Nothing, cmLogStickBottom = True}
+     in if T.null txt
+          then (m1, [CmdBlurInput])
+          else (m1, [CmdBlurInput, CmdSendWs (encodePlayerAction (ActSay txt))])
+  _ -> (m0, [])
+
+handleBlurInput :: ClientModel -> ClientModel
+handleBlurInput m = m {cmFocusedInput = Nothing}
+
+handleKeyDown :: Text -> ClientModel -> (ClientModel, [ClientCmd])
+handleKeyDown key m0
+  | isJust (cmFocusedInput m0) =
+      if key == "Escape"
+        then (m0 {cmFocusedInput = Nothing}, [CmdBlurInput])
+        else (m0, [])
+  | key == "Escape" =
+      (m0 {cmDesktopDrawer = "", cmSelectedNpc = Nothing, cmUiDirty = True}, [])
+  | cmInBattle m0 =
+      case key of
+        "1" -> handleUiAction "perform_index" "0" "" m0
+        "2" -> handleUiAction "perform_index" "1" "" m0
+        "3" -> handleUiAction "perform_index" "2" "" m0
+        "4" -> handleUiAction "perform_index" "3" "" m0
+        "5" -> handleUiAction "perform_index" "4" "" m0
+        "6" -> handleUiAction "perform_index" "5" "" m0
+        _ -> (m0, [])
+  | cmConnected m0 && not (cmStoryActive m0) && T.null (cmDesktopDrawer m0) && isNothing (cmSelectedNpc m0) =
+      let mDir = case key of
+            "ArrowUp" -> Just North
+            "w" -> Just North
+            "W" -> Just North
+            "ArrowDown" -> Just South
+            "s" -> Just South
+            "S" -> Just South
+            "ArrowLeft" -> Just West
+            "a" -> Just West
+            "A" -> Just West
+            "ArrowRight" -> Just East
+            "d" -> Just East
+            "D" -> Just East
+            _ -> Nothing
+       in case mDir of
+            Just dir | any (\ex -> reDirection ex == dir) (cmRoomExits m0) ->
+              (m0, [CmdSendWs (encodePlayerAction (ActGo dir))])
+            _ -> (m0, [])
+  | otherwise = (m0, [])
 
 isCameraPanned :: ClientModel -> Bool
 isCameraPanned m =
@@ -831,12 +1206,45 @@ zoomCameraBy factor m
 resetCameraPan :: ClientModel -> ClientModel
 resetCameraPan m = m {cmPanX = 0, cmPanY = 0, cmMapZoom = 1.0, cmUiDirty = True}
 
--- UI Actions from Thin Overlay
+-- UI Actions
 
 handleUiAction :: Text -> Text -> Text -> ClientModel -> (ClientModel, [ClientCmd])
 handleUiAction kind a1 a2 m0 = case kind of
   "reset_cam" ->
     (resetCameraPan m0, [])
+  "zoom_in" ->
+    (zoomCameraBy 1.18 m0, [])
+  "zoom_out" ->
+    (zoomCameraBy 0.85 m0, [])
+  "close_all" ->
+    (m0 {cmDesktopDrawer = "", cmSelectedNpc = Nothing, cmUiDirty = True}, [])
+  "toggle_dev_reset" ->
+    (m0 {cmDevReset = not (cmDevReset m0), cmUiDirty = True}, [])
+  "scroll_log_bottom" ->
+    (m0 {cmLogStickBottom = True, cmLogScroll = cmLogMaxScroll m0}, [])
+  "send_say_draft" ->
+    handleTextSubmit "say" m0
+  "lab_cycle_action" ->
+    let acts = labActionOrder m0
+        n = max 1 (length acts)
+        step = if a1 == "prev" then -1 else 1
+        idx' = (cmLabActionIdx m0 + step + n) `mod` n
+     in (m0 {cmLabActionIdx = idx'}, [])
+  "lab_cycle_outcome" ->
+    (m0 {cmLabOutcomeIdx = (cmLabOutcomeIdx m0 + 1) `mod` 4}, [])
+  "lab_cycle_side" ->
+    (m0 {cmLabSideIdx = (cmLabSideIdx m0 + 1) `mod` 2}, [])
+  "lab_play_selected" ->
+    let acts = labActionOrder m0
+        aid = if null acts then "rig.fist.punch_a" else acts !! (cmLabActionIdx m0 `mod` length acts)
+        out = ["hit", "dodge", "parry", "effect"] !! (cmLabOutcomeIdx m0 `mod` 4)
+        side = ["player", "enemy"] !! (cmLabSideIdx m0 `mod` 2)
+        (m1, c1) = handleLabCommand "seed" "female" "male" "" 0 m0
+        (m2, c2) = handleLabCommand "submit" aid out side 18 m1
+     in (m2, c1 <> c2)
+  "toggle_look" ->
+    let lk = if cmLookStyle m0 == LookMaiden then LookPonytail else LookMaiden
+     in (m0 {cmLookStyle = lk, cmUiDirty = True}, [])
   "request_creation_cfg" ->
     (m0, [CmdOpenConfigWs])
   "set_locale" ->
@@ -890,15 +1298,15 @@ handleUiAction kind a1 a2 m0 = case kind of
             )
   "desktop_drawer" ->
     let next = if cmDesktopDrawer m0 == a1 then "" else a1
-     in (m0 {cmDesktopDrawer = next, cmUiDirty = True}, [])
+     in (m0 {cmDesktopDrawer = next, cmDrawerScroll = 0, cmUiDirty = True}, [])
   "char_subtab" ->
-    (m0 {cmCharSubTab = a1, cmUiDirty = True}, [])
+    (m0 {cmCharSubTab = a1, cmDrawerScroll = 0, cmUiDirty = True}, [])
   "mobile_tab" ->
     let unread = if a1 == "log" then 0 else cmUnreadLogs m0
-     in (m0 {cmMobileTab = a1, cmUnreadLogs = unread, cmUiDirty = True}, [])
+     in (m0 {cmMobileTab = a1, cmUnreadLogs = unread, cmDrawerScroll = 0, cmUiDirty = True}, [])
   "select_npc" ->
     let next = if T.null a1 || cmSelectedNpc m0 == Just a1 then Nothing else Just a1
-     in (m0 {cmSelectedNpc = next, cmUiDirty = True}, [])
+     in (m0 {cmSelectedNpc = next, cmNpcScroll = 0, cmUiDirty = True}, [])
   "go" ->
     case parseDirection a1 of
       Just d -> (m0, [CmdSendWs (encodePlayerAction (ActGo d))])
@@ -1054,7 +1462,85 @@ handleLabCommand cmd a1 a2 a3 numArg m0 = case cmd of
          in (m1, sfx)
   _ -> (m0, [])
 
--- Serialize full UI state for thin responsive HTML shell & Playwright inspection
+-- Helpers shared with full-canvas UI renderer & Playwright battle lab state probe
+
+labActionOrder :: ClientModel -> [Text]
+labActionOrder m =
+  [ aid
+    | aid <- acOrder (cmCatalog m),
+      Just act <- [M.lookup aid (acActions (cmCatalog m))],
+      isTravelMotion (adActorMotion act) || adActorMotion act == "focus" || "rig.effect." `T.isPrefixOf` aid
+  ]
+
+liveEffectsOf :: ClientModel -> Bool -> [(EffectInfo, Double)]
+liveEffectsOf m isPlayer =
+  let cdAgeSec = max 0.0 ((cmClockMs m - cmCooldownSyncedMs m) / 1000.0)
+      raw = case (cmPresentation m, cmBattleSnap m) of
+        (Just pr, _) -> if isPlayer then prPlayerEffects pr else prEnemyEffects pr
+        (Nothing, Just bs) -> if isPlayer then cbEffects (bsPlayer bs) else cbEffects (bsEnemy bs)
+        _ -> []
+   in [ (ef, remS)
+        | ef <- raw,
+          let remS = max 0.0 (efRemaining ef - cdAgeSec),
+          remS > 0.05
+      ]
+
+data SkillEval = SkillEval
+  { seSkill :: !ActiveSkillInfo,
+    seCdRem :: !Double,
+    seCdTotal :: !Double,
+    seReady :: !Bool,
+    seQueued :: !Bool,
+    seUltimate :: !Bool,
+    seReason :: !Text
+  }
+  deriving (Show, Eq)
+
+evalSkillState :: ClientModel -> [SkillEval]
+evalSkillState m = case cmBattleSnap m of
+  Nothing -> []
+  Just bs ->
+    let loc = cmLocale m
+        cdAgeSec = max 0.0 ((cmClockMs m - cmCooldownSyncedMs m) / 1000.0)
+        cds = bsCooldowns bs
+        pEffs = liveEffectsOf m True
+        presQi = case cmPresentation m of
+          Just pr -> prPlayerQi pr
+          Nothing -> cbQi (bsPlayer bs)
+        apCur = max (cbAp (bsPlayer bs)) (floor (cmPlayerApAnim m))
+     in [ let cdRem = max 0.0 (fromMaybe 0.0 (M.lookup (asId sk) cds) - cdAgeSec)
+              missingReqs =
+                [ nm
+                  | (reqId, nm) <- zip (asReqStatus sk) (asReqStatusNames sk <> repeat ""),
+                    not (any (\(ef, _) -> efId ef == reqId) pEffs)
+                ]
+              hasReqs = null missingReqs
+              ready = cdRem <= 0.05 && presQi >= asCost sk && apCur >= asApReq sk && hasReqs
+              queued = bsPendingSkillId bs == Just (asId sk)
+              reasonTxt
+                | queued = if loc == Zh then "蓄势待发" else "Queued"
+                | cdRem > 0.05 = (if loc == Zh then "冷却 " else "CD ") <> T.pack (show (ceiling cdRem :: Int)) <> "s"
+                | not hasReqs = (if loc == Zh then "需「" else "Need ") <> T.intercalate "、" (filter (not . T.null) missingReqs) <> (if loc == Zh then "」" else "")
+                | presQi < asCost sk = (if loc == Zh then "需气 " else "Qi ") <> T.pack (show (asCost sk))
+                | apCur < asApReq sk = (if loc == Zh then "需动 " else "AP ") <> T.pack (show (asApReq sk))
+                | otherwise = (if loc == Zh then "动 " else "AP ") <> T.pack (show (asApReq sk)) <> (if loc == Zh then " · 气 " else " · Qi ") <> T.pack (show (asCost sk))
+           in SkillEval
+                { seSkill = sk,
+                  seCdRem = cdRem,
+                  seCdTotal = max 1.0 (asCooldown sk),
+                  seReady = ready,
+                  seQueued = queued,
+                  seUltimate = fromMaybe 0 (asDamage sk) >= 100,
+                  seReason = reasonTxt
+                }
+          | sk <- bsActiveSkills bs
+        ]
+
+portraitScoreFile :: Int -> Text
+portraitScoreFile app =
+  let evenScore = max 0 (min 10 (((app + 1) `div` 2) * 2))
+      twoDigit = if evenScore < 10 then "0" <> T.pack (show evenScore) else T.pack (show evenScore)
+   in "beauty-score-" <> twoDigit
 
 buildLabStateJson :: ClientModel -> Text
 buildLabStateJson m =
@@ -1086,9 +1572,24 @@ buildLabStateJson m =
             "combatantSnapshotQi" .= JNum (fromIntegral (cbQi cb)),
             "combatantSnapshotMaxQi" .= JNum (fromIntegral (cbMaxQi cb))
           ]
+      (playerDashX, playerDashY) =
+        if cmReducedMotion m
+          then (0.0, 0.0)
+          else case mTl of
+            Just tl ->
+              let sc = sampleBattleScene (Just tl) (cmTimelineElapsedMs m) (raVisual (tlActor tl)) (rtVisual (tlTarget tl)) False
+                  pf = scPlayer sc
+               in (fsX pf - sideHome SidePlayer, fsY pf)
+            Nothing -> (0.0, 0.0)
+      stageEventId = maybe "idle" (T.pack . show . tlId) mTl
    in encodeJson $
         jObj
-          [ "game"
+          [ "stageEventId" .= JStr stageEventId,
+            "playerDashX" .= JNum playerDashX,
+            "playerDashY" .= JNum playerDashY,
+            "soundOn" .= JBool (cmSoundOn m),
+            "logCount" .= JNum (fromIntegral (length (cmLogs m))),
+            "game"
               .= jObj
                 [ "battle"
                     .= jObj
@@ -1110,283 +1611,4 @@ buildLabStateJson m =
                   "elapsedMs" .= JNum (cmTimelineElapsedMs m),
                   "durationMs" .= JNum (maybe 0 tlDurationMs mTl)
                 ]
-          ]
-
-portraitScoreFile :: Int -> Text
-portraitScoreFile app =
-  let evenScore = max 0 (min 10 (((app + 1) `div` 2) * 2))
-      twoDigit = if evenScore < 10 then "0" <> T.pack (show evenScore) else T.pack (show evenScore)
-   in "/portraits/beauty-score-" <> twoDigit <> ".png"
-
-buildOverlayJson :: ClientModel -> Text
-buildOverlayJson m =
-  let loc = cmLocale m
-      st = cmStats m
-      nowMs = cmClockMs m
-      statsAgeSec = max 0.0 ((nowMs - cmStatsSyncedAtMs m) / 1000.0)
-      cdAgeSec = max 0.0 ((nowMs - cmCooldownSyncedMs m) / 1000.0)
-      liveInjured = max 0 (psInjuredSeconds st - floor statsAgeSec)
-
-      presHp = case (cmInBattle m, cmPresentation m, cmBattleSnap m) of
-        (True, Just pr, _) -> prPlayerHp pr
-        (True, Nothing, Just bs) -> cbHp (bsPlayer bs)
-        _ -> psHp st
-      presMaxHp = case (cmInBattle m, cmBattleSnap m) of
-        (True, Just bs) -> cbMaxHp (bsPlayer bs)
-        _ -> psMaxHp st
-      presQi = case (cmInBattle m, cmPresentation m, cmBattleSnap m) of
-        (True, Just pr, _) -> prPlayerQi pr
-        (True, Nothing, Just bs) -> cbQi (bsPlayer bs)
-        _ -> psQi st
-      presMaxQi = case (cmInBattle m, cmBattleSnap m) of
-        (True, Just bs) -> cbMaxQi (bsPlayer bs)
-        _ -> psMaxQi st
-
-      enemyHp = case (cmPresentation m, cmBattleSnap m) of
-        (Just pr, _) -> prEnemyHp pr
-        (Nothing, Just bs) -> cbHp (bsEnemy bs)
-        _ -> 0
-      enemyMaxHp = maybe 1 (cbMaxHp . bsEnemy) (cmBattleSnap m)
-      enemyQi = case (cmPresentation m, cmBattleSnap m) of
-        (Just pr, _) -> prEnemyQi pr
-        (Nothing, Just bs) -> cbQi (bsEnemy bs)
-        _ -> 0
-      enemyMaxQi = maybe 1 (cbMaxQi . bsEnemy) (cmBattleSnap m)
-
-      busyVal = case psBusy st of
-        Nothing -> JNull
-        Just bi ->
-          let remS = max 0.0 (biSeconds bi - statsAgeSec)
-              totSteps = biCompleted bi + biRemaining bi
-              actLbl = tr loc ("training.action." <> biAction bi)
-              targetName =
-                fromMaybe (biTarget bi) $
-                  fmap aiName (find (\a -> aiId a == biTarget bi) (cmArts m))
-           in jObj
-                [ "label" .= JStr (actLbl <> " " <> targetName <> " " <> T.pack (show (biCompleted bi)) <> "/" <> T.pack (show totSteps)),
-                  "remainingSec" .= JNum remS,
-                  "stepSec" .= JNum (max 0.2 (biStepSeconds bi))
-                ]
-
-      creationJson = case cmCreationCfg m of
-        Nothing -> JNull
-        Just cfg ->
-          let cc = cmCreateChoice m
-              findOpt nid = find (\o -> coId o == nid)
-              bOrig = maybe emptyBonus coBonus (findOpt (ccOrigin cc) (cfgOrigins cfg))
-              bC1 = maybe emptyBonus coBonus (findOpt (ccChildhood1 cc) (cfgChildhood1 cfg))
-              bC2 = maybe emptyBonus coBonus (findOpt (ccChildhood2 cc) (cfgChildhood2 cfg))
-              tot = foldl' addBonus (cfgBaseStats cfg) [bOrig, bC1, bC2]
-              pName = if T.null (T.strip (cmUsername m)) then "无名客" else T.strip (cmUsername m)
-              encOpt o =
-                jObj
-                  [ "id" .= JStr (coId o),
-                    "label" .= JStr (coLabel o),
-                    "story" .= JStr (T.replace "{name}" pName (coStory o))
-                  ]
-           in jObj
-                [ "step" .= JNum (fromIntegral (cmCreateStep m)),
-                  "gender" .= JStr (ccGender cc),
-                  "origin" .= JStr (ccOrigin cc),
-                  "childhood1" .= JStr (ccChildhood1 cc),
-                  "childhood2" .= JStr (ccChildhood2 cc),
-                  "genders" .= JArr [jObj ["id" .= JStr gid, "label" .= JStr glbl] | (gid, glbl) <- cfgGenders cfg],
-                  "origins" .= JArr (map encOpt (cfgOrigins cfg)),
-                  "childhood1List" .= JArr (map encOpt (cfgChildhood1 cfg)),
-                  "childhood2List" .= JArr (map encOpt (cfgChildhood2 cfg)),
-                  "preview"
-                    .= jObj
-                      [ "strength" .= JNum (fromIntegral (cbStrength tot)),
-                        "agility" .= JNum (fromIntegral (cbAgilityValue tot)),
-                        "vitality" .= JNum (fromIntegral (cbVitality tot)),
-                        "maxQi" .= JNum (fromIntegral (cbMaxQiBonus tot)),
-                        "appearance" .= JNum (fromIntegral (max 0 (min 10 (cbAppearance tot)))),
-                        "portrait" .= JStr (portraitScoreFile (cbAppearance tot))
-                      ]
-                ]
-
-      labActions =
-        [ jObj ["id" .= JStr aid, "label" .= JStr (adLabel act)]
-          | aid <- acOrder (cmCatalog m),
-            Just act <- [M.lookup aid (acActions (cmCatalog m))],
-            isTravelMotion (adActorMotion act) || adActorMotion act == "focus" || "rig.effect." `T.isPrefixOf` aid
-        ]
-
-      pEffects = maybe [] (cbEffects . bsPlayer) (cmBattleSnap m)
-
-      (playerDashX, playerDashY) =
-        if cmReducedMotion m
-          then (0.0, 0.0)
-          else case cmActiveTimeline m of
-            Just tl ->
-              let sc = sampleBattleScene (Just tl) (cmTimelineElapsedMs m) (raVisual (tlActor tl)) (rtVisual (tlTarget tl)) False
-                  pf = scPlayer sc
-               in (fsX pf - sideHome SidePlayer, fsY pf)
-            Nothing -> (0.0, 0.0)
-
-      stageEventId = maybe "idle" (T.pack . show . tlId) (cmActiveTimeline m)
-   in encodeJson $
-        jObj
-          [ "page" .= JStr (case cmPage m of PageGame -> "game"; PageBattleLab -> "lab"; PagePoseSheet -> "poses"),
-            "playerDashX" .= JNum playerDashX,
-            "playerDashY" .= JNum playerDashY,
-            "locale" .= JStr (localeText loc),
-            "connected" .= JBool (cmConnected m),
-            "connecting" .= JBool (cmConnecting m),
-            "username" .= JStr (cmUsername m),
-            "lastError" .= maybe JNull JStr (cmLastError m),
-            "loginMode" .= JStr (cmLoginMode m),
-            "creation" .= creationJson,
-            "renderMode" .= JStr (if cmRenderMode m == ModeWebGL2Ink then "webgl2" else "canvas2d"),
-            "soundOn" .= JBool (cmSoundOn m),
-            "lookStyle" .= JStr (if cmLookStyle m == LookMaiden then "maiden" else "ponytail"),
-            "inBattle" .= JBool (cmInBattle m),
-            "storyActive" .= JBool (cmStoryActive m),
-            "stageEventId" .= JStr stageEventId,
-            "desktopDrawer" .= JStr (cmDesktopDrawer m),
-            "charSubTab" .= JStr (cmCharSubTab m),
-            "mobileTab" .= JStr (cmMobileTab m),
-            "unreadLogs" .= JNum (fromIntegral (cmUnreadLogs m)),
-            "selectedNpc" .= maybe JNull JStr (cmSelectedNpc m),
-            "mapName"
-              .= JStr
-                ( case cmMapOverview m of
-                    Just mo
-                      | T.null (cmRoomName m)
-                          || any (\r -> mrPos r == moCurrentPos mo && mrRoomName r == cmRoomName m) (moRooms mo) ->
-                          moMapName mo
-                    _ -> ""
-                ),
-            "mapPanned" .= JBool (isCameraPanned m),
-            "roomName" .= JStr (cmRoomName m),
-            "roomDesc" .= JStr (cmRoomDesc m),
-            "portrait" .= JStr (portraitScoreFile (psAppearance st)),
-            "genderLabel" .= JStr (tr loc ("gender." <> psGender st)),
-            "appearance" .= JNum (fromIntegral (psAppearance st)),
-            "appearanceText" .= JStr (psAppearanceText st),
-            "hp" .= JNum (fromIntegral presHp),
-            "maxHp" .= JNum (fromIntegral presMaxHp),
-            "qi" .= JNum (fromIntegral presQi),
-            "maxQi" .= JNum (fromIntegral presMaxQi),
-            "jing" .= JNum (fromIntegral (psJing st)),
-            "maxJing" .= JNum (fromIntegral (psMaxJing st)),
-            "enemyName" .= JStr (maybe "对手" (cbName . bsEnemy) (cmBattleSnap m)),
-            "enemyHp" .= JNum (fromIntegral enemyHp),
-            "enemyMaxHp" .= JNum (fromIntegral enemyMaxHp),
-            "enemyQi" .= JNum (fromIntegral enemyQi),
-            "enemyMaxQi" .= JNum (fromIntegral enemyMaxQi),
-            "money" .= JNum (fromIntegral (cmMoney m)),
-            "potential" .= JNum (fromIntegral (psPotential st)),
-            "combatExp" .= JNum (fromIntegral (psCombatExp st)),
-            "strength" .= JNum (fromIntegral (psStrength st)),
-            "agility" .= JNum (fromIntegral (psAgility st)),
-            "vitality" .= JNum (fromIntegral (psVitality st)),
-            "injuredSec" .= JNum (fromIntegral liveInjured),
-            "combatInsight" .= JNum (fromIntegral (psCombatInsight st)),
-            "busy" .= busyVal,
-            "npcs"
-              .= JArr
-                [ jObj
-                    [ "id" .= JStr (rcId c),
-                      "name" .= JStr (rcName c),
-                      "desc" .= JStr (rcDesc c),
-                      "actions" .= JArr (map JStr (rcActions c)),
-                      "teaches"
-                        .= JArr
-                          [ jObj ["id" .= JStr (taId t), "name" .= JStr (taName t), "maxLevel" .= JNum (fromIntegral (taMaxLevel t))]
-                            | t <- rcTeaches c
-                          ],
-                      "shop"
-                        .= JArr
-                          [ jObj ["id" .= JStr (siId s), "name" .= JStr (siName s), "price" .= JNum (fromIntegral (siPrice s))]
-                            | s <- rcShop c
-                          ]
-                    ]
-                  | c <- cmRoomChars m
-                ],
-            "skills"
-              .= JArr
-                [ let cdRem = max 0.0 (fromMaybe 0.0 (M.lookup (asId sk) cds) - cdAgeSec)
-                      apCur = maybe 0 (cbAp . bsPlayer) (cmBattleSnap m)
-                      hasReqs = all (\reqId -> any (\ef -> efId ef == reqId && efRemaining ef - cdAgeSec > 0.05) pEffects) (asReqStatus sk)
-                      ready = cdRem <= 0.05 && presQi >= asCost sk && apCur >= asApReq sk && hasReqs
-                      queued = bsPendingSkillId bs == Just (asId sk)
-                   in jObj
-                        [ "id" .= JStr (asId sk),
-                          "name" .= JStr (asName sk),
-                          "desc" .= JStr (asDesc sk),
-                          "cost" .= JNum (fromIntegral (asCost sk)),
-                          "ap" .= JNum (fromIntegral (asApReq sk)),
-                          "cdRem" .= JNum cdRem,
-                          "cdTotal" .= JNum (max 1.0 (asCooldown sk)),
-                          "ready" .= JBool ready,
-                          "queued" .= JBool queued
-                        ]
-                  | Just bs <- [cmBattleSnap m],
-                    let cds = bsCooldowns bs,
-                    sk <- bsActiveSkills bs
-                ],
-            "arts"
-              .= JArr
-                [ let blkTxt = case aiBlocker a of
-                        Just "combat_exp" -> trParams loc "art.blocker.combat_exp" [("required", T.pack (show (aiNextCombatExp a)))]
-                        Just "foundation" -> tr loc "art.blocker.foundation"
-                        Just "max_level" -> tr loc "art.blocker.max_level"
-                        _ -> ""
-                      canRes = not (aiIsFoundation a) && aiLevel a >= aiResearchFrom a && aiLevel a < aiMaxLevel a
-                   in jObj
-                        [ "id" .= JStr (aiId a),
-                          "name" .= JStr (aiName a),
-                          "typeRaw" .= JStr (aiType a),
-                          "typeLabel" .= JStr (formatArtType loc (aiType a)),
-                          "rank" .= JStr (artRankTitle loc (aiLevel a)),
-                          "levelText" .= JStr (trParams loc "art.level" [("level", T.pack (show (aiLevel a))), ("max", T.pack (show (aiMaxLevel a)))]),
-                          "progress" .= JNum (fromIntegral (aiProgress a)),
-                          "nextProgress" .= JNum (fromIntegral (aiNextProgress a)),
-                          "foundation" .= JBool (aiIsFoundation a),
-                          "enabled" .= JBool (aiEnabled a),
-                          "maxed" .= JBool (aiBlocker a == Just "max_level"),
-                          "canResearch" .= JBool canRes,
-                          "blocker" .= JStr blkTxt,
-                          "moves" .= JStr (T.intercalate " / " (aiUnlockedMoves a <> aiUnlockedSkills a))
-                        ]
-                  | a <- cmArts m
-                ],
-            "inventory"
-              .= JArr
-                [ jObj
-                    [ "id" .= JStr (iiId it),
-                      "name" .= JStr (iiName it),
-                      "amount" .= JNum (fromIntegral (iiAmount it)),
-                      "usable" .= JBool (iiUsable it),
-                      "studyable" .= JBool (iiStudyable it),
-                      "equipped" .= JBool (iiEquipped it),
-                      "hasSlot" .= JBool (isJust (iiEquipSlot it))
-                    ]
-                  | it <- cmInventory m
-                ],
-            "quests"
-              .= JArr
-                [ jObj
-                    [ "name" .= JStr (qiName q),
-                      "objective" .= maybe (JStr "") JStr (qiObjective q),
-                      "done" .= JBool (qiCompleted q),
-                      "rewards" .= JStr (T.intercalate ", " [rwName r <> " ×" <> T.pack (show (rwAmount r)) | r <- qiRewards q])
-                    ]
-                  | q <- cmQuests m
-                ],
-            "logs"
-              .= JArr
-                [ jObj
-                    [ "id" .= JNum (fromIntegral (llId l)),
-                      "kind" .= JStr (llKind l),
-                      "text" .= JStr (llText l)
-                    ]
-                  | l <- cmLogs m
-                ],
-            "labActions" .= JArr labActions,
-            "labPaused" .= JBool (cmLabPaused m),
-            "labSpeed" .= JNum (cmLabSpeed m),
-            "labElapsedMs" .= JNum (cmTimelineElapsedMs m),
-            "labDurationMs" .= JNum (maybe 0 tlDurationMs (cmActiveTimeline m))
           ]
