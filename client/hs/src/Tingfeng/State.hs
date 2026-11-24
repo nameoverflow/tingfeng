@@ -1540,11 +1540,15 @@ evalSkillState m = case cmBattleSnap m of
           | sk <- bsActiveSkills bs
         ]
 
-portraitScoreFile :: Int -> Text
-portraitScoreFile app =
+portraitScoreFile :: Text -> Int -> Text
+portraitScoreFile gender app =
   let evenScore = max 0 (min 10 (((app + 1) `div` 2) * 2))
       twoDigit = if evenScore < 10 then "0" <> T.pack (show evenScore) else T.pack (show evenScore)
-   in "beauty-score-" <> twoDigit
+      prefix = case gender of
+        "female" -> "beauty-female-"
+        "male" -> "beauty-male-"
+        _ -> "beauty-score-"
+   in prefix <> twoDigit
 
 buildLabStateJson :: ClientModel -> Text
 buildLabStateJson m =

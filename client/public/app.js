@@ -13,12 +13,14 @@ globalThis.__tfHsReady = new Promise((r) => { resolveWasmReady = r; });
 
 // --- 1. Preload Portrait Images for Canvas2D IMG Command ---
 const portraitImages = new Map();
-for (const key of ["00", "02", "04", "06", "08", "10"]) {
-  const id = `beauty-score-${key}`;
-  const img = new Image();
-  img.decoding = "async";
-  img.src = `/portraits/${id}.png`;
-  portraitImages.set(id, img);
+for (const prefix of ["beauty-female-", "beauty-male-", "beauty-score-"]) {
+  for (const key of ["00", "02", "04", "06", "08", "10"]) {
+    const id = `${prefix}${key}`;
+    const img = new Image();
+    img.decoding = "async";
+    img.src = `/portraits/${id}.png`;
+    portraitImages.set(id, img);
+  }
 }
 
 // --- 2. Self-contained WASI preview1 shim ---
