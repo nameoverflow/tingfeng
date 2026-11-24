@@ -155,6 +155,7 @@ data ClientModel = ClientModel
     cmRoomChars :: ![RoomChar],
     cmRoomExits :: ![RoomExit],
     cmMapOverview :: !(Maybe MapOverview),
+    cmMapCache :: !(M.Map Text MapOverview),
     cmRequestedInit :: !Bool,
     -- Camera & Map Pan/Zoom
     cmCamX :: !Double,
@@ -298,6 +299,7 @@ initClientModel page lib cat w h reduced =
       cmRoomChars = [],
       cmRoomExits = [],
       cmMapOverview = Nothing,
+      cmMapCache = M.empty,
       cmRequestedInit = False,
       cmCamX = 0,
       cmCamY = 0,
@@ -700,12 +702,18 @@ applyServerMessageNow msg m0 = case msg of
     let txt = if cmLocale m0 == Zh then "你进入了【" <> dst <> "】。" else "Entered [" <> dst <> "]."
      in (pushLog "move" txt (m0 {cmPanX = 0, cmPanY = 0}), [])
   SmView rName rDesc chars exits ->
-    let nextMo = case cmMapOverview m0 of
-          Just mo ->
-            case find (\r -> mrRoomName r == rName) (moRooms mo) of
-              Just r -> Just (mo {moCurrentPos = mrPos r})
-              Nothing -> Just mo
-          Nothing -> Nothing
+    let findInMo mo = (\r -> mo {moCurrentPos = mrPos r}) <$> find (\r -> mrRoomName r == rName) (moRooms mo)
+        (nextMo, switchedMap) = case cmMapOverview m0 of
+          Just mo -> case findInMo mo of
+            Just mo' -> (Just mo', False)
+            Nothing ->
+              case listToMaybe [mo' | cached <- M.elems (cmMapCache m0), Just mo' <- [findInMo cached]] of
+                Just mo' -> (Just mo', True)
+                Nothing -> (Just mo, False)
+          Nothing ->
+            case listToMaybe [mo' | cached <- M.elems (cmMapCache m0), Just mo' <- [findInMo cached]] of
+              Just mo' -> (Just mo', True)
+              Nothing -> (Nothing, False)
         m1 =
           updateCameraTarget $
             m0
@@ -720,19 +728,25 @@ applyServerMessageNow msg m0 = case msg of
                 cmSelectedNpc = Nothing,
                 cmUiDirty = True
               }
+        m2 = if switchedMap then m1 {cmCamX = cmTargetCamX m1, cmCamY = cmTargetCamY m1, cmCamVx = 0, cmCamVy = 0} else m1
         cmds =
-          if not (cmRequestedInit m1)
+          if not (cmRequestedInit m2)
             then
               [ CmdSendWs (encodePlayerAction (ActOther "map")),
                 CmdSendWs (encodePlayerAction (ActOther "quests")),
                 CmdSendWs (encodePlayerAction (ActOther "inventory")),
                 CmdSendWs (encodePlayerAction (ActOther "arts"))
               ]
-            else [CmdSendWs (encodePlayerAction (ActOther "map"))]
-     in (m1 {cmRequestedInit = True}, cmds)
+            else
+              -- Only request full map overview if we haven't cached this map yet
+              if switchedMap || fmap moMapId nextMo /= fmap moMapId (cmMapOverview m0) || isNothing (nextMo >>= findInMo)
+                then [CmdSendWs (encodePlayerAction (ActOther "map"))]
+                else []
+     in (m2 {cmRequestedInit = True}, cmds)
   SmMapOverview mo ->
     let mapChanged = fmap moMapId (cmMapOverview m0) /= Just (moMapId mo)
-        m1 = updateCameraTarget (m0 {cmMapOverview = Just mo, cmUiDirty = True})
+        cache' = M.insert (moMapId mo) mo (cmMapCache m0)
+        m1 = updateCameraTarget (m0 {cmMapOverview = Just mo, cmMapCache = cache', cmUiDirty = True})
         m2 = if mapChanged then m1 {cmCamX = cmTargetCamX m1, cmCamY = cmTargetCamY m1, cmCamVx = 0, cmCamVy = 0} else m1
      in (m2, [])
   SmAttack atk def ->

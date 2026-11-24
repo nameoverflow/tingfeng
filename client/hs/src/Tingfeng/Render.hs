@@ -324,38 +324,39 @@ buildMapStage m =
                 length allNodes * 3 + 8
               )
         _ ->
-          -- Radial 8-direction woodblock fallback around current room
+          -- Radial 8-direction fallback aligned 1:1 with real grid spacing so first-time map load never jumps
           let cx = w * 0.5 + cmPanX m
-              cy = (if isMobile then h * 0.45 else h * 0.44) + cmPanY m
+              cy = (if isMobile then h * 0.46 else h * 0.45) + cmPanY m
               rName = if T.null (cmRoomName m) then tr loc "app.title" else cmRoomName m
               curW = max 92.0 (fromIntegral (T.length rName) * 15.5 + 30.0)
               curCmd =
-                "CI|" <> f1 cx <> "|" <> f1 cy <> "|" <> f1 (26.0 * pulse) <> "||#946623|1.4|0.34\n"
-                  <> "RR|" <> f1 (cx - curW * 0.5) <> "|" <> f1 (cy - 18.0) <> "|" <> f1 curW <> "|36|3|#1e1a16|#946623|2.0|0.97\n"
-                  <> "CI|" <> f1 (cx - curW * 0.5 + 9.0) <> "|" <> f1 cy <> "|2.8|#a32c22||0|0.95\n"
-                  <> "TX|" <> f1 (cx + 3.0) <> "|" <> f1 (cy + 5.2) <> "|14|700|center|#f7f1e3|1|" <> sanitize rName <> "\n"
-              spanDist = if isMobile then 104.0 else 156.0
+                "CI|" <> f1 cx <> "|" <> f1 cy <> "|" <> f1 (24.0 * pulse * effZoom) <> "||#b89552|1.0|0.28\n"
+                  <> "CARD|" <> f1 (cx - curW * 0.5) <> "|" <> f1 (cy - 17.5) <> "|" <> f1 curW <> "|35|3|#1c1915|#b89552|1.1|0.98|3|14|1\n"
+                  <> "CI|" <> f1 (cx - curW * 0.5 + 10.0) <> "|" <> f1 cy <> "|2.5|#b33529||0|0.95\n"
+                  <> "TXS|" <> f1 (cx + 3.0) <> "|" <> f1 (cy + 5.0) <> "|13.5|700|center|#f8f4eb|1|" <> sanitize rName <> "\n"
               exits =
                 [ let d = reDirection ex
-                      (vx, vy) = directionVec d
-                      exX = cx + vx * spanDist * zoom
-                      exY = cy + vy * (spanDist * 0.78) * zoom
-                      ew = max 78.0 (fromIntegral (T.length (reRoomName ex)) * 13.4 + 24.0)
+                      (dgx, dgy) = directionGridDelta d
+                      (wx, wy) = worldPosFromGrid (dgx, dgy)
+                      exX = cx + wx * effZoom
+                      exY = cy + wy * effZoom
+                      ew = max 74.0 (fromIntegral (T.length (reRoomName ex)) * 13.8 + 26.0)
                       eh = 30.0
                       rx = exX - ew * 0.5
                       ry = exY - eh * 0.5
                       hov = cmHovered m == Just (HitExit d)
-                      bg = if hov then "#efe4cc" else "#f8f3e6"
-                      bd = if hov then "#946623" else "#2b594b"
+                      bg = if hov then "#fbf8f1" else "#faf6ee"
+                      bd = if hov then "#9e2a22" else "rgba(42,86,74,0.42)"
                       cmd =
-                        "LN|" <> f1 cx <> "|" <> f1 cy <> "|" <> f1 exX <> "|" <> f1 exY <> "|1.8|#2b594b|0.72|0\n"
-                          <> "RR|" <> f1 rx <> "|" <> f1 ry <> "|" <> f1 ew <> "|" <> f1 eh <> "|3|" <> bg <> "|" <> bd <> "|1.5|0.97\n"
-                          <> "TX|" <> f1 exX <> "|" <> f1 (exY + 4.5) <> "|12|600|center|#1e1a16|1|" <> sanitize (reRoomName ex) <> "\n"
-                          <> "TX|" <> f1 exX <> "|" <> f1 (ry - 5.0) <> "|10.5|700|center|#2b594b|0.92|" <> sanitize (directionLabel loc d) <> "\n"
+                        "LN|" <> f1 cx <> "|" <> f1 cy <> "|" <> f1 exX <> "|" <> f1 exY <> "|1.8|#2a564a|0.72|0\n"
+                          <> "CARD|" <> f1 rx <> "|" <> f1 ry <> "|" <> f1 ew <> "|" <> f1 eh <> "|3|" <> bg <> "|" <> bd <> "|0.9|0.98|3|8|0\n"
+                          <> "RR|" <> f1 (rx + 1.0) <> "|" <> f1 (ry + 5.0) <> "|2.4|20|1|#2a564a||0|0.85\n"
+                          <> "TXS|" <> f1 exX <> "|" <> f1 (exY + 4.4) <> "|12|600|center|#1c1915|1|" <> sanitize (reRoomName ex) <> "\n"
+                          <> "TX|" <> f1 exX <> "|" <> f1 (ry - 6.0) <> "|10|600|center|#2a564a|0.82|" <> sanitize (directionLabel loc d) <> "\n"
                    in (cmd, CanvasHitbox rx ry ew eh (HitExit d) "pointer")
                   | ex <- cmRoomExits m
                 ]
-           in (curCmd <> mconcat (map fst exits), map snd exits, 4 + length exits * 4)
+           in (curCmd <> mconcat (map fst exits), map snd exits, 4 + length exits * 5)
    in (mapB, mapHits, mapCnt)
 
 -- Song-Dynasty Ink-Wash Combat Stage (Deep-Ink Silhouettes on Xuan Paper + Hit-Stop Inversion)
