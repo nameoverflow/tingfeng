@@ -195,6 +195,7 @@ data CombatantSnapshot = CombatantSnapshot
     combatantSnapshotQi :: Int,
     combatantSnapshotMaxQi :: Int,
     combatantSnapshotAp :: Int,
+    combatantSnapshotApProgress :: Double,
     combatantSnapshotAgility :: Int,
     combatantSnapshotEffects :: [EffectSummary]
   }
@@ -207,7 +208,8 @@ data BattleSnapshot = BattleSnapshot
     battleSnapshotEnemy :: CombatantSnapshot,
     battleSnapshotActiveSkillCooldowns :: [ActiveSkillCooldownSummary],
     battleSnapshotActiveSkills :: [ActiveSkillSummary],
-    battleSnapshotActionLockRemaining :: Double
+    battleSnapshotActionLockRemaining :: Double,
+    battleSnapshotPendingActiveSkillId :: Maybe ActiveSkillId
   }
   deriving (Show, Eq, Generic)
 
@@ -526,7 +528,9 @@ data BusySummary = BusySummary
     busySummaryCompleted :: Int,
     busySummaryRemaining :: Int,
     -- | Seconds until the running step finishes.
-    busySummarySeconds :: Double
+    busySummarySeconds :: Double,
+    -- | Total duration in seconds for one step of this training action.
+    busySummaryStepSeconds :: Double
   }
   deriving (Show, Eq, Generic)
 

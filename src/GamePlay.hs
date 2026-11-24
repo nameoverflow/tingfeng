@@ -328,12 +328,20 @@ startStoryBattle pid target initialDelayMs = do
   npc <- getsRoomCharacter pid target Dialogue
   let initialLockSeconds = fromIntegral (max 0 initialDelayMs) / 1000
       battle = newBattle player npc & battleActionLockRemaining .~ initialLockSeconds
-      visibleBattle = battle & battleActionLockRemaining .~ 0
   isolatedBattles %= S.insert pid
   battles . at pid .= Just battle
   players . ix pid . playerStatus .= PlayerInBattle
   tell [(pid, AttackMsg (player ^. playerCharacter . charName) (npc ^. charName))]
-  sendBattleSnapshot pid visibleBattle
+  sendBattleSnapshot pid battle
+
+-- | Push the full initial room, quest, inventory, arts, and map snapshot right after login.
+playerInitialSync :: PlayerId -> GameStateT ()
+playerInitialSync pid = do
+  playerView pid
+  playerQuestLog pid
+  sendPlayerInventory pid
+  playerArts pid
+  playerMapOverview pid
 
 runStoryTrigger :: PlayerId -> StoryTrigger -> GameStateT Bool
 runStoryTrigger pid trigger = do
@@ -879,7 +887,8 @@ busySummary task =
       busySummaryTarget = target,
       busySummaryCompleted = task ^. busyCompleted,
       busySummaryRemaining = task ^. busyRemaining,
-      busySummarySeconds = max 0 (task ^. busyTimer)
+      busySummarySeconds = max 0 (task ^. busyTimer),
+      busySummaryStepSeconds = trainingStepSeconds (task ^. busyAction)
     }
   where
     (actionCode, target) = trainingActionCode (task ^. busyAction)
@@ -1642,8 +1651,17 @@ tickRespawns dt = do
   respawn' <- use respawn
   let (toRespawn, toRemove) = M.partition (> 0) respawn'
   respawn .= toRespawn
+  let revivedIds = S.fromList (M.keys toRemove)
   forM_ (M.keys toRemove) $ \charId -> do
     world . chars . ix charId %= reviveCharacter
+  unless (S.null revivedIds) $ do
+    worldMaps <- use $ world . maps
+    playerList <- M.toList <$> use players
+    forM_ playerList $ \(pid, player) -> do
+      let (curMapId, curPos) = player ^. playerPosition
+          roomChars = fromMaybe [] $ worldMaps ^? ix curMapId . mapRooms . ix curPos . roomChar
+      when (any (`S.member` revivedIds) roomChars) $
+        playerView pid
 
 tickPlayerRecovery :: Double -> GameStateT ()
 tickPlayerRecovery dt = do
@@ -1742,7 +1760,8 @@ sendBattleSnapshot pid battle = do
             battleSnapshotEnemy = battleStateToSnapshot effectDefs (battle ^. battleEnemyState),
             battleSnapshotActiveSkillCooldowns = map cooldownToSummary . M.toList $ battle ^. battleState . battleActiveSkillCooldowns,
             battleSnapshotActiveSkills = availableActiveSkills,
-            battleSnapshotActionLockRemaining = battle ^. battleActionLockRemaining
+            battleSnapshotActionLockRemaining = battle ^. battleActionLockRemaining,
+            battleSnapshotPendingActiveSkillId = fmap (\pending -> pending ^. pendingActiveSkillSkill . activeSkillId) (battle ^. battlePendingActiveSkill)
           }
   tell [(pid, BattleStateMsg snapshot)]
   where
@@ -1759,6 +1778,7 @@ sendBattleSnapshot pid battle = do
               combatantSnapshotQi = state ^. battleQi,
               combatantSnapshotMaxQi = derived ^. dsMaxQi,
               combatantSnapshotAp = state ^. battleAp,
+              combatantSnapshotApProgress = max (state ^. battleApProgress) (fromIntegral (state ^. battleAp)),
               combatantSnapshotAgility = derived ^. dsAgility,
               combatantSnapshotEffects = map (effectToSummary effectDefs) . M.elems $ state ^. battleEffects
             }
@@ -1839,9 +1859,15 @@ updateBattleWith syncPolicy combatTick dt bId = do
   randG <- newStdGen
   (battleOver, battle', bttlMsg) <- runCombat randG ExceptionInCombat wrld battle $ combatTick dt
   tell bttlMsg
-  -- Send updated player stats after combat
+  -- Send updated player stats after combat or whenever a cooldown/effect expires.
   let pid = battle' ^. battleOwner
-  when (syncPolicy == SyncEveryTick || battleOver || not (null bttlMsg)) $
+      cooldownExpired =
+        M.size (battle' ^. battleState . battleActiveSkillCooldowns)
+          < M.size (battle ^. battleState . battleActiveSkillCooldowns)
+      effectExpired =
+        M.size (battle' ^. battleState . battleEffects) < M.size (battle ^. battleState . battleEffects)
+          || M.size (battle' ^. battleEnemyState . battleEffects) < M.size (battle ^. battleEnemyState . battleEffects)
+  when (syncPolicy == SyncEveryTick || battleOver || not (null bttlMsg) || cooldownExpired || effectExpired) $
     sendBattleStats pid battle'
   if battleOver
     then do

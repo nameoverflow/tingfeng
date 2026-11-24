@@ -166,7 +166,7 @@ userLogin user resetPlayer creationChoice conn cm s = do
     logInfo $ "User logged in: " <> user <> if resetPlayer then " (dev reset)" else ""
     logDebug $ "players: " <> toText (show (keys . view players $ s'))
     return s'
-  runAndResponse s cm (playerView user) $ \err -> do
+  runAndResponse s cm (playerInitialSync user) $ \err -> do
     enqueueResp session $ ErrorMsg $ gameExceptionToSummary err
 
 

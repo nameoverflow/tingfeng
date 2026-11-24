@@ -1104,7 +1104,7 @@ testWeiyuanChapterFlow = do
   assert (maybe False ((== CharAlive) . view charStatus) $ M.lookup "temple_black_clad" (inBattle ^. world . chars)) "story battle locked the global NPC"
   startedBattle <- getBattle inBattle
   assert (startedBattle ^. battleActionLockRemaining > 0) "story battle advanced while its opening dialogue was still queued"
-  battleSnapshotIndex <- requireResponseIndex "visible story battle snapshot" (\case BattleStateMsg snapshot -> battleSnapshotActionLockRemaining snapshot == 0; _ -> False) battleStartResponses
+  battleSnapshotIndex <- requireResponseIndex "visible story battle snapshot" (\case BattleStateMsg snapshot -> battleSnapshotActionLockRemaining snapshot == startedBattle ^. battleActionLockRemaining; _ -> False) battleStartResponses
   attackIndex <- requireResponseIndex "story battle attack message" (\case AttackMsg _ _ -> True; _ -> False) battleStartResponses
   assert (attackIndex < battleSnapshotIndex) "story battle snapshot arrived before its attack message"
 
