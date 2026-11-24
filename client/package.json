@@ -9,6 +9,7 @@
     "preview": "node scripts/serve-client.mjs",
     "check": "npm run validate:animations && node scripts/build-wasm.mjs --check",
     "validate:animations": "node scripts/validate-animation-data.mjs",
+    "test:portraits": "node scripts/test-portraits-hs.mjs",
     "test:battle": "node scripts/test-battle-hs.mjs",
     "test:battle:browser": "playwright test",
     "record:battle": "node scripts/record-battle.mjs"

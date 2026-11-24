@@ -1,0 +1,200 @@
+[
+  {
+    "gender": "female",
+    "score": "08",
+    "variant": "02",
+    "spec": "A radiant, confident adult female caravan guard with a warm open smile, a short side-swept fringe and a high compact ponytail held by a large orange fabric tie. Muted blue crossed collar with broad rust-red edge. Near-front, chin slightly lifted."
+  },
+  {
+    "gender": "female",
+    "score": "08",
+    "variant": "03",
+    "spec": "A beautiful mature female swordswoman with a thoughtful, reserved expression, a long oval face and steady eyes. Dark hair in a wide low horizontal coil with one simple silver pin; forest-green high collar. Strictly frontal."
+  },
+  {
+    "gender": "female",
+    "score": "08",
+    "variant": "04",
+    "spec": "A gentle and beautiful female apothecary with a rounded heart-shaped face, soft smile and calm gaze. Hair gathered in a short thick side braid with an ivory tie; pale jade collar edged with cream. Slight top-down near-front view."
+  },
+  {
+    "gender": "male",
+    "score": "08",
+    "variant": "02",
+    "spec": "A handsome carefree male musician with bright laughing eyes, a broad friendly smile, and long dark hair held by a blue cloth headband. Muted teal collar over a rust-colored lapel. Near-front, head tilted playfully."
+  },
+  {
+    "gender": "male",
+    "score": "08",
+    "variant": "03",
+    "spec": "A handsome mature male martial artist with a strong square face, calm dignified gaze and a small confident smile. Dark hair in a compact high knot with one simple grey pin, charcoal collar with muted rust border. Slight low-angle near-front."
+  },
+  {
+    "gender": "male",
+    "score": "08",
+    "variant": "04",
+    "spec": "A handsome easygoing male scholar with an elegant narrow face, gentle intelligent eyes and a thoughtful smile. Thick low side braid tied with a pale green ribbon, cream and blue crossed collar. Turn slightly toward viewer's right."
+  },
+  {
+    "gender": "male",
+    "score": "10",
+    "variant": "02",
+    "spec": "An exceptionally handsome adult male wanderer with a lively warm smile, distinctive rounded diamond face and friendly eyes, conveying charm rather than coldness. Big side-swept dark hair gathered into a short loose ponytail, muted teal collar and ivory scarf edge. Slight top-down front view."
+  },
+  {
+    "gender": "male",
+    "score": "10",
+    "variant": "03",
+    "spec": "An exceptionally handsome mature male hero with a composed gaze, strong cheekbones, slight dignified smile and a broad grey streak painted as one solid shape in dark hair. Hair gathered in a low knot with a simple pale pin; pale ivory and dark green layered collar. Near-front and upright."
+  },
+  {
+    "gender": "male",
+    "score": "10",
+    "variant": "04",
+    "spec": "An exceptionally handsome male rogue with an animated sideways smirk, slightly arched brows and distinctive angular face. High swept-back ponytail bound with a vivid crimson strip, dark purple collar edged in teal. Slight three-quarter turn toward viewer's right."
+  },
+  {
+    "gender": "female",
+    "score": "00",
+    "variant": "02",
+    "spec": "An extremely ugly comic adult female tavern keeper: wide uneven jaw, very short flattened nose, widely spaced small eyes and a crooked open grin, round squarish face. A small low side bun under a green cloth band, faded teal collar. Frontal."
+  },
+  {
+    "gender": "female",
+    "score": "00",
+    "variant": "03",
+    "spec": "An extremely ugly comic adult female wanderer: narrow rectangular face, long jutting lower jaw, one eyebrow higher than the other, broad crooked nose and puckered mouth. Her dark hair is covered by a simple violet kerchief, rust-red collar. Slight top-down view."
+  },
+  {
+    "gender": "female",
+    "score": "00",
+    "variant": "04",
+    "spec": "An extremely ugly comic adult female character with a broad pear-shaped head, disproportionately small eyes, very large crooked mouth and exaggerated long pointed chin. Two little looped side knots with ochre ribbons, grey-blue collar. Frontal."
+  },
+  {
+    "gender": "male",
+    "score": "00",
+    "variant": "02",
+    "spec": "An extremely ugly funny adult male: elongated narrow face, unusually huge hooked nose, short jutting chin, tiny close-set eyes and an awkward closed-mouth grimace; two chunky short ink strokes for a mustache. Small hair knot and slate-blue headband, brown collar. Frontal."
+  },
+  {
+    "gender": "male",
+    "score": "00",
+    "variant": "03",
+    "spec": "An extremely ugly comic male with a wide squared jaw, severely crooked wide nose, tiny deep-set eyes and a large sideways buck-toothed grin. His black hair is gathered in a loose short side knot, muted green collar. Slight top-down view."
+  },
+  {
+    "gender": "male",
+    "score": "00",
+    "variant": "04",
+    "spec": "An extremely ugly comic adult male with an asymmetrical round face, very large ears, broad squashed nose and tiny pursed mouth; heavy uneven brows and bemused expression. A simple ochre cloth headwrap and indigo collar. Frontal."
+  },
+  {
+    "gender": "female",
+    "score": "02",
+    "variant": "02",
+    "spec": "A distinctly ugly but humorous female peddler with a pear-shaped face, slightly crossed small eyes, broad short nose and a crooked toothy smile. Hair in a high tight ponytail with red cloth tie, faded brown collar. Slight near-front turn right."
+  },
+  {
+    "gender": "female",
+    "score": "02",
+    "variant": "03",
+    "spec": "A distinctly ugly comic female herbalist with a long rectangular face, heavy horizontal brows, small lidded eyes and an awkward protruding chin. Black hair in a compact high knot with a pale headband, sage-green crossed collar. Frontal."
+  },
+  {
+    "gender": "female",
+    "score": "02",
+    "variant": "04",
+    "spec": "A distinctly ugly mischievous female traveler with a broad crooked nose, uneven smile, pronounced round cheeks and slightly uneven eyes. Hair wrapped in a simple purple scarf with one thick side lock, dusty rose collar. Slight top-down near-front."
+  },
+  {
+    "gender": "male",
+    "score": "02",
+    "variant": "02",
+    "spec": "A distinctly ugly comic male innkeeper with an almost square face, wide upturned nose, large ears and an awkward crooked grin. Dark hair in a low knot with a rust-colored tie and a slate-grey collar. Frontal."
+  },
+  {
+    "gender": "male",
+    "score": "02",
+    "variant": "03",
+    "spec": "A distinctly ugly but friendly-looking male messenger with a very long face, narrow chin, uneven brows and protruding front teeth. Simple dark headband with short side ponytail, muted ochre collar. Slight near-front turn left."
+  },
+  {
+    "gender": "male",
+    "score": "02",
+    "variant": "04",
+    "spec": "A distinctly ugly comic male cook with a broad round face, low-set eyes, prominent flattened nose and a sheepish mouth. Hair gathered beneath a blue cloth cap, muted burgundy collar. Near-front, chin slightly lifted."
+  },
+  {
+    "gender": "female",
+    "score": "04",
+    "variant": "02",
+    "spec": "A pleasant, ordinary adult female messenger with a lightly square face, small upturned nose and lively smile. Thick short ponytail tied with a red ribbon, deep blue collar. Slight near-front turn right."
+  },
+  {
+    "gender": "female",
+    "score": "04",
+    "variant": "03",
+    "spec": "A pleasant ordinary adult female martial apprentice with an oval face, level brows, steady alert eyes and a small smile. Dark hair tucked beneath a simple pale blue headcloth, jade-green crossed collar. Frontal."
+  },
+  {
+    "gender": "female",
+    "score": "04",
+    "variant": "04",
+    "spec": "A friendly mature female merchant with a rounded face, kind small eyes and warm closed-mouth smile. Dark hair in a low wide coil tied with cream cloth, muted ochre collar with wine-red edge. Slight top-down front view."
+  },
+  {
+    "gender": "male",
+    "score": "04",
+    "variant": "02",
+    "spec": "An ordinary pleasant male messenger with a rounded face, broad sincere grin and lively small eyes. Dark hair under a compact blue cloth headband, muted rust-red collar. Slight low-angle near-front."
+  },
+  {
+    "gender": "male",
+    "score": "04",
+    "variant": "03",
+    "spec": "An ordinary pleasant adult male farmer with a wide face, straight brows and a kind smile. Dark short tied hair gathered into a tiny high knot, muted olive collar. Frontal."
+  },
+  {
+    "gender": "male",
+    "score": "04",
+    "variant": "04",
+    "spec": "An ordinary pleasant mature male merchant with a longer face, calm eyes, friendly smile and one chunky short mustache stroke. A low black hair coil with a simple ivory tie, dark teal collar. Near-front slight turn left."
+  },
+  {
+    "gender": "female",
+    "score": "06",
+    "variant": "02",
+    "spec": "An attractive and cheerful adult female traveler with a round face, bright eyes and playful smile. Hair pulled into a compact high side ponytail with a large ochre ribbon, indigo collar. Slight top-down front view."
+  },
+  {
+    "gender": "female",
+    "score": "06",
+    "variant": "03",
+    "spec": "An attractive female martial apprentice with a strong square-oval face, confident gaze and restrained smile. Hair swept into a short low knot with a green cloth band, muted wine-red high collar. Frontal."
+  },
+  {
+    "gender": "female",
+    "score": "06",
+    "variant": "04",
+    "spec": "An attractive mature female tea merchant with soft cheeks, intelligent calm eyes and a gentle open smile. Hair arranged in a broad horizontal loop, pale jade clip and blue-green collar. Near-front slight turn right."
+  },
+  {
+    "gender": "male",
+    "score": "06",
+    "variant": "02",
+    "spec": "An attractive and gregarious adult male inn worker with a round face, open warm grin and expressive brows. Short dark hair under a rust-red headcloth, slate-blue collar. Near-front slight low angle."
+  },
+  {
+    "gender": "male",
+    "score": "06",
+    "variant": "03",
+    "spec": "An attractive reserved male bookkeeper with a slender face, soft intelligent eyes and quiet smile. Dark hair in a low side knot with a cream tie, muted olive crossed collar. Slight three-quarter turn left."
+  },
+  {
+    "gender": "male",
+    "score": "06",
+    "variant": "04",
+    "spec": "An attractive mature male martial teacher with a strong jaw, kind direct eyes and a broad grey streak painted as one simple ink shape. Dark hair held by a plain black band, deep blue and ivory collar. Frontal."
+  }
+]

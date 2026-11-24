@@ -17,10 +17,11 @@ description: Generate, compare, or QA this wuxia MUD's ink-and-paper character p
   angle templates, score semantics and visual rejection gates. Inspect relevant
   v4 originals with `view_image`; a full-set comparison needs all six anchors,
   individually or in a contact sheet.
-- For a v7-style derivative, use the current palette and score guidance in
-  `docs/character-portrait-style.md`: v7 uses pale grey-ivory paper and more
-  appealing middle tiers. V4's aged-tan palette and score targets remain
-  historical reference guidance for v4-style work.
+- For a v8-style derivative, use the current palette and score guidance in
+  `docs/character-portrait-style.md`: pale grey-ivory paper, low-detail bold
+  brushwork, hair as broad ink masses rather than individual strands, appealing
+  middle tiers and diverse faces, ages, expressions and clothing. V4's
+  aged-tan palette and score targets remain historical reference guidance.
 - New portraits must retain square head-and-collar framing, parchment background,
   face/angle diversity and the reference's upper-body limits. Do not conceal a
   generation failure by cropping, blurring, painting or downsampling the original.

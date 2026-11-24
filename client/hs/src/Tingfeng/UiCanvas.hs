@@ -460,7 +460,7 @@ buildCreateBody m zh cardX pad innerW y0 =
                       tB = cmdSerif x0 (y1 + 16) 17 "700" "left" "#1e1a16" 1 (if zh then "入世预览" else "Character Preview")
                       pCard =
                         cmdRect x0 (y1 + 28) innerW 84 3 "#efe7d4" "#c5b9a0" 1.1 0.98
-                          <> cmdImg (portraitScoreFile (ccGender cc) (cbAppearance tot)) (x0 + 10) (y1 + 38) 64 64 3
+                          <> cmdImg (portraitScoreFile (ccGender cc) (cbAppearance tot) (cmUsername m)) (x0 + 10) (y1 + 38) 64 64 3
                           <> cmdSerif (x0 + 86) (y1 + 58) 16 "700" "left" "#1e1a16" 1 (if T.null (cmUsername m) then "无名客" else cmUsername m)
                           <> cmdTx (x0 + 86) (y1 + 80) 12 "500" "left" "#5c5346" 1
                                ("臂力 " <> T.pack (show (cbStrength tot)) <> " · 身法 " <> T.pack (show (cbAgilityValue tot)) <> " · 根骨 " <> T.pack (show (cbVitality tot)))
@@ -553,7 +553,7 @@ drawDesktopHeader m =
       pillBd = if pillActive then "rgba(168,125,56,0.45)" else "transparent"
       pillB =
         (if pillBg /= "transparent" then cmdRect 14 7 pillW 38 3 pillBg pillBd (if pillActive then 0.9 else 0) 1 else mempty)
-          <> cmdImg (portraitScoreFile (psGender st) (psAppearance st)) 19 11 30 30 3
+          <> cmdImg (portraitScoreFile (psGender st) (psAppearance st) (cmUsername m)) 19 11 30 30 3
           <> cmdSerif 56 22 13 "700" "left" "#1c1915" 1 (truncateText 96 13 (cmUsername m))
           <> cmdBar 56 28 88 4 1.5 (max 0 (min 1 hpPct)) 0 "#8e241c" "#bc3f32" ""
           <> cmdBar 56 35 88 3.5 1.5 (max 0 (min 1 qiPct)) 0 "#224a3f" "#3c7564" ""
@@ -1111,7 +1111,7 @@ buildCharDrawerBody m zh x0 y0 w =
               pEffs = liveEffectsOf m True
               heroCard =
                 cmdRect x0 y0 w 84 3 "#efe7d4" "#c5b9a0" 1 1
-                  <> cmdImg (portraitScoreFile (psGender st) (psAppearance st)) (x0 + 10) (y0 + 10) 64 64 3
+                  <> cmdImg (portraitScoreFile (psGender st) (psAppearance st) (cmUsername m)) (x0 + 10) (y0 + 10) 64 64 3
                   <> cmdSerif (x0 + 84) (y0 + 28) 15.5 "700" "left" "#1e1a16" 1 (cmUsername m)
                   <> cmdTx (x0 + 84) (y0 + 47) 12 "400" "left" "#5c5346" 1 (tr (cmLocale m) ("gender." <> psGender st) <> " · " <> (if T.null (psAppearanceText st) then "容貌 " <> T.pack (show (psAppearance st)) else psAppearanceText st))
                   <> (if liveInj > 0 then cmdTx (x0 + 84) (y0 + 66) 11.5 "700" "left" "#a32c22" 1 ("重伤未愈 " <> T.pack (show liveInj) <> "s") else if psCombatInsight st > 0 then cmdTx (x0 + 84) (y0 + 66) 11.5 "600" "left" "#2b594b" 1 ("实战印证 " <> T.pack (show (psCombatInsight st)) <> " 层") else mempty)

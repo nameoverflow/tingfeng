@@ -1,0 +1,7 @@
+# V8 coarse-ink portrait QA
+
+User feedback on v7 called for less fine detail and no individually drawn hair strands, with more than one distinct character in every tier. The 48 v8 originals were generated or edited individually using the built-in image-generation tool. Scores 0, 2, 4, 6, 8 and 10 have four variants for each gender; personality, face, expression, age, hair silhouette and clothing vary rather than repeating a fixed template. V7 originals remain intact.
+
+The female and male contact sheets were inspected at full size and the game portraits inspected in the 30/64 px UI. Hair uses broad ink masses with sparse coarse edges, on pale grey-ivory paper. The 0/2 faces are deliberately comic and unattractive; 4/6 are pleasant; 8/10 are more idealized. Five candidates were regenerated after review because a female portrait appeared masculine, a middle-tier male read as too comic, and three high-tier characters were too similar or insufficiently attractive.
+
+The QA manifests record all 48 sources as 1254×1254. A reduced-resolution edge scan found no substantial dark subject pixels touching image borders. Client copies were mechanically resized to 512×512. `npm --prefix client run test:portraits` checked score rounding, stable name-based selection, old-save fallback and all 48 asset paths; the client build and typecheck passed. Browser checks exercised four variants for both genders in creation preview, confirmed reloading the same name gives the same portrait, verified on-demand image loading, and inspected both genders in the character panel.

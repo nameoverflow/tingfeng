@@ -11,16 +11,17 @@ const reducedMotionQuery = matchMedia("(prefers-reduced-motion: reduce)");
 let resolveWasmReady = null;
 globalThis.__tfHsReady = new Promise((r) => { resolveWasmReady = r; });
 
-// --- 1. Preload Portrait Images for Canvas2D IMG Command ---
+// --- 1. Load portrait images on demand for Canvas2D IMG commands ---
 const portraitImages = new Map();
-for (const prefix of ["beauty-female-", "beauty-male-", "beauty-score-"]) {
-  for (const key of ["00", "02", "04", "06", "08", "10"]) {
-    const id = `${prefix}${key}`;
-    const img = new Image();
+function portraitImage(id) {
+  let img = portraitImages.get(id);
+  if (!img) {
+    img = new Image();
     img.decoding = "async";
     img.src = `/portraits/${id}.png`;
     portraitImages.set(id, img);
   }
+  return img;
 }
 
 // --- 2. Self-contained WASI preview1 shim ---
@@ -386,7 +387,7 @@ function executeFrameBatch(batchStr) {
         break;
       }
       case "IMG": {
-        const img = portraitImages.get(p[1]);
+        const img = portraitImage(p[1]);
         const x = +p[2], y = +p[3], w = +p[4], h = +p[5], r = +p[6];
         ctx.save();
         ctx.beginPath();

@@ -4,9 +4,9 @@ This document is the project-facing summary for character avatar portraits. The 
 
 ## Current State
 
-Current game set: `wuxia-avatar-beauty-scale-v7` (female and male, scores 0, 2, 4, 6, 8 and 10). The full-size originals are in `docs/assets/character-portraits/wuxia-avatar-beauty-scale-v7/originals/`. Derived 512×512 game assets are in `client/public/portraits/`.
+Current game set: `wuxia-avatar-beauty-scale-v8` (female and male, scores 0, 2, 4, 6, 8 and 10, with four different characters per gender and score). Full-size originals are in `docs/assets/character-portraits/wuxia-avatar-beauty-scale-v8/originals/`; derived 512×512 game images are in `client/public/portraits/`.
 
-The creation preview, desktop header and character panel select portraits by gender and the existing even-score mapping (odd scores round up; scores are clamped to 0–10). Unknown gender retains the previous score-only portrait.
+The creation preview, desktop header and character panel select portraits by gender and the existing even-score mapping (odd scores round up; scores are clamped to 0–10). For a given name, the variant is chosen deterministically and stays the same across reloads. Old saves without a gender use the new style with the earlier score-only fallback's presentation: male-looking 0/2 and female-looking 4/6/8/10. The client loads portrait images on demand instead of preloading all variants.
 
 The v4 reference originals remain locked in:
 
@@ -16,7 +16,13 @@ Do not crop, redraw, downsample, overwrite, or replace the v4 originals unless t
 
 Only full-size originals are stored as canonical assets. Thumbnail folders, contact sheets, preview grids, and rejected candidates are disposable QA artifacts and should not be treated as source assets.
 
-## V7 Game Originals
+## V8 Game Originals
+
+Files use `beauty-<gender>-<score>-<variant>-source.png`, where gender is `female` or `male`, score is `00`, `02`, `04`, `06`, `08`, or `10`, and variant is `01`–`04`. Game copies use `beauty-v8-<gender>-<score>-<variant>.png`. Each character has its own face, expression, hair silhouette and clothing; variants are not assigned a fixed set of personality labels.
+
+The generation prompts, brush sample, contact sheets and QA notes are under `harness/portrait-generation/jobs/v8-coarse-ink/`.
+
+## Previous V7 Originals
 
 | Score | Female | Male |
 | --- | --- | --- |
@@ -27,7 +33,7 @@ Only full-size originals are stored as canonical assets. Thumbnail folders, cont
 | 8 | [Original](./assets/character-portraits/wuxia-avatar-beauty-scale-v7/originals/beauty-female-08-source.png) | [Original](./assets/character-portraits/wuxia-avatar-beauty-scale-v7/originals/beauty-male-08-source.png) |
 | 10 | [Original](./assets/character-portraits/wuxia-avatar-beauty-scale-v7/originals/beauty-female-10-source.png) | [Original](./assets/character-portraits/wuxia-avatar-beauty-scale-v7/originals/beauty-male-10-source.png) |
 
-The generation prompts, contact sheet and QA notes are under `harness/portrait-generation/jobs/v7-unified/`.
+The v7 generation prompts, contact sheet and QA notes remain under `harness/portrait-generation/jobs/v7-unified/`.
 
 ## Locked V4 Originals
 
@@ -45,8 +51,8 @@ The generation prompts, contact sheet and QA notes are under `harness/portrait-g
 - Square `1:1` parchment avatar portrait.
 - Rough old Chinese wuxia mobile-game portrait feeling.
 - Thick uneven black ink brush lines, dry-brush texture, controlled roughness.
-- Muted watercolor wash on pale, low-saturation grey-ivory rice paper in v7; the locked v4 references use aged tan paper.
-- Moderate detail: expressive faces, broad ink hair masses, restrained costume folds and accessories.
+- Muted flat watercolor on pale, low-saturation grey-ivory rice paper in v8; the locked v4 references use aged tan paper.
+- Low detail: broad solid ink hair masses, not individually drawn strands; sparse, expressive facial marks and a few bold costume folds.
 - Jianghu clothing only: cloth robes, collars, scarves, simple hairpins, small weapon hints when needed.
 - No UI frame, text, watermark, logo, scenery, modern props, 3D render, photorealism, polished anime cleanup, or ornate fantasy armor.
 
@@ -92,7 +98,7 @@ Use the prompt template and strict blocks in:
 
 `.codex/skills/wuxia-avatar-portrait-pipeline/references/v4-style-lock.md`
 
-Use the strict composition and angle blocks in that reference, with the current v7 palette and score guidance above when making a v7-style derivative. Every new prompt should include:
+Use the strict composition and angle blocks in that reference, with the current v8 palette, coarse detail level and score guidance above when making a v8-style derivative. Every new prompt should include:
 
 - `STRICT COMPOSITION`
 - one applicable `STRICT ANGLE` block
@@ -109,5 +115,7 @@ Use the project skill QA script for canonical sets:
 ```
 
 Inspect the contact sheet and any questionable image manually. Reject or regenerate if the portrait fails square-ratio, crop safety, rough brushwork, head-and-collar framing, upper-body limits, angle diversity, face diversity, or score/personality intent.
+
+Run `npm --prefix client run test:portraits` to check score rounding, stable variant selection and the presence of all 48 game images.
 
 Do not document local generated-image cache paths or temporary paths. Project docs should use repository-relative paths only.

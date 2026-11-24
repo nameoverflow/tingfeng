@@ -1540,15 +1540,19 @@ evalSkillState m = case cmBattleSnap m of
           | sk <- bsActiveSkills bs
         ]
 
-portraitScoreFile :: Text -> Int -> Text
-portraitScoreFile gender app =
+portraitScoreFile :: Text -> Int -> Text -> Text
+portraitScoreFile gender app playerName =
   let evenScore = max 0 (min 10 (((app + 1) `div` 2) * 2))
       twoDigit = if evenScore < 10 then "0" <> T.pack (show evenScore) else T.pack (show evenScore)
-      prefix = case gender of
-        "female" -> "beauty-female-"
-        "male" -> "beauty-male-"
-        _ -> "beauty-score-"
-   in prefix <> twoDigit
+      variant = 1 + T.foldl' (\acc ch -> (acc * 31 + fromEnum ch) `mod` 4) 0 (T.strip playerName)
+      variantText = "-0" <> T.pack (show variant)
+      portraitGender = case gender of
+        "female" -> "female"
+        "male" -> "male"
+        -- Old saves without a gender used male-looking 0/2 and female-looking
+        -- 4/6/8/10 portraits. Preserve that fallback while using the new style.
+        _ -> if evenScore <= 2 then "male" else "female"
+   in "beauty-v8-" <> portraitGender <> "-" <> twoDigit <> variantText
 
 buildLabStateJson :: ClientModel -> Text
 buildLabStateJson m =
