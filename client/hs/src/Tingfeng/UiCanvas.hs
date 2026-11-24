@@ -58,6 +58,17 @@ f2 !v =
 san :: Text -> B.Builder
 san = B.fromText . T.map (\c -> if c == '|' || c == '\n' || c == '\r' then ' ' else c)
 
+cmdCard :: Double -> Double -> Double -> Double -> Double -> Text -> Text -> Double -> Double -> Double -> Double -> Bool -> B.Builder
+cmdCard x y w h r fill bd lw al shY shBlur dbl =
+  "CARD|" <> f1 x <> "|" <> f1 y <> "|" <> f1 w <> "|" <> f1 h <> "|" <> f1 r <> "|"
+    <> B.fromText fill <> "|" <> B.fromText bd <> "|" <> f1 lw <> "|" <> f2 al <> "|"
+    <> f1 shY <> "|" <> f1 shBlur <> "|" <> (if dbl then "1" else "0") <> "\n"
+
+cmdBar :: Double -> Double -> Double -> Double -> Double -> Double -> Double -> Text -> Text -> Text -> B.Builder
+cmdBar x y w h r ratio trail c1 c2 trailCol =
+  "BAR|" <> f1 x <> "|" <> f1 y <> "|" <> f1 w <> "|" <> f1 h <> "|" <> f1 r <> "|"
+    <> f2 ratio <> "|" <> f2 trail <> "|" <> B.fromText c1 <> "|" <> B.fromText c2 <> "|" <> B.fromText trailCol <> "\n"
+
 cmdRect :: Double -> Double -> Double -> Double -> Double -> Text -> Text -> Double -> Double -> B.Builder
 cmdRect x y w h r fill bd lw al =
   "RR|" <> f1 x <> "|" <> f1 y <> "|" <> f1 w <> "|" <> f1 h <> "|" <> f1 r <> "|"
@@ -155,20 +166,21 @@ drawBtn m x y w h label fontSz tone disabled target =
   let hov = not disabled && cmHovered m == Just target
       (bg, bd, fg, lw) = case tone of
         TonePrimary ->
-          if hov then ("#234a3e", "#946623", "#f7f1e3", 1.5) else ("#2b594b", "#1e3f35", "#f7f1e3", 1.3)
+          if hov then ("#21473c", "#a87d38", "#faf6ee", 1.0) else ("#275247", "#1e3f35", "#faf6ee", 0.9)
         ToneDanger ->
-          if hov then ("#8f241b", "#6e1912", "#f7f1e3", 1.5) else ("#a32c22", "#7d2018", "#f7f1e3", 1.2)
+          if hov then ("#852018", "#691710", "#faf6ee", 1.0) else ("#9e2a22", "#7a1f18", "#faf6ee", 0.9)
         ToneJade ->
-          if hov then ("#e4eee9", "#2b594b", "#1e4237", 1.5) else ("#eef4f0", "#2b594b", "#2b594b", 1.2)
+          if hov then ("#e7f0ec", "rgba(39,82,71,0.45)", "#1f4239", 0.9) else ("#f2f6f3", "rgba(39,82,71,0.28)", "#275247", 0.8)
         ToneActive ->
-          ("#1e1a16", "#946623", "#f6f0e2", 1.5)
+          ("#1c1915", "#b89552", "#faf6ee", 1.0)
         ToneGhost ->
-          if hov then ("#ebe2ce", "#8b7f6e", "#1e1a16", 1.1) else ("#f6f0e2", "#c8bca4", "#4a4136", 1.0)
+          if hov then ("rgba(28,25,21,0.06)", "rgba(130,118,98,0.26)", "#1c1915", 0.75) else ("transparent", "transparent", "#5c5346", 0.0)
         ToneDefault ->
-          if hov then ("#ede4d0", "#946623", "#1e1a16", 1.4) else ("#f6f0e2", "#b8aa91", "#1e1a16", 1.1)
-      al = if disabled then 0.45 else 0.98
+          if hov then ("#f4ede0", "rgba(168,125,56,0.52)", "#1c1915", 0.9) else ("#faf6ee", "rgba(130,118,98,0.34)", "#2a241d", 0.8)
+      al = if disabled then 0.40 else 0.98
+      bgB = if bg == "transparent" && bd == "transparent" then mempty else cmdRect x y w h 3 bg bd lw al
       b =
-        cmdRect x y w h 3 bg bd lw al
+        bgB
           <> cmdTx (x + w * 0.5) (y + h * 0.5 + fontSz * 0.35) fontSz "600" "center" fg al (truncateText (w - 10) fontSz label)
       hb = if disabled then [] else [CanvasHitbox x y w h target "pointer"]
    in (b, hb)
@@ -176,26 +188,17 @@ drawBtn m x y w h label fontSz tone disabled target =
 drawMeter :: Double -> Double -> Double -> Double -> Double -> Maybe Double -> Text -> Text -> Text -> B.Builder
 drawMeter x y w h ratio mTrail fillCol trailCol labelTxt =
   let r = max 0.0 (min 1.0 ratio)
-      track = cmdRect x y w h 2 "#dfd5be" "#c5b9a0" 0.8 0.96
-      trailB = case mTrail of
-        Just trR | trR > r + 0.005 ->
-          cmdRect x y (w * max 0.0 (min 1.0 trR)) h 2 trailCol "" 0 0.72
-        _ -> mempty
-      fillB = if r > 0.002 then cmdRect x y (w * r) h 2 fillCol "" 0 0.96 else mempty
+      c2 = case fillCol of
+        "#a32c22" -> "#c24436"
+        "#2b594b" -> "#3f7a68"
+        "#946623" -> "#be8e3e"
+        _ -> fillCol
+      barB = cmdBar x y w h (min 2.5 (h * 0.4)) r (fromMaybe 0.0 mTrail) fillCol c2 trailCol
       lblB =
         if T.null labelTxt
           then mempty
-          else
-            if r >= 0.96
-              then cmdTx (x + w - 5) (y + h * 0.5 + 3.6) 10 "700" "right" "#f7f1e3" 0.96 labelTxt
-              else
-                if r <= 0.62
-                  then cmdTx (x + w - 5) (y + h * 0.5 + 3.6) 10 "700" "right" "#1e1a16" 0.96 labelTxt
-                  else
-                    let tw = textWidth 10 labelTxt + 8
-                     in cmdRect (x + w - tw - 1) (y + 1) tw (h - 2) 2 "#f6f0e2" "" 0 0.86
-                          <> cmdTx (x + w - 5) (y + h * 0.5 + 3.6) 10 "700" "right" "#1e1a16" 0.98 labelTxt
-   in track <> trailB <> fillB <> lblB
+          else cmdTx (x + w - 4) (y + h * 0.5 + 3.4) 9.5 "600" "right" (if r >= 0.92 then "#faf6ee" else "#3a3229") 0.95 labelTxt
+   in barB <> lblB
 
 drawScrollbar :: Double -> Double -> Double -> Double -> Double -> Double -> B.Builder
 drawScrollbar x y h scrollPos maxScroll viewH
@@ -326,8 +329,8 @@ buildOnboardingUi m =
           else buildCreateBody m zh cardX pad innerW (cardY + contentStartY - scrollY)
 
       cardFrame =
-        cmdRect cardX cardY cardW cardH 4 "#f6f0e2" "#b8aa91" 1.3 0.98
-          <> cmdRect cardX cardY cardW 3.5 0 "#a32c22" "" 0 0.92
+        cmdCard cardX cardY cardW cardH 4 "#faf6ee" "rgba(130,118,98,0.34)" 0.9 0.99 8 24 True
+          <> cmdRect (cardX + 16) cardY (cardW - 32) 2.5 1 "#9e2a22" "" 0 0.88
       (bTabL, hTabL) = drawBtn m (cardX + pad) (cardY + tabY) tabW 32 (if zh then "登录江湖" else "Sign In") 13 (if not isCreate then ToneActive else ToneGhost) False (HitUi "login_mode" "login" "")
       (bTabC, hTabC) = drawBtn m (cardX + pad + tabW + 8) (cardY + tabY) tabW 32 (if zh then "创建角色" else "New Character") 13 (if isCreate then ToneActive else ToneGhost) False (HitUi "login_mode" "create" "")
 
@@ -537,24 +540,24 @@ drawDesktopHeader m =
       qiPct = fromIntegral presQi / fromIntegral (max 1 presMaxQi)
 
       bg =
-        cmdRect 0 0 w 52 0 "#f5efe1" "" 0 0.96
-          <> cmdLine 0 52 w 52 1 "#c6baa3" 0.95 False
+        cmdRect 0 0 w 52 0 "#faf6ee" "" 0 0.94
+          <> cmdLine 0 52 w 52 0.75 "rgba(130,118,98,0.28)" 1 False
       swallow = CanvasHitbox 0 0 w 52 HitSwallow "default"
 
-      -- Left: Player portrait plaque
+      -- Left: Player portrait plaque (borderless unless active/hovered)
       pillW = 216.0
       pillActive = cmDesktopDrawer m == "character"
       pillTgt = HitUi "desktop_drawer" "character" ""
       pillHov = cmHovered m == Just pillTgt
+      pillBg = if pillActive then "rgba(28,25,21,0.07)" else if pillHov then "rgba(28,25,21,0.04)" else "transparent"
+      pillBd = if pillActive then "rgba(168,125,56,0.45)" else "transparent"
       pillB =
-        cmdRect 14 7 pillW 38 3 (if pillActive then "#e9dfc9" else if pillHov then "#efe6d2" else "#faf5e9") (if pillActive then "#946623" else "#c5b9a0") (if pillActive then 1.5 else 1.0) 1
-          <> cmdImg (portraitScoreFile (psAppearance st)) 19 11 30 30 2
-          <> cmdTx 56 21 12.5 "700" "left" "#1e1a16" 1 (truncateText 96 12.5 (cmUsername m))
-          <> cmdRect 56 27 88 4.5 1.5 "#dfd5be" "" 0 1
-          <> cmdRect 56 27 (88 * max 0 (min 1 hpPct)) 4.5 1.5 "#a32c22" "" 0 1
-          <> cmdRect 56 34 88 4.5 1.5 "#dfd5be" "" 0 1
-          <> cmdRect 56 34 (88 * max 0 (min 1 qiPct)) 4.5 1.5 "#2b594b" "" 0 1
-          <> cmdTx (14 + pillW - 8) 30 11 "700" "right" "#5c5346" 1 (T.pack (show presHp) <> "/" <> T.pack (show presQi))
+        (if pillBg /= "transparent" then cmdRect 14 7 pillW 38 3 pillBg pillBd (if pillActive then 0.9 else 0) 1 else mempty)
+          <> cmdImg (portraitScoreFile (psAppearance st)) 19 11 30 30 3
+          <> cmdSerif 56 22 13 "700" "left" "#1c1915" 1 (truncateText 96 13 (cmUsername m))
+          <> cmdBar 56 28 88 4 1.5 (max 0 (min 1 hpPct)) 0 "#8e241c" "#bc3f32" ""
+          <> cmdBar 56 35 88 3.5 1.5 (max 0 (min 1 qiPct)) 0 "#224a3f" "#3c7564" ""
+          <> cmdTx (14 + pillW - 8) 31 11 "600" "right" "#6b6255" 1 (T.pack (show presHp) <> "/" <> T.pack (show presQi))
       pillHit = CanvasHitbox 14 7 pillW 38 pillTgt "pointer"
 
       -- Busy training chip (with live countdown)
@@ -569,12 +572,12 @@ drawDesktopHeader m =
            in drawBtn m (14 + pillW + 10) 11 bw 30 lbl 11.5 ToneJade False (HitUi "desktop_drawer" "arts" "")
         _ -> (mempty, [])
 
-      -- Right nav buttons
+      -- Right nav buttons (borderless typographic style, active gets dark ink seal)
       activeQ = length (filter (not . qiCompleted) (cmQuests m))
-      (bArts, hArts) = drawBtn m (w - 198) 11 62 30 (if zh then "武学" else "Arts") 12.5 (if cmDesktopDrawer m == "arts" then ToneActive else ToneDefault) False (HitUi "desktop_drawer" "arts" "")
-      (bQuests, hQuests) = drawBtn m (w - 128) 11 66 30 (if zh then "任务" else "Quests") 12.5 (if cmDesktopDrawer m == "quests" then ToneActive else ToneDefault) False (HitUi "desktop_drawer" "quests" "")
-      qDot = if activeQ > 0 then cmdCirc (w - 69) 17 3.2 "#a32c22" "" 0 1 else mempty
-      (bLoc, hLoc) = drawBtn m (w - 54) 11 40 30 (if zh then "EN" else "中") 11.5 ToneGhost False (HitUi "toggle_locale" "" "")
+      (bArts, hArts) = drawBtn m (w - 190) 11 58 30 (if zh then "武学" else "Arts") 12.5 (if cmDesktopDrawer m == "arts" then ToneActive else ToneGhost) False (HitUi "desktop_drawer" "arts" "")
+      (bQuests, hQuests) = drawBtn m (w - 124) 11 60 30 (if zh then "任务" else "Quests") 12.5 (if cmDesktopDrawer m == "quests" then ToneActive else ToneGhost) False (HitUi "desktop_drawer" "quests" "")
+      qDot = if activeQ > 0 then cmdCirc (w - 70) 17 3.0 "#9e2a22" "" 0 1 else mempty
+      (bLoc, hLoc) = drawBtn m (w - 54) 11 38 30 (if zh then "EN" else "中") 11.5 ToneGhost False (HitUi "toggle_locale" "" "")
    in (bg <> pillB <> busyB <> bArts <> bQuests <> qDot <> bLoc, [swallow, pillHit] <> busyH <> hArts <> hQuests <> hLoc)
 
 -- Mobile Header (56px)
@@ -594,20 +597,18 @@ drawMobileHeader m =
         | otherwise = if zh then "听风录" else "Tingfeng"
 
       bg =
-        cmdRect 0 0 w 56 0 "#f5efe1" "" 0 0.97
-          <> cmdLine 0 56 w 56 1 "#c6baa3" 0.95 False
-          <> cmdSerif 12 27 15 "700" "left" "#1e1a16" 1 (truncateText (w - 144) 15 titleTxt)
-      swallow = CanvasHitbox 0 0 w 56 HitSwallow "default"
+        cmdRect 0 0 w 54 0 "#faf6ee" "" 0 0.96
+          <> cmdLine 0 54 w 54 0.8 "rgba(130,118,98,0.28)" 1 False
+          <> cmdSerif 14 27 15.5 "700" "left" "#1c1915" 1 (truncateText (w - 144) 15.5 titleTxt)
+      swallow = CanvasHitbox 0 0 w 54 HitSwallow "default"
 
-      (bVit, hVit) = drawBtn m (w - 126) 8 78 26 (T.pack (show presHp) <> "/" <> T.pack (show presQi)) 11 ToneDefault False (HitUi "mobile_tab" "character" "")
+      (bVit, hVit) = drawBtn m (w - 124) 8 76 26 (T.pack (show presHp) <> "/" <> T.pack (show presQi)) 11 ToneGhost False (HitUi "mobile_tab" "character" "")
       (bLoc, hLoc) = drawBtn m (w - 42) 8 32 26 (if zh then "EN" else "中") 11 ToneGhost False (HitUi "toggle_locale" "" "")
 
-      barW = (w - 30) * 0.5
+      barW = (w - 34) * 0.5
       bars =
-        cmdRect 12 41 barW 6 2 "#dfd5be" "" 0 1
-          <> cmdRect 12 41 (barW * max 0 (min 1 hpPct)) 6 2 "#a32c22" "" 0 1
-          <> cmdRect (18 + barW) 41 barW 6 2 "#dfd5be" "" 0 1
-          <> cmdRect (18 + barW) 41 (barW * max 0 (min 1 qiPct)) 6 2 "#2b594b" "" 0 1
+        cmdBar 14 41 barW 4.5 2 (max 0 (min 1 hpPct)) 0 "#8e241c" "#bc3f32" ""
+          <> cmdBar (20 + barW) 41 barW 4.5 2 (max 0 (min 1 qiPct)) 0 "#224a3f" "#3c7564" ""
    in (bg <> bVit <> bLoc <> bars, [swallow] <> hVit <> hLoc)
 
 -- Mobile Bottom Tabbar (54px with Crisp Canvas Vector Icons & Status Dots)
@@ -632,8 +633,8 @@ drawMobileTabbar m =
         ]
 
       bg =
-        cmdRect 0 y0 w 54 0 "#f5efe1" "" 0 0.98
-          <> cmdLine 0 y0 w y0 1 "#c6baa3" 0.95 False
+        cmdRect 0 y0 w 54 0 "#faf6ee" "" 0 0.97
+          <> cmdLine 0 y0 w y0 0.75 "rgba(130,118,98,0.26)" 1 False
       swallow = CanvasHitbox 0 y0 w 54 HitSwallow "default"
 
       renderTab (idx, (tid, lbl, hasDot, badge)) =
@@ -705,16 +706,16 @@ drawRoomCard m isMob =
       cardH = (if null (cmRoomChars m) then y0 + 32.0 + descH + 10.0 else endChipY + 34.0) - y0
 
       bg =
-        cmdRect x0 y0 cw cardH 3 "#f6f0e2" "#b8aa91" 1.1 0.94
-          <> cmdRect x0 y0 3.5 cardH 0 "#946623" "" 0 0.95
-          <> cmdSerif (x0 + pad + 2) (y0 + 22) (if isMob then 15 else 16) "700" "left" "#1e1a16" 1 (cmRoomName m)
+        cmdCard x0 y0 cw cardH 3 "#faf6ee" "rgba(130,118,98,0.30)" 0.8 0.96 4 14 False
+          <> cmdRect (x0 + 1) (y0 + 8) 2.5 (cardH - 16) 1 "#9e2a22" "" 0 0.78
+          <> cmdSerif (x0 + pad + 3) (y0 + 22) (if isMob then 15 else 16) "700" "left" "#1c1915" 1 (cmRoomName m)
       mapChip =
         if T.null mName
           then mempty
           else
-            let mw = textWidth 11 mName + 16
-             in cmdRect (x0 + cw - pad - mw) (y0 + 7) mw 20 2 "#ebe2ce" "#b8aa91" 0.9 1
-                  <> cmdTx (x0 + cw - pad - mw * 0.5) (y0 + 20.5) 10.5 "600" "center" "#5c5346" 1 mName
+            let mw = textWidth 10.5 mName + 14
+             in cmdRect (x0 + cw - pad - mw) (y0 + 8) mw 19 2 "rgba(42,35,26,0.05)" "rgba(130,118,98,0.22)" 0.7 1
+                  <> cmdTx (x0 + cw - pad - mw * 0.5) (y0 + 20.5) 10.5 "600" "center" "#6b6255" 1 mName
       descB = mconcat [cmdTx (x0 + pad + 2) (y0 + 42 + fromIntegral i * 17.5) 12 "400" "left" "#4a4136" 1 ln | (i, ln) <- zip [0 :: Int ..] descLines]
       swallow = CanvasHitbox x0 y0 cw cardH HitSwallow "default"
    in (bg <> mapChip <> descB <> npcB, swallow : npcH)
@@ -839,15 +840,21 @@ drawBattleTopBar m isMob y0 =
 
       drawCard cx name hp mhp hpTrail qi mqi apVal effs hitFlash =
         let hasEff = not (null effs)
-            ch = if hasEff then 106.0 else 86.0
-            bd = if hitFlash then "#a32c22" else "#b8aa91"
-            bg = if hitFlash then "#faece8" else "#f6f0e2"
+            ch = if hasEff then 92.0 else 72.0
+            bd = if hitFlash then "rgba(158,42,34,0.75)" else "rgba(130,118,98,0.28)"
+            bg = if hitFlash then "#faece8" else "#faf6ee"
+            hpRatio = fromIntegral hp / fromIntegral (max 1 mhp)
+            qiRatio = fromIntegral qi / fromIntegral (max 1 mqi)
+            apRatio = apVal / 100.0
+            vitalsTxt = T.pack (show hp) <> "/" <> T.pack (show mhp) <> "  ·  " <> T.pack (show qi)
             box =
-              cmdRect cx y0 cardW ch 3 bg bd (if hitFlash then 2.0 else 1.1) 0.96
-                <> cmdSerif (cx + 10) (y0 + 19) 13.5 "700" "left" "#1e1a16" 1 (truncateText (cardW - 20) 13.5 name)
-                <> drawMeter (cx + 10) (y0 + 26) (cardW - 20) 14 (fromIntegral hp / fromIntegral (max 1 mhp)) (Just hpTrail) "#a32c22" "#d48d72" (T.pack (show hp) <> "/" <> T.pack (show mhp))
-                <> drawMeter (cx + 10) (y0 + 44) (cardW - 20) 13 (fromIntegral qi / fromIntegral (max 1 mqi)) Nothing "#2b594b" "" (T.pack (show qi) <> "/" <> T.pack (show mqi))
-                <> drawMeter (cx + 10) (y0 + 61) (cardW - 20) 12 (apVal / 100.0) Nothing "#946623" "" ("AP " <> T.pack (show (round apVal :: Int)))
+              cmdCard cx y0 cardW ch 3 bg bd (if hitFlash then 1.4 else 0.8) 0.96 4 14 False
+                <> cmdSerif (cx + 11) (y0 + 21) 14 "700" "left" "#1c1915" 1 (truncateText (cardW - 104) 14 name)
+                <> cmdTx (cx + cardW - 11) (y0 + 20) 10.5 "600" "right" "#6b6255" 0.95 vitalsTxt
+                <> cmdBar (cx + 11) (y0 + 29) (cardW - 22) 8 2 hpRatio hpTrail "#8e241c" "#bc3f32" "#d99b82"
+                <> cmdBar (cx + 11) (y0 + 42) (cardW - 22) 5.5 2 qiRatio 0.0 "#224a3f" "#3c7564" ""
+                <> cmdBar (cx + 11) (y0 + 52) (cardW - 22) 4 1.5 apRatio 0.0 "#8a6220" "#be9142" ""
+                <> cmdTx (cx + cardW - 11) (y0 + 66) 9.5 "600" "right" "#8a6220" 0.88 ("动 " <> T.pack (show (round apVal :: Int)))
             effB =
               if not hasEff
                 then mempty
@@ -860,10 +867,10 @@ drawBattleTopBar m isMob y0 =
                               if accX + ew > cx + cardW - 8
                                 then mempty
                                 else
-                                  cmdRect accX (y0 + 78) ew 18 2 (if isBad then "#f7e3e0" else "#e5f0eb") (if isBad then "#a32c22" else "#2b594b") 0.8 1
-                                    <> cmdTx (accX + ew * 0.5) (y0 + 90.5) 10 "600" "center" (if isBad then "#8f1f16" else "#245243") 1 lbl
+                                  cmdRect accX (y0 + 68) ew 17 2 (if isBad then "rgba(158,42,34,0.10)" else "rgba(39,82,71,0.10)") (if isBad then "rgba(158,42,34,0.35)" else "rgba(39,82,71,0.35)") 0.7 1
+                                    <> cmdTx (accX + ew * 0.5) (y0 + 80) 9.5 "600" "center" (if isBad then "#8e241c" else "#224a3f") 1 lbl
                          in (accX + ew + 4, accB <> eb)
-                   in snd (foldl' renderEff (cx + 10, mempty) (take 4 effs))
+                   in snd (foldl' renderEff (cx + 11, mempty) (take 4 effs))
          in (box <> effB, CanvasHitbox cx y0 cardW ch HitSwallow "default")
 
       (pCard, pSw) = drawCard x0 (if T.null (cmUsername m) then "行者" else cmUsername m) pHp pMaxHp (cmPlayerHpTrail m) pQi pMaxQi (cmPlayerApAnim m) pEffs (cmPlayerHitFlashMs m > 0)
@@ -871,8 +878,8 @@ drawBattleTopBar m isMob y0 =
       sndLbl = if zh then (if cmSoundOn m then "音效：开" else "音效：关") else (if cmSoundOn m then "SFX On" else "SFX Off")
       (bSnd, hSnd) =
         if isMob
-          then drawBtn m (w - 78) (y0 + 90) 68 24 sndLbl 10.5 ToneGhost False (HitUi "toggle_sound" "" "")
-          else drawBtn m (x0 + cardW + 10) (y0 + 28) (midW - 8) 28 sndLbl 11 ToneGhost False (HitUi "toggle_sound" "" "")
+          then drawBtn m (w - 74) (y0 + 78) 64 24 sndLbl 10.5 ToneGhost False (HitUi "toggle_sound" "" "")
+          else drawBtn m (x0 + cardW + 10) (y0 + 22) (midW - 8) 28 sndLbl 11 ToneGhost False (HitUi "toggle_sound" "" "")
    in (pCard <> eCard <> bSnd, [pSw, eSw] <> hSnd)
 
 -- Battle Active Skill Bar (Cooldown Ink Curtain + Queued Cinnabar Seal + Keycaps + Reasons)
@@ -904,26 +911,26 @@ drawBattleSkills m isMob bottomAnchorY =
                     by = startY + fromIntegral r * (btnH + 6.0)
                     tgt = HitUi "perform" (asId sk) ""
                     hov = seReady ev && cmHovered m == Just tgt
-                    bg = if seQueued ev then "#f2e5cb" else if hov then "#ede3cd" else "#f6f0e2"
-                    bd = if seQueued ev then "#946623" else if seUltimate ev then "#a32c22" else if seReady ev then "#2b594b" else "#c5b9a0"
-                    al = if seReady ev || seQueued ev then 0.98 else 0.62
+                    bg = if seQueued ev then "#f5ebd5" else if hov then "#fbf8f1" else "#faf6ee"
+                    bd = if seQueued ev then "#a87d38" else if seUltimate ev then "rgba(158,42,34,0.65)" else if seReady ev then "rgba(39,82,71,0.45)" else "rgba(130,118,98,0.25)"
+                    al = if seReady ev || seQueued ev then 0.98 else 0.56
                     cdPct = if seCdRem ev > 0.05 then min 1.0 (seCdRem ev / seCdTotal ev) else 0.0
-                    curtain = if cdPct > 0.005 then cmdRect bx by (btnW * cdPct) btnH 3 "#946623" "" 0 0.20 else mempty
+                    curtain = if cdPct > 0.005 then cmdRect bx by (btnW * cdPct) btnH 3 "rgba(168,125,56,0.18)" "" 0 1 else mempty
                     badgeB =
                       if seQueued ev
                         then
-                          cmdRect (bx + 4) (by + 4) 16 16 2 "#a32c22" "" 0 0.95
-                            <> cmdTx (bx + 12) (by + 15.5) 10 "700" "center" "#f7f1e3" 1 (if zh then "蓄" else "Q")
+                          cmdRect (bx + 4) (by + 4) 16 16 2 "#9e2a22" "" 0 0.95
+                            <> cmdTx (bx + 12) (by + 15.5) 10 "700" "center" "#faf6ee" 1 (if zh then "蓄" else "Q")
                         else
                           if idx < 6 && not isMob
-                            then cmdTx (bx + 9) (by + 15) 10 "700" "center" "#8b7f6e" 0.9 (T.pack (show (idx + 1)))
+                            then cmdTx (bx + 9) (by + 15) 10 "600" "center" "#8b7f6e" 0.85 (T.pack (show (idx + 1)))
                             else mempty
                     b =
-                      cmdRect bx by btnW btnH 3 bg bd (if seQueued ev || seReady ev then 1.5 else 1.0) al
+                      cmdCard bx by btnW btnH 3 bg bd (if seQueued ev || seReady ev then 1.0 else 0.75) al 3 (if seReady ev then 10 else 0) (seUltimate ev)
                         <> curtain
                         <> badgeB
-                        <> cmdTx (bx + btnW * 0.5) (by + 21) 12.5 "700" "center" "#1e1a16" al (truncateText (btnW - 14) 12.5 (asName sk))
-                        <> cmdTx (bx + btnW * 0.5) (by + 38) 10.5 "500" "center" (if seQueued ev then "#946623" else if seCdRem ev > 0.05 then "#a32c22" else "#5c5346") al (truncateText (btnW - 10) 10.5 (seReason ev))
+                        <> cmdSerif (bx + btnW * 0.5) (by + 21) 13 "700" "center" "#1c1915" al (truncateText (btnW - 14) 13 (asName sk))
+                        <> cmdTx (bx + btnW * 0.5) (by + 38) 10 "500" "center" (if seQueued ev then "#8a6220" else if seCdRem ev > 0.05 then "#9e2a22" else "#6b6255") al (truncateText (btnW - 10) 10 (seReason ev))
                     hb = if seReady ev then [CanvasHitbox bx by btnW btnH tgt "pointer"] else [CanvasHitbox bx by btnW btnH HitSwallow "not-allowed"]
                  in (b, hb)
 
@@ -975,7 +982,7 @@ drawMessageDock m isMob dockY dockH compact =
             | (i, (k, txt)) <- zip [0 :: Int ..] wrapped
           ]
 
-      frame = cmdRect dockX dockY dockW dockH 3 "#f6f0e2" "#b8aa91" 1.1 0.95
+      frame = cmdCard dockX dockY dockW dockH 3 "#faf6ee" "rgba(130,118,98,0.28)" 0.8 0.96 4 16 False
       clippedLogs = cmdClip (dockX + 4) logY (dockW - 12) logViewH <> linesB <> cmdUnclip
       sb = drawScrollbar (dockX + dockW - 7) logY logViewH scrollY maxS logViewH
 

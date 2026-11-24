@@ -72,12 +72,12 @@ buildFrameBatch m =
           tSec = cmClockMs m / 1000.0
           isBattle = cmInBattle m || cmPage m == PageBattleLab
 
-          -- Song-dynasty Xuan paper backdrop + layered misty ink mountains
+          -- Song-dynasty Xuan paper backdrop + misty ink-wash Shan-shui mountains (gradient fade)
           bgCmd =
             "BG|" <> f1 w <> "|" <> f1 h <> "|" <> f2 tSec <> "|" <> (if isBattle then "1" else "0") <> "\n"
-              <> "MT|" <> f1 (h * 0.50) <> "|38|0.06|" <> f1 (cmCamX m - cmPanX m) <> "|#cfc4ae|0.42\n"
-              <> "MT|" <> f1 (h * 0.61) <> "|26|0.13|" <> f1 (cmCamX m - cmPanX m + 260) <> "|#c2b59c|0.48\n"
-              <> "MT|" <> f1 (h * 0.73) <> "|18|0.22|" <> f1 (cmCamX m - cmPanX m + 540) <> "|#b5a78c|0.52\n"
+              <> "MT|" <> f1 (h * 0.48) <> "|42|0.05|" <> f1 (cmCamX m - cmPanX m) <> "|#9f9a8e|0.20\n"
+              <> "MT|" <> f1 (h * 0.60) <> "|28|0.11|" <> f1 (cmCamX m - cmPanX m + 280) <> "|#878377|0.22\n"
+              <> "MT|" <> f1 (h * 0.72) <> "|20|0.19|" <> f1 (cmCamX m - cmPanX m + 560) <> "|#716c61|0.24\n"
 
           mistCmds =
             if cmReducedMotion m
@@ -173,9 +173,9 @@ buildMapStage m =
                         sy2 = centerY + y2 * effZoom
                         vis = inFrustum sx1 sy1 || inFrustum sx2 sy2
                         isNear = meFrom e == curPos || meTo e == curPos
-                        col = if isNear then "#2b594b" else "#7d715f"
-                        lw = (if isNear then 2.2 else 1.2) * min 1.2 zoom
-                        al = if isNear then 0.85 else 0.42
+                        col = if isNear then "#2a564a" else "#8f8575"
+                        lw = (if isNear then 1.8 else 0.9) * min 1.2 zoom
+                        al = if isNear then 0.72 else 0.30
                      in if not vis
                           then mempty
                           else
@@ -201,33 +201,39 @@ buildMapStage m =
                       nh = (if isCur then 35.0 else 30.0) * max 0.84 (min 1.14 zoom)
                       rx = sx - nw * 0.5
                       ry = sy - nh * 0.5
-                      kindBorder = case mrRoomKind r of
-                        "landmark" -> "#a32c22"
-                        "transit" -> "#946623"
-                        "building" -> "#6f6454"
-                        _ -> "#9c907c"
-                      (bg, bd, txtCol, lw)
-                        | isCur = ("#1e1a16", "#946623", "#f7f1e3", 2.0)
-                        | hov = ("#efe4cc", "#946623", "#1e1a16", 1.9)
-                        | isJust mDir = ("#f8f3e6", "#2b594b", "#1e1a16", 1.5)
-                        | otherwise = ("#ece4d2", kindBorder, "#5b5144", 1.0)
+                      kindAccent = case mrRoomKind r of
+                        "landmark" -> "#9e2a22"
+                        "transit" -> "#a67c37"
+                        "building" -> "#8f8575"
+                        _ -> "#b5aa98"
+                      (bg, bd, txtCol, lw, shBlur, useDbl)
+                        | isCur = ("#1c1915", "#b89552", "#f8f4eb", 1.1, 14.0, "1")
+                        | hov = ("#fbf8f1", "#9e2a22", "#1c1915", 1.1, 12.0, "0")
+                        | isJust mDir = ("#faf6ee", "rgba(42,86,74,0.42)", "#1c1915", 0.9, 8.0, "0")
+                        | otherwise = ("#f1eadc", "rgba(130,118,98,0.28)", "#6b6255", 0.75, 0.0, "0")
                       pulseCmd =
                         if isCur
-                          then "CI|" <> f1 sx <> "|" <> f1 sy <> "|" <> f1 (24.0 * pulse * effZoom) <> "||#946623|1.3|0.36\n"
+                          then "CI|" <> f1 sx <> "|" <> f1 sy <> "|" <> f1 (24.0 * pulse * effZoom) <> "||#b89552|1.0|0.28\n"
                           else mempty
-                      sealDot =
+                      accentBar =
                         if isCur
-                          then "CI|" <> f1 (rx + 9.0) <> "|" <> f1 sy <> "|2.8|#a32c22||0|0.95\n"
-                          else mempty
+                          then "CI|" <> f1 (rx + 10.0) <> "|" <> f1 sy <> "|2.5|#b33529||0|0.95\n"
+                          else
+                            if isJust mDir
+                              then "RR|" <> f1 (rx + 1.0) <> "|" <> f1 (ry + 5.0) <> "|2.4|" <> f1 (nh - 10.0) <> "|1|#2a564a||0|0.85\n"
+                              else
+                                if mrRoomKind r == "landmark" || mrRoomKind r == "transit"
+                                  then "CI|" <> f1 (rx + 8.0) <> "|" <> f1 sy <> "|2.0|" <> kindAccent <> "||0|0.55\n"
+                                  else mempty
                       dirCmd = case mDir of
                         Just d ->
-                          "TX|" <> f1 sx <> "|" <> f1 (ry - 5.0) <> "|10.5|700|center|#2b594b|0.92|" <> sanitize (directionLabel loc d) <> "\n"
+                          "TX|" <> f1 sx <> "|" <> f1 (ry - 6.0) <> "|10|600|center|#2a564a|0.82|" <> sanitize (directionLabel loc d) <> "\n"
                         Nothing -> mempty
                       cmd =
                         pulseCmd
-                          <> "RR|" <> f1 rx <> "|" <> f1 ry <> "|" <> f1 nw <> "|" <> f1 nh <> "|3|" <> bg <> "|" <> bd <> "|" <> f1 lw <> "|0.97\n"
-                          <> sealDot
-                          <> "TX|" <> f1 (if isCur then sx + 3.0 else sx) <> "|" <> f1 (sy + fontSz * 0.36) <> "|" <> f1 fontSz <> "|" <> (if isCur then "700" else "600") <> "|center|" <> txtCol <> "|1|" <> sanitize (mrRoomName r) <> "\n"
+                          <> "CARD|" <> f1 rx <> "|" <> f1 ry <> "|" <> f1 nw <> "|" <> f1 nh <> "|3|" <> bg <> "|" <> bd <> "|" <> f1 lw <> "|" <> (if isCur || isJust mDir then "0.98" else "0.86") <> "|3|" <> f1 shBlur <> "|" <> useDbl <> "\n"
+                          <> accentBar
+                          <> "TXS|" <> f1 (if isCur then sx + 3.0 else sx) <> "|" <> f1 (sy + fontSz * 0.35) <> "|" <> f1 fontSz <> "|" <> (if isCur then "700" else "600") <> "|center|" <> txtCol <> "|1|" <> sanitize (mrRoomName r) <> "\n"
                           <> dirCmd
                       mHit = fmap (\d -> CanvasHitbox rx ry nw nh (HitExit d) "pointer") mDir
                    in (cmd, mHit)

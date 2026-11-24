@@ -261,9 +261,9 @@ function executeFrameBatch(batchStr) {
       case "BG": {
         const w = cssW, h = cssH, isBattle = p[4] === "1";
         const g = ctx.createLinearGradient(0, 0, 0, h);
-        g.addColorStop(0, isBattle ? "#f1ead9" : "#f4eee0");
-        g.addColorStop(0.55, isBattle ? "#e8dec8" : "#ede5d4");
-        g.addColorStop(1, isBattle ? "#dcd0b5" : "#e3d8c1");
+        g.addColorStop(0, isBattle ? "#f4efe4" : "#f7f3e9");
+        g.addColorStop(0.58, isBattle ? "#ece4d4" : "#efe8d9");
+        g.addColorStop(1, isBattle ? "#e3d9c5" : "#e7decb");
         ctx.globalAlpha = 1;
         ctx.fillStyle = g;
         ctx.fillRect(0, 0, w, h);
@@ -271,23 +271,104 @@ function executeFrameBatch(batchStr) {
           ctx.fillStyle = paperPattern;
           ctx.fillRect(0, 0, w, h);
         }
+        // Soft atmospheric warm-ink vignette around edges
+        const vig = ctx.createRadialGradient(w * 0.5, h * 0.44, Math.min(w, h) * 0.25, w * 0.5, h * 0.5, Math.max(w, h) * 0.78);
+        vig.addColorStop(0, "rgba(255, 252, 244, 0.14)");
+        vig.addColorStop(1, "rgba(42, 34, 24, 0.08)");
+        ctx.fillStyle = vig;
+        ctx.fillRect(0, 0, w, h);
         break;
       }
       case "MT": {
-        const yBase = +p[1], amp = +p[2], par = +p[3], camX = +p[4];
+        // Song-dynasty Shan-shui misty ink-wash mountain range (vertical fade into mist!)
+        const yBase = +p[1], amp = +p[2], par = +p[3], camX = +p[4], al = +p[6];
         ctx.save();
-        ctx.globalAlpha = +p[6];
-        ctx.fillStyle = p[5];
+        const mg = ctx.createLinearGradient(0, yBase - amp * 1.15, 0, yBase + amp * 2.8 + 80);
+        mg.addColorStop(0, p[5]);
+        mg.addColorStop(0.55, p[5]);
+        mg.addColorStop(1, "rgba(235, 227, 210, 0)");
+        ctx.globalAlpha = al;
+        ctx.fillStyle = mg;
         ctx.beginPath();
         ctx.moveTo(0, cssH);
-        for (let x = 0; x <= cssW + 28; x += 28) {
-          const wx = (x + camX * par) * 0.0065;
-          const y = yBase - (Math.sin(wx) * 0.55 + Math.sin(wx * 2.3 + 1.4) * 0.3 + Math.cos(wx * 4.1) * 0.15) * amp;
+        for (let x = 0; x <= cssW + 24; x += 24) {
+          const wx = (x + camX * par) * 0.0052;
+          const y = yBase - (Math.sin(wx) * 0.52 + Math.sin(wx * 2.1 + 1.3) * 0.30 + Math.cos(wx * 3.7 + 0.6) * 0.18) * amp;
           ctx.lineTo(x, y);
         }
         ctx.lineTo(cssW, cssH);
         ctx.closePath();
         ctx.fill();
+        ctx.restore();
+        break;
+      }
+      case "CARD": {
+        // Elevated Song-dynasty Xuan-paper plaque with soft diffused ink shadow + hairline border
+        const x = +p[1], y = +p[2], w = Math.max(0, +p[3]), h = Math.max(0, +p[4]), r = +p[5];
+        const fill = p[6], bd = p[7], lw = +p[8], al = +p[9], shY = +p[10], shBlur = +p[11], dbl = p[12] === "1";
+        ctx.save();
+        ctx.globalAlpha = al;
+        if (shBlur > 0) {
+          ctx.shadowColor = "rgba(28, 22, 16, 0.11)";
+          ctx.shadowBlur = shBlur;
+          ctx.shadowOffsetX = 0;
+          ctx.shadowOffsetY = shY;
+        }
+        ctx.beginPath();
+        ctx.roundRect(x, y, w, h, r);
+        if (fill) {
+          const cg = ctx.createLinearGradient(x, y, x, y + h);
+          cg.addColorStop(0, fill);
+          cg.addColorStop(1, fill === "#1c1915" ? "#26211c" : "#f2ebdc");
+          ctx.fillStyle = cg;
+          ctx.fill();
+        }
+        ctx.shadowColor = "transparent";
+        ctx.shadowBlur = 0;
+        ctx.shadowOffsetY = 0;
+        if (bd && lw > 0) {
+          ctx.strokeStyle = bd;
+          ctx.lineWidth = lw;
+          ctx.stroke();
+        }
+        if (dbl && w > 12 && h > 12) {
+          ctx.strokeStyle = fill === "#1c1915" ? "rgba(196, 163, 99, 0.38)" : "rgba(130, 118, 98, 0.22)";
+          ctx.lineWidth = 0.75;
+          ctx.beginPath();
+          ctx.roundRect(x + 3.5, y + 3.5, w - 7, h - 7, Math.max(1, r - 1));
+          ctx.stroke();
+        }
+        ctx.restore();
+        break;
+      }
+      case "BAR": {
+        // Sleek mineral-pigment gradient progress bar with optional ghost trail
+        const x = +p[1], y = +p[2], w = Math.max(0, +p[3]), h = Math.max(0, +p[4]), r = +p[5];
+        const ratio = Math.max(0, Math.min(1, +p[6])), trail = +p[7];
+        const c1 = p[8], c2 = p[9], trailCol = p[10];
+        ctx.save();
+        ctx.beginPath();
+        ctx.roundRect(x, y, w, h, r);
+        ctx.fillStyle = "rgba(42, 35, 26, 0.09)";
+        ctx.fill();
+        if (trail > ratio + 0.004 && trailCol) {
+          ctx.beginPath();
+          ctx.roundRect(x, y, w * Math.min(1, trail), h, r);
+          ctx.fillStyle = trailCol;
+          ctx.globalAlpha = 0.55;
+          ctx.fill();
+          ctx.globalAlpha = 1;
+        }
+        if (ratio > 0.003) {
+          const fw = Math.max(h, w * ratio);
+          const bg = ctx.createLinearGradient(x, y, x + fw, y);
+          bg.addColorStop(0, c1);
+          bg.addColorStop(1, c2 || c1);
+          ctx.beginPath();
+          ctx.roundRect(x, y, fw, h, r);
+          ctx.fillStyle = bg;
+          ctx.fill();
+        }
         ctx.restore();
         break;
       }
