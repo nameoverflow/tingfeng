@@ -229,7 +229,11 @@ hsOnWsClose = do
   mm <- readIORef globalModelRef
   forM_ mm $ \m0 ->
     when (lastMode /= "config_only" && cmRoomName m0 /= "竹间试招") $ do
-      let m1 = m0 {cmConnected = False, cmConnecting = False, cmUiDirty = True}
+      let errMsg =
+            if cmConnecting m0 || not (cmConnected m0)
+              then Just "无法连接游戏服务端，请稍后重试。"
+              else cmLastError m0
+          m1 = m0 {cmConnected = False, cmConnecting = False, cmLastError = errMsg, cmUiDirty = True}
       m2 <- flushState m1
       writeIORef globalModelRef (Just m2)
 
