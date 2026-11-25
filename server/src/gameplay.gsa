@@ -1,0 +1,2280 @@
+// Complete Wuxia Gameplay, Story Event Machine, Progression Training Queue,
+// Merchant/Equipment/Medicine, Recovery, and Battle Orchestration (`gameplay`).
+
+use std.option.{Option, Some, None}
+use std.list.{listRev, listAppend, listMap, listFilter, listAll, listAny, listLen}
+use std.str.{intToStr, strJoin}
+use std.codec.{(|>)}
+use fp.{
+    Semigroup, (<+>),
+    Functor, fmap, Applicative, pure, Monad, (>>=), (*>>),
+    MonadState, get, MonadError, throwErr, MonadWriter, tell, MonadRng, pickRandom,
+    forEachM, filterM, allM, foldM, whenM, unlessM,
+    Lens, (~>>), view, set, over, setF, overF, useL, assignL, overL,
+    minInt, maxInt, clampInt, maxFloat, floorDiv, floorInt, ceilInt,
+    optOr, optIsSome, optIsNone, listFind, listMaxInt, listMinInt, listContainsStr, utf8CharCount
+}
+use ordmap.{
+    OrdMap, OrdSet,
+    mapEmpty, mapLookup, mapMember, mapInsert, mapDelete, mapUpdate, mapFilter, mapMap,
+    mapPartition, mapFromList, mapToAscList, mapKeys, mapElems, mapSize,
+    setEmpty, setMember, setInsert, setDelete, setIsEmpty, setFromList, setToAscList
+}
+use entity.{
+    EquipSlot, WeaponSlot, ArmorSlot, equipSlotEq, equipSlotToText,
+    WeaponKind, SwordWeapon, FistWeapon,
+    ItemMedicine, ItemEquip, EquippedItem, MkEquippedItem,
+    ItemUse, LearnArtUse, MedicineUse, EquipUse, Item,
+    EffectType, DoT, HoT, Buff, DeBuff, effectTypeToText, Effect, ActiveEffect,
+    ActiveSkill, AttackMove,
+    ArtType, Foundation, Internal, Lightness, Sword, Fist, artTypeEq, artTypeToText,
+    ArtTier, artTierToText, ArtRequirement, MartialArt, ArtEntity, MkArtEntity,
+    CharAction, Attacking, Dialogue, Sparring,
+    CharStatus, CharAlive, CharDead, CharBattle, charStatusEq,
+    Gender, genderToText,
+    Character, PlayerStatus, PlayerNormal, PlayerInBattle, PlayerDead, PlayerBanned, playerStatusEq,
+    Player, DerivedStats, emptyDerivedStatSources, characterDerivedStatSources, deriveCharacterStats, deriveStats,
+    appearanceDescription, appearancePortraitKey,
+    characterKnownArtLevel, characterCombatRank, equippedArtLevel,
+    Direction, RoomRef, RoomInsight, Room, GameMap,
+    playerPosL, playerStatusL, playerInventoryL, playerMoneyL, playerPotentialL, playerCombatExpL, playerCharL,
+    charHpL, charQiL, charMaxQiL, charJingL, charEquippedL, charEnabledL, charArtL, charStatusL,
+    roomPlayerL
+}
+use progression.{
+    artProgressRequired, combatExpRequiredForLevel,
+    LevelBlock, BlockedByMaxLevel, BlockedByCombatExp, BlockedBySourceCap,
+    levelBlock, canGainProgress, addArtProgress, foundationShare,
+    learnJingCost, learnProgress,
+    studyJingCost, studyProgress,
+    practiceJingCost, practiceHpCost, practiceQiCost, practiceProgress,
+    researchJingCost, researchProgressWithInsight,
+    combatInsightResearchBonus, combatInsightPracticeBonus, combatInsightStacksForWin,
+    jobStreakScale,
+    meditateJingCost, meditateMaxQiGain, storedMaxQiCap,
+    learnBusySeconds, studyBusySeconds, practiceBusySeconds, researchBusySeconds, meditateBusySeconds,
+    battleCombatExpGain, battlePotentialGain, potentialCap
+}
+use quest.{
+    Quest, QuestReward, MkQuestReward, QuestEvent,
+    StoryTrigger, TriggerTalk, TriggerEnterRoom, TriggerKill, storyTriggerEq,
+    StoryCondition, QuestNotStarted, QuestStageIs, QuestCompleted,
+    FlagSet, FlagUnset, NpcDead, NpcAlive, HasItem, LacksItem, InMap,
+    StoryAction, StoryMessage, StoryDelay, StoryTransition,
+    SetQuestStage, CompleteQuest, CompleteRepeatableJob,
+    SetFlag, ClearFlag, HideNpc, ShowNpc,
+    GiveItem, TakeItem, GiveMoney, LearnArt, StartBattle, MovePlayer,
+    PlayerStoryState, newPlayerStoryStateFor,
+    storyQuestStagesL, storyFlagsL, storyHiddenNpcsL, storyJobStreaksL
+}
+use world.{World, worldCharsL}
+use message.{
+    PlayerAction, Go, Talk, Attack, Perform, Train, Practice, Learn, Study, Research, Meditate,
+    EnableArt, PrepareArt, Equip, Unequip, Buy, Use, Say, Other,
+    ActiveSkillSummary, MkActiveSkillSummary,
+    ArtRequirementSummary, MkArtRequirementSummary,
+    ArtSummary, MkArtSummary,
+    EffectSummary, MkEffectSummary,
+    ActiveSkillCooldownSummary, MkActiveSkillCooldownSummary,
+    CombatantSnapshot, MkCombatantSnapshot,
+    BattleSnapshot, MkBattleSnapshot,
+    TeachableArtSummary, MkTeachableArtSummary,
+    ShopItemSummary, MkShopItemSummary,
+    RoomCharacterSummary, MkRoomCharacterSummary,
+    RoomExitSummary, MkRoomExitSummary,
+    MapRoomSummary, MkMapRoomSummary,
+    MapEdgeSummary, MkMapEdgeSummary,
+    MapOverviewSummary, MkMapOverviewSummary,
+    RewardSummary, MkRewardSummary,
+    InventoryItemSummary, MkInventoryItemSummary,
+    QuestLogEntry, MkQuestLogEntry,
+    SystemMessage, MkSystemMessage,
+    ActiveSkillFailureReason, ActiveSkillNeedQi, ActiveSkillOnCooldown, ActiveSkillMissingStatus, ActiveSkillUnavailable,
+    BusySummary, MkBusySummary,
+    PlayerStatsSummary, MkPlayerStatsSummary,
+    ActionResp,
+    MoveMsg, ViewMsg, MapOverviewMsg, AttackMsg, CombatSettlementMsg,
+    UseItemMsg, SayMsg, DialogueMsg, PlayerStatsMsg, ActiveSkillFailureMsg, BattleStateMsg,
+    StoryMsg, StorySequenceMsg, StoryDelayMsg, StoryTransitionMsg,
+    QuestLogMsg, InventoryMsg, ArtsMsg, RewardMsg, SystemMsg, ErrorMsg
+}
+use combat.{
+    BattleState, PendingActiveSkill, MkPendingActiveSkill, Battle, newBattle,
+    playerSideL, enemySideL, battleActionLockL, battlePendingSkillL,
+    Combat, useActiveSkill, flushBattleTick, flushBattleMaintenanceTick, flushBattleActionTick
+}
+use state.{
+    TrainingAction, TrainPractice, TrainLearn, TrainStudy, TrainResearch, TrainMeditate,
+    BusyTask, MkBusyTask,
+    PlayerRuntime, MkPlayerRuntime, runtimeInjuredL, runtimeBusyL, runtimeInsightL,
+    GameState,
+    gsWorldL, gsPlayersL, gsBattlesL, gsRespawnL, gsStoriesL, gsIsolatedBattlesL, gsPlayerRuntimeL,
+    updateMapRoomInWorld,
+    GameException, UnableToInteract, UnableToMove, gameExceptionToSummary,
+    Game, tellGame, throwStructured,
+    catchGame, liftCombat,
+    getsPlayer, updatePlayer, getsBattle, getsWorldMap, getsWorldRoom, getsWorldChar, getsWorldItem,
+    usePlayerRuntime, putPlayerRuntime, markPlayerDirty
+}
+
+pub data PreparedActiveSkill {
+    MkPreparedActiveSkill {
+        preparedActiveSkillArt: MartialArt,
+        preparedActiveSkillSkill: ActiveSkill,
+    },
+}
+
+pub data BattleSyncPolicy {
+    SyncEveryTick,
+    SyncOnVisibleResponse,
+}
+
+def syncPolicyEq(a: BattleSyncPolicy, b: BattleSyncPolicy): Bool = match (a, b) {
+    (SyncEveryTick, SyncEveryTick) -> true,
+    (SyncOnVisibleResponse, SyncOnVisibleResponse) -> true,
+    _ -> false,
+}
+
+// ============================================================================
+// Story State & Room Character Resolution
+// ============================================================================
+
+pub def ensureStoryState(pid: String): Game PlayerStoryState =
+    get() >>= ((gs) -> match mapLookup(gs.stories, pid) {
+        Some(st) -> pure(st),
+        None -> {
+            let st = newPlayerStoryStateFor(gs.world.chars);
+            overL(gsStoriesL(), (m) -> mapInsert(m, pid, st))
+            *>> pure(st)
+        },
+    })
+
+pub def npcVisibleToPlayer(pid: String, target: String): Game Bool =
+    ensureStoryState(pid) >>= ((st) -> pure(!setMember(st.storyHiddenNpcs, target)))
+
+pub def getsRoomCharacter(pid: String, target: String, action: CharAction): Game Character =
+    getsPlayer(pid) >>= ((p) -> {
+        let (mid, pos) = p.playerPosition;
+        getsWorldRoom(mid, pos) >>= ((room) ->
+        getsWorldChar(target) >>= ((npc) ->
+            if (!listContainsStr(room.roomChar, target)) {
+                throwErr(UnableToInteract(npc, action))
+            } else {
+                npcVisibleToPlayer(pid, target) >>= ((vis) ->
+                    if (!vis) throwErr(UnableToInteract(npc, action))
+                    else pure(npc)
+                )
+            }
+        ))
+    })
+
+// ============================================================================
+// Player Stats, Inventory, Arts, Quests, View & Map Overview Snapshots
+// ============================================================================
+
+pub def trainingStepSeconds(act: TrainingAction): Float = match act {
+    TrainPractice(_) -> practiceBusySeconds(),
+    TrainLearn(_, _) -> learnBusySeconds(),
+    TrainStudy(_) -> studyBusySeconds(),
+    TrainResearch(_) -> researchBusySeconds(),
+    TrainMeditate(amt) -> meditateBusySeconds(amt),
+}
+
+pub def trainingActionCode(act: TrainingAction): (String, String) = match act {
+    TrainPractice(aid) -> ("practice", aid),
+    TrainLearn(_, aid) -> ("learn", aid),
+    TrainStudy(iid) -> ("study", iid),
+    TrainResearch(aid) -> ("research", aid),
+    TrainMeditate(amt) -> ("meditate", intToStr(amt)),
+}
+
+pub def busySummary(task: BusyTask): BusySummary = {
+    let (code, target) = trainingActionCode(task.busyAction);
+    MkBusySummary {
+        busySummaryAction: code,
+        busySummaryTarget: target,
+        busySummaryCompleted: task.busyCompleted,
+        busySummaryRemaining: task.busyRemaining,
+        busySummarySeconds: maxFloat(0.0, task.busyTimer),
+        busySummaryStepSeconds: trainingStepSeconds(task.busyAction),
+    }
+}
+
+pub def buildPlayerStatsSummary(
+    player: Player,
+    hp: Int,
+    maxHp: Int,
+    qi: Int,
+    maxQi: Int,
+    ap: Int,
+    status: String,
+    injuredSeconds: Int,
+    combatInsight: Int,
+    busyOpt: Option BusySummary
+): PlayerStatsSummary = {
+    let ch = player.playerCharacter;
+    let derived = deriveStats(player);
+    let innate = ch.charInnate;
+    let app = ch.charAppearance;
+    MkPlayerStatsSummary {
+        playerStatsSummaryHp: hp,
+        playerStatsSummaryMaxHp: maxHp,
+        playerStatsSummaryQi: qi,
+        playerStatsSummaryMaxQi: maxQi,
+        playerStatsSummaryJing: ch.charJing,
+        playerStatsSummaryMaxJing: derived.dsMaxJing,
+        playerStatsSummaryAp: ap,
+        playerStatsSummaryStatus: status,
+        playerStatsSummaryGender: genderToText(ch.charGender),
+        playerStatsSummaryAppearance: app,
+        playerStatsSummaryAppearanceText: appearanceDescription(app),
+        playerStatsSummaryPortraitKey: appearancePortraitKey(app),
+        playerStatsSummaryStrength: innate.innateStrength,
+        playerStatsSummaryAgility: innate.innateAgility,
+        playerStatsSummaryVitality: innate.innateVitality,
+        playerStatsSummaryPotential: player.playerPotential,
+        playerStatsSummaryCombatExp: player.playerCombatExp,
+        playerStatsSummaryInjuredSeconds: injuredSeconds,
+        playerStatsSummaryCombatInsight: combatInsight,
+        playerStatsSummaryBusy: busyOpt,
+    }
+}
+
+pub def sendPlayerStats(pid: String): Game Void =
+    getsPlayer(pid) >>= ((player) ->
+    usePlayerRuntime(pid) >>= ((rt) -> {
+        let ch = player.playerCharacter;
+        let derived = deriveStats(player);
+        let status = match player.playerStatus {
+            PlayerNormal -> "normal",
+            PlayerInBattle -> "in_battle",
+            PlayerDead -> "dead",
+            PlayerBanned -> "banned",
+        };
+        let bSum = fmap(busySummary, rt.runtimeBusy);
+        let sum = buildPlayerStatsSummary(
+            player,
+            ch.charHP,
+            derived.dsMaxHp,
+            ch.charQi,
+            derived.dsMaxQi,
+            0,
+            status,
+            ceilInt(rt.runtimeInjuredRemaining),
+            rt.runtimeCombatInsight,
+            bSum
+        );
+        tellGame(pid, PlayerStatsMsg(sum))
+    }))
+
+pub def moneyRewardSummary(amount: Int): RewardSummary =
+    MkRewardSummary { rewardSummaryKind: "money", rewardSummaryId: None, rewardSummaryName: "铜钱", rewardSummaryAmount: amount }
+
+pub def resourceRewardSummary(kind: String, name: String, amount: Int): RewardSummary =
+    MkRewardSummary { rewardSummaryKind: kind, rewardSummaryId: None, rewardSummaryName: name, rewardSummaryAmount: amount }
+
+pub def martialArtRewardSummary(ma: MartialArt, level: Int): RewardSummary =
+    MkRewardSummary { rewardSummaryKind: "martial_art", rewardSummaryId: Some(ma.artId), rewardSummaryName: ma.artName, rewardSummaryAmount: level }
+
+pub def itemRewardSummary(iid: String, amount: Int): Game RewardSummary =
+    get() >>= ((gs) -> {
+        let disp = match mapLookup(gs.world.items, iid) {
+            Some(it) -> it.itemName,
+            None -> iid,
+        };
+        pure(MkRewardSummary { rewardSummaryKind: "item", rewardSummaryId: Some(iid), rewardSummaryName: disp, rewardSummaryAmount: amount })
+    })
+
+pub def questRewardSummariesPure(itemMap: OrdMap String Item, rew: QuestReward): List RewardSummary = {
+    let moneyPart = if (rew.questRewardMoney > 0) [moneyRewardSummary(rew.questRewardMoney)] else Nil;
+    let itemPart = fp.listFilterMap(rew.questRewardItems, (ri) ->
+        if (ri.questRewardItemAmount <= 0) None
+        else {
+            let disp = match mapLookup(itemMap, ri.questRewardItemId) {
+                Some(it) -> it.itemName,
+                None -> ri.questRewardItemId,
+            };
+            Some(MkRewardSummary {
+                rewardSummaryKind: "item",
+                rewardSummaryId: Some(ri.questRewardItemId),
+                rewardSummaryName: disp,
+                rewardSummaryAmount: ri.questRewardItemAmount,
+            })
+        }
+    );
+    let expPart = if (rew.questRewardCombatExp > 0) [resourceRewardSummary("combat_exp", "实战经验", rew.questRewardCombatExp)] else Nil;
+    let potPart = if (rew.questRewardPotential > 0) [resourceRewardSummary("potential", "潜能", rew.questRewardPotential)] else Nil;
+    moneyPart <+> itemPart <+> expPart <+> potPart
+}
+
+def questLogEntry(itemMap: OrdMap String Item, quest: Quest, stage: String): QuestLogEntry = {
+    let objOpt = match listFind(quest.questObjectives, (o) -> o.questObjectiveStage == stage) {
+        Some(o) -> Some(o.questObjectiveText),
+        None -> None,
+    };
+    MkQuestLogEntry {
+        questLogEntryId: quest.questId,
+        questLogEntryName: quest.questName,
+        questLogEntryStage: stage,
+        questLogEntryObjective: objOpt,
+        questLogEntryCompleted: stage == "completed",
+        questLogEntryRewards: questRewardSummariesPure(itemMap, quest.questReward),
+    }
+}
+
+pub def playerQuestLog(pid: String): Game Void =
+    ensureStoryState(pid) >>= ((st) ->
+    get() >>= ((gs) -> {
+        let entries = fp.listFilterMap(mapToAscList(st.storyQuestStages), (p) -> match p {
+            (qid, stage) -> match mapLookup(gs.world.quests, qid) {
+                Some(q) -> Some(questLogEntry(gs.world.items, q, stage)),
+                None -> None,
+            },
+        });
+        tellGame(pid, QuestLogMsg(entries))
+    }))
+
+pub def sendPlayerInventory(pid: String): Game Void =
+    getsPlayer(pid) >>= ((player) ->
+    get() >>= ((gs) -> {
+        let eqIds = setFromList(listMap(mapElems(player.playerCharacter.charEquipped), (e) -> e.equippedItemId));
+        let summaries = fp.listFilterMap(mapToAscList(player.playerInventory), (p) -> match p {
+            (iid, amt) ->
+                if (amt <= 0) None
+                else {
+                    let maybeItem = mapLookup(gs.world.items, iid);
+                    let dispName = match maybeItem { Some(it) -> it.itemName, None -> iid };
+                    let usable = match maybeItem {
+                        Some(it) -> optIsSome(it.itemUse),
+                        None -> false,
+                    };
+                    let studyable = match maybeItem {
+                        Some(it) -> match it.itemUse {
+                            Some(LearnArtUse { itemUseArt: _, itemUseLevel: _, itemUseMinLevel: _, itemUseMaxLevel: _, itemUseQuality: _, itemUseConsume: _, itemUseMessage: _, itemUseRepeatMessage: _ }) -> true,
+                            _ -> false,
+                        },
+                        None -> false,
+                    };
+                    let slotOpt = match maybeItem {
+                        Some(it) -> match it.itemUse {
+                            Some(EquipUse(eq)) -> Some(equipSlotToText(eq.equipSlot)),
+                            _ -> None,
+                        },
+                        None -> None,
+                    };
+                    Some(MkInventoryItemSummary {
+                        inventoryItemSummaryId: iid,
+                        inventoryItemSummaryName: dispName,
+                        inventoryItemSummaryAmount: amt,
+                        inventoryItemSummaryUsable: usable,
+                        inventoryItemSummaryStudyable: studyable,
+                        inventoryItemSummaryEquipped: setMember(eqIds, iid),
+                        inventoryItemSummaryEquipSlot: slotOpt,
+                    })
+                },
+        });
+        tellGame(pid, InventoryMsg(player.playerMoney, summaries))
+    }))
+
+pub def playerKnownArtLevel(player: Player, artId: String): Option Int = {
+    let levels = fp.listConcatMap(
+        mapElems(player.playerCharacter.charArt),
+        (knownArts) -> fp.listFilterMap(
+            knownArts,
+            (k) -> if (k.artDef == artId) Some(k.artLevel) else None
+        )
+    );
+    match levels {
+        Nil -> None,
+        _ -> Some(listMaxInt(levels, 0)),
+    }
+}
+
+pub def playerKnownArtEntity(player: Player, artId: String): Option (ArtType, ArtEntity) = {
+    let matches = fp.listConcatMap(
+        mapToAscList(player.playerCharacter.charArt),
+        (pair) -> match pair {
+            (at, knownArts) -> fp.listFilterMap(
+                knownArts,
+                (k) -> if (k.artDef == artId) Some((at, k)) else None
+            ),
+        }
+    );
+    match matches {
+        Nil -> None,
+        Cons(first, rest) -> Some(std.list.listFold(rest, first, (best, cur) -> match (best, cur) {
+            ((_, bEnt), (_, cEnt)) -> if (cEnt.artLevel > bEnt.artLevel) cur else best,
+        })),
+    }
+}
+
+def nextUnlocks(level: Int, ma: MartialArt): List String = {
+    let moveEntries = listMap(ma.artAttackMoves, (m) -> (m.attackMoveUnlockLevel, m.attackMoveName));
+    let skillEntries = listMap(ma.artActiveSkills, (s) -> (s.activeSkillUnlockLevel, s.activeSkillName));
+    let allEntries = moveEntries <+> skillEntries;
+    let higherLevels = fp.listFilterMap(allEntries, (p) -> match p {
+        (ul, _) -> if (ul > level) Some(ul) else None,
+    });
+    match higherLevels {
+        Nil -> Nil,
+        _ -> {
+            let nextLv = listMinInt(higherLevels, 0);
+            fp.listFilterMap(allEntries, (p) -> match p {
+                (ul, nm) -> if (ul == nextLv) Some(nm) else None,
+            })
+        },
+    }
+}
+
+def artToSummary(martialArtMap: OrdMap String MartialArt, player: Player, known: ArtEntity, ma: MartialArt): ArtSummary = {
+    let lvl = known.artLevel;
+    let fndLevelOpt = match ma.artFoundation {
+        None -> None,
+        Some(fid) -> playerKnownArtLevel(player, fid),
+    };
+    let blocker = match levelBlock(ma.artMaxLevel, player.playerCombatExp, None, lvl) {
+        Some(BlockedByMaxLevel) -> Some("max_level"),
+        Some(BlockedByCombatExp(_)) -> Some("combat_exp"),
+        _ -> match fndLevelOpt {
+            Some(fl) if (lvl >= fl) -> Some("foundation"),
+            _ -> None,
+        },
+    };
+    let isEnabled = match mapLookup(player.playerCharacter.charEnabled, ma.artType) {
+        Some(en) -> en.artDef == ma.artId,
+        None -> false,
+    };
+    let reqSums = listMap(ma.artRequires, (r) -> {
+        let rName = match mapLookup(martialArtMap, r.artRequirementArt) {
+            Some(rm) -> rm.artName,
+            None -> r.artRequirementArt,
+        };
+        MkArtRequirementSummary {
+            artRequirementSummaryId: r.artRequirementArt,
+            artRequirementSummaryName: rName,
+            artRequirementSummaryLevel: r.artRequirementLevel,
+        }
+    });
+    let unlockedMoves = fp.listFilterMap(ma.artAttackMoves, (mv) ->
+        if (mv.attackMoveUnlockLevel <= lvl) Some(mv.attackMoveName) else None
+    );
+    let unlockedSkills = fp.listFilterMap(ma.artActiveSkills, (sk) ->
+        if (sk.activeSkillUnlockLevel <= lvl) Some(sk.activeSkillName) else None
+    );
+    MkArtSummary {
+        artSummaryId: ma.artId,
+        artSummaryName: ma.artName,
+        artSummaryType: artTypeToText(ma.artType),
+        artSummaryTier: artTierToText(ma.artTier),
+        artSummaryLevel: lvl,
+        artSummaryProgress: known.artProgress,
+        artSummaryNextProgress: if (lvl >= ma.artMaxLevel) 0 else artProgressRequired(lvl + 1),
+        artSummaryMaxLevel: ma.artMaxLevel,
+        artSummaryIsFoundation: artTypeEq(ma.artType, Foundation),
+        artSummaryEnabled: isEnabled,
+        artSummaryFoundation: ma.artFoundation,
+        artSummaryRequirements: reqSums,
+        artSummaryUnlockedAttackMoves: unlockedMoves,
+        artSummaryUnlockedActiveSkills: unlockedSkills,
+        artSummaryNextUnlocks: nextUnlocks(lvl, ma),
+        artSummaryResearchFrom: ma.artResearchFrom,
+        artSummaryNextCombatExp: combatExpRequiredForLevel(lvl + 1),
+        artSummaryBlocker: blocker,
+    }
+}
+
+pub def playerArts(pid: String): Game Void =
+    getsPlayer(pid) >>= ((player) ->
+    get() >>= ((gs) -> {
+        let summaries = fp.listConcatMap(
+            mapElems(player.playerCharacter.charArt),
+            (knownArts) -> fp.listFilterMap(knownArts, (known) ->
+                match mapLookup(gs.world.martialArts, known.artDef) {
+                    Some(ma) -> Some(artToSummary(gs.world.martialArts, player, known, ma)),
+                    None -> None,
+                }
+            )
+        );
+        tellGame(pid, ArtsMsg(summaries))
+    }))
+
+def charActionRoomText(a: CharAction): String = match a {
+    Attacking -> "attack",
+    Dialogue -> "talk",
+    Sparring -> "sparring",
+}
+
+pub def playerView(pid: String): Game Void =
+    getsPlayer(pid) >>= ((player) -> {
+        let (curMapId, curPos) = player.playerPosition;
+        getsWorldRoom(curMapId, curPos) >>= ((curRoom) ->
+        get() >>= ((gs) ->
+        filterM(curRoom.roomChar, (cid) -> npcVisibleToPlayer(pid, cid)) >>= ((visIds) ->
+        ensureStoryState(pid) >>= ((storyState) -> {
+            let curChars = fp.listFilterMap(visIds, (cid) ->
+                match mapLookup(gs.world.chars, cid) {
+                    None -> None,
+                    Some(ch) ->
+                        if (!charStatusEq(ch.charStatus, CharAlive)) None
+                        else {
+                            let teaches = listMap(mapToAscList(ch.charTeaches), (tp) -> match tp {
+                                (aid, maxL) -> {
+                                    let aName = match mapLookup(gs.world.martialArts, aid) {
+                                        Some(ma) -> ma.artName,
+                                        None -> aid,
+                                    };
+                                    MkTeachableArtSummary { teachableArtId: aid, teachableArtName: aName, teachableArtMaxLevel: maxL }
+                                },
+                            });
+                            let shop = listMap(mapToAscList(ch.charShop), (sp) -> match sp {
+                                (iid, price) -> {
+                                    let iName = match mapLookup(gs.world.items, iid) {
+                                        Some(it) -> it.itemName,
+                                        None -> iid,
+                                    };
+                                    MkShopItemSummary { shopItemSummaryId: iid, shopItemSummaryName: iName, shopItemSummaryPrice: price }
+                                },
+                            });
+                            Some(MkRoomCharacterSummary {
+                                roomCharacterSummaryId: cid,
+                                roomCharacterSummaryName: ch.charName,
+                                roomCharacterSummaryDesc: ch.charDesc,
+                                roomCharacterSummaryActions: listMap(setToAscList(ch.charActions), charActionRoomText),
+                                roomCharacterSummaryTeaches: teaches,
+                                roomCharacterSummaryShop: shop,
+                            })
+                        },
+                }
+            );
+            let curExits = fp.listFilterMap(mapToAscList(curRoom.roomExits), (ep) -> match ep {
+                (dir, dst) -> match world.lookupWorldRoom(gs.world, dst.roomRefMapId, dst.roomRefPos) {
+                    None -> None,
+                    Some(dstRoom) -> Some(MkRoomExitSummary {
+                        roomExitSummaryDirection: dir,
+                        roomExitSummaryMapId: dst.roomRefMapId,
+                        roomExitSummaryRoomId: dstRoom.roomId,
+                        roomExitSummaryRoomName: dstRoom.roomName,
+                        roomExitSummaryPosition: dst.roomRefPos,
+                    }),
+                },
+            });
+            let baseDesc = match listFind(curRoom.roomDescVariants, (vp) -> match vp { (fl, _) -> setMember(storyState.storyFlags, fl) }) {
+                Some((_, vDesc)) -> vDesc,
+                None -> curRoom.roomDesc,
+            };
+            let fullDesc = match curRoom.roomInsight {
+                Some(ri) -> match ri.roomInsightNote {
+                    Some(note) -> baseDesc + "\n" + note,
+                    None -> baseDesc,
+                },
+                None -> baseDesc,
+            };
+            tellGame(pid, ViewMsg(curRoom.roomName, fullDesc, curChars, curExits))
+            *>> sendPlayerStats(pid)
+            *>> sendPlayerInventory(pid)
+            *>> playerQuestLog(pid)
+        }))))
+    })
+
+pub def playerMapOverview(pid: String): Game Void =
+    getsPlayer(pid) >>= ((player) -> {
+        let (curMapId, curPos) = player.playerPosition;
+        getsWorldMap(curMapId) >>= ((curMap) ->
+        get() >>= ((gs) -> {
+            let roomPairs = mapToAscList(curMap.mapRooms);
+            let roomSums = listMap(roomPairs, (rp) -> match rp {
+                (pos, r) -> MkMapRoomSummary {
+                    mapRoomSummaryRoomId: r.roomId,
+                    mapRoomSummaryRoomName: r.roomName,
+                    mapRoomSummaryRoomKind: r.roomKind,
+                    mapRoomSummaryPosition: pos,
+                },
+            });
+            let edgeSums = fp.listConcatMap(roomPairs, (rp) -> match rp {
+                (pos, r) -> fp.listFilterMap(mapToAscList(r.roomExits), (ep) -> match ep {
+                    (dir, dst) -> match mapLookup(gs.world.maps, dst.roomRefMapId) {
+                        None -> None,
+                        Some(dstMap) -> match mapLookup(dstMap.mapRooms, dst.roomRefPos) {
+                            None -> None,
+                            Some(dstRoom) -> Some(MkMapEdgeSummary {
+                                mapEdgeSummaryDirection: dir,
+                                mapEdgeSummaryFromPosition: pos,
+                                mapEdgeSummaryToPosition: dst.roomRefPos,
+                                mapEdgeSummaryToRoomId: dstRoom.roomId,
+                                mapEdgeSummaryToRoomName: dstRoom.roomName,
+                                mapEdgeSummaryToMapId: dst.roomRefMapId,
+                                mapEdgeSummaryToMapName: dstMap.mapName,
+                            }),
+                        },
+                    },
+                }),
+            });
+            tellGame(pid, MapOverviewMsg(MkMapOverviewSummary {
+                mapOverviewSummaryMapId: curMapId,
+                mapOverviewSummaryMapName: curMap.mapName,
+                mapOverviewSummaryCurrentPosition: curPos,
+                mapOverviewSummaryRooms: roomSums,
+                mapOverviewSummaryEdges: edgeSums,
+            }))
+        }))
+    })
+
+pub def playerInitialSync(pid: String): Game Void =
+    playerView(pid)
+    *>> playerQuestLog(pid)
+    *>> sendPlayerInventory(pid)
+    *>> playerArts(pid)
+    *>> playerMapOverview(pid)
+
+// ============================================================================
+// Movement, Inventory Helpers, Martial Arts & Progression Grants
+// ============================================================================
+
+pub def movePlayerToRoom(pid: String, dstMapId: String, dstPos: (Int, Int)): Game Room =
+    getsPlayer(pid) >>= ((player) -> {
+        let (curMapId, curPos) = player.playerPosition;
+        getsWorldRoom(dstMapId, dstPos) >>= ((newRoom) ->
+            updatePlayer(pid, setF(playerPosL(), (dstMapId, dstPos)))
+            *>> overL(gsWorldL(), (w0) -> {
+                let w1 = updateMapRoomInWorld(w0, curMapId, curPos, overF(roomPlayerL(), (ps) -> setDelete(ps, pid)));
+                updateMapRoomInWorld(w1, dstMapId, dstPos, overF(roomPlayerL(), (ps) -> setInsert(ps, pid)))
+            })
+            *>> pure(newRoom)
+        )
+    })
+
+pub def clampPlayerVitalsToDerived(pid: String): Game Void =
+    getsPlayer(pid) >>= ((player) -> {
+        let d = deriveStats(player);
+        updatePlayer(pid, overF(playerCharL(), (ch) ->
+            ch
+                |> overF(charHpL(), (v) -> minInt(d.dsMaxHp, v))
+                |> overF(charQiL(), (v) -> minInt(d.dsMaxQi, v))
+                |> overF(charJingL(), (v) -> minInt(d.dsMaxJing, v))
+        ))
+    })
+
+pub def addInventoryItem(pid: String, iid: String, amount: Int): Game Void =
+    updatePlayer(pid, overF(playerInventoryL(), (inv) -> {
+        let cur = optOr(mapLookup(inv, iid), 0);
+        mapInsert(inv, iid, cur + amount)
+    }))
+
+pub def consumeInventoryItem(pid: String, iid: String, amount: Int): Game Void =
+    getsPlayer(pid) >>= ((player) -> {
+        let cur = optOr(mapLookup(player.playerInventory, iid), 0);
+        let rem = cur - amount;
+        updatePlayer(pid, overF(playerInventoryL(), (inv) ->
+            if (rem > 0) mapInsert(inv, iid, rem) else mapDelete(inv, iid)
+        ))
+        *>> whenM(rem <= 0, () ->
+            updatePlayer(pid, overF(playerCharL() ~>> charEquippedL(), (eqMap) ->
+                mapFilter(eqMap, (eq) -> eq.equippedItemId != iid)
+            ))
+            *>> clampPlayerVitalsToDerived(pid)
+        )
+    })
+
+pub def grantGrowth(pid: String, combatExpGain: Int, potentialGain: Int): Game (List RewardSummary) =
+    updatePlayer(pid, overF(playerCombatExpL(), (e) -> e + maxInt(0, combatExpGain)))
+    *>> getsPlayer(pid) >>= ((player) -> {
+        let curPot = player.playerPotential;
+        let cap = potentialCap(player.playerCombatExp);
+        let gainedPot = minInt(maxInt(0, cap - curPot), maxInt(0, potentialGain));
+        updatePlayer(pid, overF(playerPotentialL(), (p) -> p + gainedPot))
+        *>> whenM(combatExpGain > 0 || gainedPot > 0, () ->
+            markPlayerDirty(pid) *>> sendPlayerStats(pid)
+        )
+        *>> whenM(potentialGain > 0 && gainedPot < potentialGain, () ->
+            tellGame(pid, SystemMsg(MkSystemMessage {
+                systemMessageKey: "potential_full",
+                systemMessageParams: mapFromList([("cap", intToStr(cap))]),
+            }))
+        )
+        *>> {
+            let expSum = if (combatExpGain > 0) [resourceRewardSummary("combat_exp", "实战经验", combatExpGain)] else Nil;
+            let potSum = if (gainedPot > 0) [resourceRewardSummary("potential", "潜能", gainedPot)] else Nil;
+            pure(expSum <+> potSum)
+        }
+    })
+
+def upsertArtEntity(artEnt: ArtEntity, xs: List ArtEntity): List ArtEntity = match xs {
+    Nil -> [artEnt],
+    Cons(k, rest) ->
+        if (k.artDef == artEnt.artDef) Cons(artEnt, rest)
+        else Cons(k, upsertArtEntity(artEnt, rest)),
+}
+
+def upsertKnownArtEntity(pid: String, artType: ArtType, artEnt: ArtEntity): Game Void =
+    updatePlayer(pid, overF(playerCharL() ~>> charArtL(), (m) -> {
+        let cur = optOr(mapLookup(m, artType), Nil);
+        mapInsert(m, artType, upsertArtEntity(artEnt, cur))
+    }))
+
+def refreshEquippedArt(pid: String, artType: ArtType, artEnt: ArtEntity): Game Void =
+    whenM(!artTypeEq(artType, Foundation), () ->
+        getsPlayer(pid) >>= ((player) ->
+            match mapLookup(player.playerCharacter.charEnabled, artType) {
+                Some(en) if (en.artDef == artEnt.artDef) ->
+                    updatePlayer(pid, overF(playerCharL() ~>> charEnabledL(), (m) -> mapInsert(m, artType, artEnt))),
+                _ -> pure(()),
+            }
+        )
+    )
+
+def missingArtRequirements(martialArtMap: OrdMap String MartialArt, player: Player, reqs: List ArtRequirement): List String =
+    fp.listFilterMap(reqs, (r) -> {
+        let curLv = optOr(playerKnownArtLevel(player, r.artRequirementArt), 0);
+        if (curLv >= r.artRequirementLevel) None
+        else {
+            let reqName = match mapLookup(martialArtMap, r.artRequirementArt) {
+                Some(ma) -> ma.artName,
+                None -> r.artRequirementArt,
+            };
+            Some(reqName + " " + intToStr(curLv) + "/" + intToStr(r.artRequirementLevel))
+        }
+    })
+
+def ensureArtRequirements(pid: String, martialArtMap: OrdMap String MartialArt, ma: MartialArt): Game Void =
+    getsPlayer(pid) >>= ((player) -> {
+        let missing = missingArtRequirements(martialArtMap, player, ma.artRequires);
+        match missing {
+            Nil -> pure(()),
+            _ -> throwStructured("cannot_learn_art", [
+                ("art", ma.artName),
+                ("requirements", strJoin(missing, ", ")),
+            ]),
+        }
+    })
+
+pub def grantArtRewards(pid: String, artId: String, level: Int): Game (List RewardSummary) =
+    if (level <= 0) pure(Nil)
+    else get() >>= ((gs) -> match mapLookup(gs.world.martialArts, artId) {
+        None -> throwStructured("martial_art_not_found_learning", [("artId", artId)]),
+        Some(ma) ->
+            if (level > ma.artMaxLevel) {
+                throwStructured("learning_level_exceeds_max", [
+                    ("art", ma.artName),
+                    ("max", intToStr(ma.artMaxLevel)),
+                ])
+            } else {
+                ensureArtRequirements(pid, gs.world.martialArts, ma)
+                *>> getsPlayer(pid) >>= ((player) -> {
+                    let curLv = optOr(playerKnownArtLevel(player, artId), 0);
+                    if (curLv >= level) pure(Nil)
+                    else {
+                        let learned = MkArtEntity { artDef: artId, artLevel: level, artProgress: 0 };
+                        let at = ma.artType;
+                        upsertKnownArtEntity(pid, at, learned)
+                        *>> refreshEquippedArt(pid, at, learned)
+                        *>> whenM(!artTypeEq(at, Foundation), () ->
+                            getsPlayer(pid) >>= ((p2) ->
+                                whenM(optIsNone(mapLookup(p2.playerCharacter.charEnabled, at)), () ->
+                                    updatePlayer(pid, overF(playerCharL() ~>> charEnabledL(), (m) -> mapInsert(m, at, learned)))
+                                )
+                            )
+                        )
+                        *>> markPlayerDirty(pid)
+                        *>> pure([martialArtRewardSummary(ma, level)])
+                    }
+                })
+            },
+    })
+
+pub def grantArt(pid: String, artId: String, level: Int): Game Void =
+    grantArtRewards(pid, artId, level) >>= ((rewards) ->
+        unlessM(listLen(rewards) == 0, () -> tellGame(pid, RewardMsg(rewards)))
+    )
+
+pub def grantQuestRewardSummaries(pid: String, qid: String): Game (List RewardSummary) =
+    get() >>= ((gs) -> match mapLookup(gs.world.quests, qid) {
+        None -> throwStructured("quest_reward_not_found", [("questId", qid)]),
+        Some(quest) -> {
+            let rew = quest.questReward;
+            whenM(rew.questRewardMoney > 0, () -> updatePlayer(pid, overF(playerMoneyL(), (m) -> m + rew.questRewardMoney)))
+            *>> forEachM(rew.questRewardItems, (ri) -> addInventoryItem(pid, ri.questRewardItemId, ri.questRewardItemAmount))
+            *>> grantGrowth(pid, rew.questRewardCombatExp, rew.questRewardPotential) >>= ((growth) -> {
+                let itemAndMoneyRew = MkQuestReward {
+                    questRewardMoney: rew.questRewardMoney,
+                    questRewardItems: rew.questRewardItems,
+                    questRewardCombatExp: 0,
+                    questRewardPotential: 0,
+                };
+                pure(questRewardSummariesPure(gs.world.items, itemAndMoneyRew) <+> growth)
+            })
+        },
+    })
+
+pub def grantQuestReward(pid: String, qid: String): Game Void =
+    grantQuestRewardSummaries(pid, qid) >>= ((sums) ->
+        unlessM(listLen(sums) == 0, () -> tellGame(pid, RewardMsg(sums)))
+    )
+
+pub def completeRepeatableJob(pid: String, qid: String): Game (List RewardSummary) =
+    get() >>= ((gs) -> match mapLookup(gs.world.quests, qid) {
+        None -> throwStructured("quest_reward_not_found", [("questId", qid)]),
+        Some(quest) ->
+            ensureStoryState(pid) >>= ((st) -> {
+                let prevStreak = optOr(mapLookup(st.storyJobStreaks, qid), 0);
+                let newStreak = prevStreak + 1;
+                let rew = quest.questReward;
+                let scaledMoney = jobStreakScale(newStreak, rew.questRewardMoney);
+                let scaledExp = jobStreakScale(newStreak, rew.questRewardCombatExp);
+                let scaledPot = jobStreakScale(newStreak, rew.questRewardPotential);
+                overL(gsStoriesL(), (m) -> mapUpdate(m, pid, (s) ->
+                    s
+                        |> overF(storyQuestStagesL(), (qs) -> mapDelete(qs, qid))
+                        |> overF(storyJobStreaksL(), (js) -> mapInsert(js, qid, newStreak))
+                ))
+                *>> whenM(scaledMoney > 0, () -> updatePlayer(pid, overF(playerMoneyL(), (mon) -> mon + scaledMoney)))
+                *>> forEachM(rew.questRewardItems, (ri) -> addInventoryItem(pid, ri.questRewardItemId, ri.questRewardItemAmount))
+                *>> grantGrowth(pid, scaledExp, scaledPot) >>= ((growth) -> {
+                    let scaledItemsAndMoney = MkQuestReward {
+                        questRewardMoney: scaledMoney,
+                        questRewardItems: rew.questRewardItems,
+                        questRewardCombatExp: 0,
+                        questRewardPotential: 0,
+                    };
+                    let sums = questRewardSummariesPure(gs.world.items, scaledItemsAndMoney);
+                    tellGame(pid, SystemMsg(MkSystemMessage {
+                        systemMessageKey: "job_completed",
+                        systemMessageParams: mapFromList([("job", quest.questName), ("streak", intToStr(newStreak))]),
+                    }))
+                    *>> markPlayerDirty(pid)
+                    *>> pure(sums <+> growth)
+                })
+            }),
+    })
+
+// ============================================================================
+// Battle Snapshots, Story Battles & Story Trigger Engine
+// ============================================================================
+
+pub def combatStyleForCharacter(char: Character): String =
+    match mapLookup(char.charEquipped, WeaponSlot) {
+        Some(eq) -> match eq.equippedWeaponKind {
+            Some(SwordWeapon) -> "sword",
+            Some(FistWeapon) -> "fist",
+            None -> if (mapMember(char.charEnabled, Sword)) "sword" else "fist",
+        },
+        None -> if (mapMember(char.charEnabled, Sword)) "sword" else "fist",
+    }
+
+def battleStateDerivedStats(effectDefs: OrdMap String Effect, st: BattleState): DerivedStats =
+    deriveCharacterStats(
+        st.battleChar,
+        st.battleCombatExp,
+        characterDerivedStatSources(effectDefs, st.battleEffects, st.battleChar)
+    )
+
+def dedupePreparedSkills(xs: List PreparedActiveSkill): List PreparedActiveSkill = match xs {
+    Nil -> Nil,
+    Cons(h, rest) -> {
+        let sid = h.preparedActiveSkillSkill.activeSkillId;
+        Cons(h, dedupePreparedSkills(listFilter(rest, (p) -> p.preparedActiveSkillSkill.activeSkillId != sid)))
+    },
+}
+
+pub def preparedActiveSkills(wrld: World, player: Player): List PreparedActiveSkill = {
+    let slotTypes = [Internal, Lightness, Sword, Fist];
+    let raw = fp.listConcatMap(slotTypes, (at) ->
+        match mapLookup(player.playerCharacter.charEnabled, at) {
+            None -> Nil,
+            Some(ent) -> match mapLookup(wrld.martialArts, ent.artDef) {
+                None -> Nil,
+                Some(ma) -> fp.listFilterMap(ma.artActiveSkills, (sk) -> {
+                    let reqMet = listAll(sk.activeSkillReqArts, (ra) -> optOr(playerKnownArtLevel(player, ra), 0) > 0);
+                    if (sk.activeSkillUnlockLevel <= ent.artLevel && reqMet) {
+                        Some(MkPreparedActiveSkill { preparedActiveSkillArt: ma, preparedActiveSkillSkill: sk })
+                    } else None
+                }),
+            },
+        }
+    );
+    dedupePreparedSkills(raw)
+}
+
+def battleStateToSnapshot(effectDefs: OrdMap String Effect, st: BattleState): CombatantSnapshot = {
+    let ch = st.battleChar;
+    let d = battleStateDerivedStats(effectDefs, st);
+    let effSums = listMap(mapElems(st.battleEffects), (ae) ->
+        match mapLookup(effectDefs, ae.activeEffectDef) {
+            Some(eff) -> MkEffectSummary {
+                effectSummaryId: ae.activeEffectDef,
+                effectSummaryName: eff.effectName,
+                effectSummaryType: effectTypeToText(eff.effectType),
+                effectSummaryRemaining: ae.activeEffectRemaining,
+                effectSummaryValue: ae.activeEffectValue,
+            },
+            None -> MkEffectSummary {
+                effectSummaryId: ae.activeEffectDef,
+                effectSummaryName: ae.activeEffectDef,
+                effectSummaryType: "unknown",
+                effectSummaryRemaining: ae.activeEffectRemaining,
+                effectSummaryValue: ae.activeEffectValue,
+            },
+        }
+    );
+    MkCombatantSnapshot {
+        combatantSnapshotId: ch.charId,
+        combatantSnapshotName: ch.charName,
+        combatantSnapshotGender: genderToText(ch.charGender),
+        combatantSnapshotCombatStyle: combatStyleForCharacter(ch),
+        combatantSnapshotHp: ch.charHP,
+        combatantSnapshotMaxHp: d.dsMaxHp,
+        combatantSnapshotQi: st.battleQi,
+        combatantSnapshotMaxQi: d.dsMaxQi,
+        combatantSnapshotAp: st.battleAp,
+        combatantSnapshotApProgress: maxFloat(st.battleApProgress, intToFloat(st.battleAp)),
+        combatantSnapshotAgility: d.dsAgility,
+        combatantSnapshotEffects: effSums,
+    }
+}
+
+pub def sendBattleSnapshot(pid: String, battle: Battle): Game Void =
+    get() >>= ((gs) ->
+    getsPlayer(pid) >>= ((player) -> {
+        let effDefs = gs.world.effects;
+        let availSkills = listMap(preparedActiveSkills(gs.world, player), (ps) -> {
+            let sk = ps.preparedActiveSkillSkill;
+            let reqNames = listMap(sk.activeSkillReqStatus, (eid) ->
+                match mapLookup(effDefs, eid) { Some(e) -> e.effectName, None -> eid }
+            );
+            MkActiveSkillSummary {
+                activeSkillSummaryId: sk.activeSkillId,
+                activeSkillSummaryName: sk.activeSkillName,
+                activeSkillSummaryDesc: sk.activeSkillDesc,
+                activeSkillSummaryCost: sk.activeSkillCost,
+                activeSkillSummaryApReq: sk.activeSkillApReq,
+                activeSkillSummaryUnlockLevel: sk.activeSkillUnlockLevel,
+                activeSkillSummaryCooldown: sk.activeSkillCooldown,
+                activeSkillSummaryReqStatus: sk.activeSkillReqStatus,
+                activeSkillSummaryReqStatusNames: reqNames,
+                activeSkillSummaryDamage: sk.activeSkillDamage,
+                activeSkillSummaryHeal: sk.activeSkillHeal,
+            }
+        });
+        let cds = listMap(mapToAscList(battle.battleState.battleActiveSkillCooldowns), (cp) -> match cp {
+            (sid, rem) -> MkActiveSkillCooldownSummary {
+                activeSkillCooldownSummaryActiveSkillId: sid,
+                activeSkillCooldownSummaryRemaining: rem,
+            },
+        });
+        let pendingId = fmap((p) -> p.pendingActiveSkillSkill.activeSkillId, battle.battlePendingActiveSkill);
+        tellGame(pid, BattleStateMsg(MkBattleSnapshot {
+            battleSnapshotPlayer: battleStateToSnapshot(effDefs, battle.battleState),
+            battleSnapshotEnemy: battleStateToSnapshot(effDefs, battle.battleEnemyState),
+            battleSnapshotActiveSkillCooldowns: cds,
+            battleSnapshotActiveSkills: availSkills,
+            battleSnapshotActionLockRemaining: battle.battleActionLockRemaining,
+            battleSnapshotPendingActiveSkillId: pendingId,
+        }))
+    }))
+
+pub def sendBattleStats(pid: String, battle: Battle): Game Void =
+    getsPlayer(pid) >>= ((player) ->
+    get() >>= ((gs) -> {
+        let pSt = battle.battleState;
+        let ch = pSt.battleChar;
+        let d = battleStateDerivedStats(gs.world.effects, pSt);
+        let sum = buildPlayerStatsSummary(
+            player,
+            ch.charHP,
+            d.dsMaxHp,
+            pSt.battleQi,
+            d.dsMaxQi,
+            pSt.battleAp,
+            "in_battle",
+            0,
+            0,
+            None
+        );
+        tellGame(pid, PlayerStatsMsg(sum))
+        *>> sendBattleSnapshot(pid, battle)
+    }))
+
+pub def startStoryBattle(pid: String, target: String, initialDelayMs: Int): Game Void =
+    getsPlayer(pid) >>= ((player) ->
+    getsRoomCharacter(pid, target, Dialogue) >>= ((npc) -> {
+        let lockSec = intToFloat(maxInt(0, initialDelayMs)) / 1000.0;
+        let battle = newBattle(player, npc) |> setF(battleActionLockL(), lockSec);
+        overL(gsIsolatedBattlesL(), (s) -> setInsert(s, pid))
+        *>> overL(gsBattlesL(), (m) -> mapInsert(m, pid, battle))
+        *>> updatePlayer(pid, setF(playerStatusL(), PlayerInBattle))
+        *>> tellGame(pid, AttackMsg(player.playerCharacter.charName, npc.charName))
+        *>> sendBattleSnapshot(pid, battle)
+    }))
+
+pub def storyConditionMet(pid: String, cond: StoryCondition): Game Bool =
+    ensureStoryState(pid) >>= ((st) -> match cond {
+        QuestNotStarted(q) -> pure(!mapMember(st.storyQuestStages, q)),
+        QuestStageIs(q, stage) -> pure(match mapLookup(st.storyQuestStages, q) {
+            Some(cur) -> cur == stage,
+            None -> false,
+        }),
+        QuestCompleted(q) -> pure(match mapLookup(st.storyQuestStages, q) {
+            Some(cur) -> cur == "completed",
+            None -> false,
+        }),
+        FlagSet(fl) -> pure(setMember(st.storyFlags, fl)),
+        FlagUnset(fl) -> pure(!setMember(st.storyFlags, fl)),
+        NpcDead(cid) -> getsWorldChar(cid) >>= ((npc) -> pure(charStatusEq(npc.charStatus, CharDead))),
+        NpcAlive(cid) -> getsWorldChar(cid) >>= ((npc) -> pure(charStatusEq(npc.charStatus, CharAlive))),
+        HasItem(iid) -> getsPlayer(pid) >>= ((p) -> pure(optOr(mapLookup(p.playerInventory, iid), 0) > 0)),
+        LacksItem(iid) -> getsPlayer(pid) >>= ((p) -> pure(optOr(mapLookup(p.playerInventory, iid), 0) <= 0)),
+        InMap(mid) -> getsPlayer(pid) >>= ((p) -> {
+            let (curMid, _) = p.playerPosition;
+            pure(curMid == mid)
+        }),
+    })
+
+def normalizeStoryDuration(ms: Int): Int = clampInt(0, 8000, ms)
+
+def storyReadingDuration(text: String): Int =
+    clampInt(1000, 3200, 500 + utf8CharCount(text) * 45)
+
+def queuedDelayFor(act: StoryAction): Int = match act {
+    StoryDelay(ms) -> normalizeStoryDuration(ms),
+    StoryTransition(_, ms) -> normalizeStoryDuration(ms),
+    _ -> 0,
+}
+
+def actionIsSilent(act: StoryAction): Bool = match act {
+    SetQuestStage(_, _) -> true,
+    CompleteQuest(_) -> true,
+    CompleteRepeatableJob(_) -> true,
+    SetFlag(_) -> true,
+    ClearFlag(_) -> true,
+    GiveItem(_, _) -> true,
+    TakeItem(_, _) -> true,
+    GiveMoney(_) -> true,
+    LearnArt(_, _) -> true,
+    _ -> false,
+}
+
+def hasExplicitPauseBeforeNextBeat(acts: List StoryAction): Bool = match acts {
+    Nil -> false,
+    Cons(StoryDelay(_), _) -> true,
+    Cons(a, rest) ->
+        if (actionIsSilent(a)) hasExplicitPauseBeforeNextBeat(rest)
+        else false,
+}
+
+def executeOneStoryAction(pid: String, elapsedMs: Int, act: StoryAction): Game (List RewardSummary) = match act {
+    StoryMessage(speaker, text) ->
+        tellGame(pid, StoryMsg(speaker, text)) *>> pure(Nil),
+    StoryDelay(ms) ->
+        tellGame(pid, StoryDelayMsg(normalizeStoryDuration(ms))) *>> pure(Nil),
+    StoryTransition(text, ms) -> {
+        let dur = normalizeStoryDuration(ms);
+        tellGame(pid, StoryTransitionMsg(text, dur))
+        *>> tellGame(pid, StoryDelayMsg(dur))
+        *>> pure(Nil)
+    },
+    SetQuestStage(q, stg) ->
+        overL(gsStoriesL(), (m) -> mapUpdate(m, pid, overF(storyQuestStagesL(), (qs) -> mapInsert(qs, q, stg))))
+        *>> pure(Nil),
+    CompleteQuest(q) ->
+        overL(gsStoriesL(), (m) -> mapUpdate(m, pid, overF(storyQuestStagesL(), (qs) -> mapInsert(qs, q, "completed"))))
+        *>> grantQuestRewardSummaries(pid, q),
+    CompleteRepeatableJob(q) ->
+        completeRepeatableJob(pid, q),
+    SetFlag(fl) ->
+        overL(gsStoriesL(), (m) -> mapUpdate(m, pid, overF(storyFlagsL(), (fs) -> setInsert(fs, fl))))
+        *>> pure(Nil),
+    ClearFlag(fl) ->
+        overL(gsStoriesL(), (m) -> mapUpdate(m, pid, overF(storyFlagsL(), (fs) -> setDelete(fs, fl))))
+        *>> pure(Nil),
+    HideNpc(npc) ->
+        overL(gsStoriesL(), (m) -> mapUpdate(m, pid, overF(storyHiddenNpcsL(), (hs) -> setInsert(hs, npc))))
+        *>> playerView(pid)
+        *>> pure(Nil),
+    ShowNpc(npc) ->
+        overL(gsStoriesL(), (m) -> mapUpdate(m, pid, overF(storyHiddenNpcsL(), (hs) -> setDelete(hs, npc))))
+        *>> playerView(pid)
+        *>> pure(Nil),
+    GiveItem(iid, amt) ->
+        if (amt <= 0) pure(Nil)
+        else addInventoryItem(pid, iid, amt) *>> itemRewardSummary(iid, amt) >>= ((sum) -> pure([sum])),
+    TakeItem(iid, amt) ->
+        whenM(amt > 0, () -> consumeInventoryItem(pid, iid, amt)) *>> pure(Nil),
+    GiveMoney(amt) ->
+        if (amt <= 0) pure(Nil)
+        else updatePlayer(pid, overF(playerMoneyL(), (m) -> m + amt)) *>> pure([moneyRewardSummary(amt)]),
+    LearnArt(aid, lvl) ->
+        grantArtRewards(pid, aid, lvl),
+    StartBattle(target) ->
+        startStoryBattle(pid, target, elapsedMs) *>> pure(Nil),
+    MovePlayer(mid, pos) ->
+        movePlayerToRoom(pid, mid, pos) >>= ((newRoom) ->
+            tellGame(pid, MoveMsg(newRoom.roomName))
+            *>> playerView(pid)
+            *>> pure(Nil)
+        ),
+}
+
+def executeAllStoryActions(pid: String, elapsedMs: Int, actions: List StoryAction): Game (List RewardSummary) = match actions {
+    Nil -> pure(Nil),
+    Cons(StoryTransition(text, ms), Cons(MovePlayer(mid, pos), rest)) -> {
+        let dur = normalizeStoryDuration(ms);
+        let enterDur = maxInt(180, minInt(400, floorDiv(dur, 4)));
+        tellGame(pid, StoryTransitionMsg(text, dur))
+        *>> tellGame(pid, StoryDelayMsg(enterDur))
+        *>> executeOneStoryAction(pid, elapsedMs, MovePlayer(mid, pos))
+        *>> tellGame(pid, StoryDelayMsg(dur - enterDur))
+        *>> executeAllStoryActions(pid, elapsedMs + dur, rest)
+    },
+    Cons(act, rest) ->
+        executeOneStoryAction(pid, elapsedMs, act) >>= ((rew1) -> {
+            let readingPause = match act {
+                StoryMessage(_, text) if (!hasExplicitPauseBeforeNextBeat(rest)) -> storyReadingDuration(text),
+                _ -> 0,
+            };
+            let actDelay = queuedDelayFor(act);
+            whenM(readingPause > 0, () -> tellGame(pid, StoryDelayMsg(readingPause)))
+            *>> executeAllStoryActions(pid, elapsedMs + actDelay + readingPause, rest) >>= ((rew2) ->
+                pure(rew1 <+> rew2)
+            )
+        }),
+}
+
+pub def executeStoryActions(pid: String, actions: List StoryAction): Game Void =
+    tellGame(pid, StorySequenceMsg(true))
+    *>> executeAllStoryActions(pid, 0, actions) >>= ((rewards) ->
+        unlessM(listLen(rewards) == 0, () -> tellGame(pid, RewardMsg(rewards)))
+        *>> sendPlayerInventory(pid)
+        *>> playerQuestLog(pid)
+        *>> tellGame(pid, StorySequenceMsg(false))
+    )
+
+pub def runStoryTrigger(pid: String, trigger: StoryTrigger): Game Bool =
+    ensureStoryState(pid)
+    *>> get() >>= ((gs) -> {
+        let allEvents = fp.listConcatMap(mapElems(gs.world.quests), (q) -> q.questEvents);
+        filterM(allEvents, (ev) ->
+            if (!storyTriggerEq(ev.questEventTrigger, trigger)) pure(false)
+            else allM(ev.questEventConditions, (c) -> storyConditionMet(pid, c))
+        ) >>= ((matches) -> match matches {
+            Nil -> pure(false),
+            Cons(first, _) -> executeStoryActions(pid, first.questEventActions) *>> pure(true),
+        })
+    })
+
+// ============================================================================
+// World Actions: Move, Talk, Attack, Items, Equipment & Shop
+// ============================================================================
+
+pub def playerMove(pid: String, dir: Direction): Game Void =
+    getsPlayer(pid) >>= ((player) -> {
+        let (curMapId, curPos) = player.playerPosition;
+        getsWorldRoom(curMapId, curPos) >>= ((curRoom) ->
+            match mapLookup(curRoom.roomExits, dir) {
+                None -> throwErr(UnableToMove(dir, curRoom)),
+                Some(dst) ->
+                    movePlayerToRoom(pid, dst.roomRefMapId, dst.roomRefPos) >>= ((newRoom) ->
+                        tellGame(pid, MoveMsg(newRoom.roomName))
+                        *>> playerView(pid)
+                        *>> runStoryTrigger(pid, TriggerEnterRoom(dst.roomRefMapId, dst.roomRefPos))
+                        *>> pure(())
+                    ),
+            }
+        )
+    })
+
+pub def playerTalk(pid: String, target: String): Game Void =
+    getsRoomCharacter(pid, target, Dialogue) >>= ((npc) -> {
+        let talkable = setMember(npc.charActions, Dialogue) && charStatusEq(npc.charStatus, CharAlive);
+        if (!talkable) throwErr(UnableToInteract(npc, Dialogue))
+        else runStoryTrigger(pid, TriggerTalk(target)) >>= ((handled) ->
+            if (handled) pure(())
+            else pickRandom(npc.charDialogue) >>= ((dlgOpt) -> match dlgOpt {
+                None -> throwErr(UnableToInteract(npc, Dialogue)),
+                Some(line) -> tellGame(pid, DialogueMsg(npc.charName, line)),
+            })
+        )
+    })
+
+pub def playerAttack(pid: String, target: String): Game Void =
+    getsPlayer(pid) >>= ((player) ->
+    getsRoomCharacter(pid, target, Attacking) >>= ((npc) -> {
+        let attackable = setMember(npc.charActions, Attacking) && charStatusEq(npc.charStatus, CharAlive);
+        if (!attackable) throwErr(UnableToInteract(npc, Attacking))
+        else usePlayerRuntime(pid) >>= ((rt) ->
+            if (rt.runtimeInjuredRemaining > 0.0) {
+                throwStructured("player_injured", [("seconds", intToStr(ceilInt(rt.runtimeInjuredRemaining)))])
+            } else {
+                let battle = newBattle(player, npc);
+                overL(gsWorldL() ~>> worldCharsL(), (m) -> mapUpdate(m, target, setF(charStatusL(), CharBattle)))
+                *>> overL(gsBattlesL(), (m) -> mapInsert(m, pid, battle))
+                *>> updatePlayer(pid, setF(playerStatusL(), PlayerInBattle))
+                *>> tellGame(pid, AttackMsg(player.playerCharacter.charName, npc.charName))
+                *>> sendBattleSnapshot(pid, battle)
+            }
+        )
+    }))
+
+def equipItemWithMsg(pid: String, item: Item, eq: ItemEquip, msg: String): Game Void = {
+    let equipped = MkEquippedItem {
+        equippedItemId: item.itemId,
+        equippedSlot: eq.equipSlot,
+        equippedWeaponKind: eq.equipWeaponKind,
+        equippedModifiers: eq.equipModifiers,
+    };
+    updatePlayer(pid, overF(playerCharL() ~>> charEquippedL(), (m) -> mapInsert(m, eq.equipSlot, equipped)))
+    *>> clampPlayerVitalsToDerived(pid)
+    *>> getsPlayer(pid) >>= ((player) ->
+        tellGame(pid, UseItemMsg(player.playerCharacter.charName, msg))
+        *>> sendPlayerStats(pid)
+        *>> markPlayerDirty(pid)
+    )
+}
+
+def unequipSlotWithMsg(pid: String, slot: EquipSlot, msg: String): Game Void =
+    updatePlayer(pid, overF(playerCharL() ~>> charEquippedL(), (m) -> mapDelete(m, slot)))
+    *>> clampPlayerVitalsToDerived(pid)
+    *>> getsPlayer(pid) >>= ((player) ->
+        tellGame(pid, UseItemMsg(player.playerCharacter.charName, msg))
+        *>> sendPlayerStats(pid)
+        *>> markPlayerDirty(pid)
+    )
+
+pub def playerEquipItem(pid: String, iid: String): Game Void =
+    getsPlayer(pid) >>= ((player) ->
+        if (optOr(mapLookup(player.playerInventory, iid), 0) <= 0) {
+            throwStructured("item_not_in_inventory", [("itemId", iid)])
+        } else {
+            getsWorldItem(iid) >>= ((item) -> match item.itemUse {
+                Some(EquipUse(eq)) -> {
+                    let msg = optOr(eq.equipMessage, "你佩好了" + item.itemName + "。");
+                    equipItemWithMsg(pid, item, eq, msg) *>> sendPlayerInventory(pid)
+                },
+                _ -> throwStructured("item_cannot_be_equipped", [("item", item.itemName)]),
+            })
+        }
+    )
+
+pub def playerUnequipSlot(pid: String, slot: EquipSlot): Game Void =
+    getsPlayer(pid) >>= ((player) -> match mapLookup(player.playerCharacter.charEquipped, slot) {
+        None -> throwStructured("slot_not_equipped", [("slot", equipSlotToText(slot))]),
+        Some(equipped) ->
+            get() >>= ((gs) -> {
+                let maybeItem = mapLookup(gs.world.items, equipped.equippedItemId);
+                let disp = match maybeItem { Some(it) -> it.itemName, None -> equipped.equippedItemId };
+                let customMsg = match maybeItem {
+                    Some(it) -> match it.itemUse {
+                        Some(EquipUse(eq)) -> eq.unequipMessage,
+                        _ -> None,
+                    },
+                    None -> None,
+                };
+                let msg = optOr(customMsg, "你卸下了" + disp + "。");
+                unequipSlotWithMsg(pid, slot, msg) *>> sendPlayerInventory(pid)
+            }),
+    })
+
+def playerKnowsArtAtLeast(pid: String, artId: String, level: Int): Game Bool =
+    get() >>= ((gs) -> match mapLookup(gs.world.martialArts, artId) {
+        None -> throwStructured("martial_art_not_found_learning", [("artId", artId)]),
+        Some(_) -> getsPlayer(pid) >>= ((p) -> pure(optOr(playerKnownArtLevel(p, artId), 0) >= level)),
+    })
+
+pub def playerUseItem(pid: String, iid: String): Game Void =
+    getsPlayer(pid) >>= ((player) ->
+        if (optOr(mapLookup(player.playerInventory, iid), 0) <= 0) {
+            throwStructured("item_not_in_inventory", [("itemId", iid)])
+        } else {
+            getsWorldItem(iid) >>= ((item) -> match item.itemUse {
+                None -> throwStructured("item_cannot_be_used", [("item", item.itemName)]),
+                Some(LearnArtUse { itemUseArt: aid, itemUseLevel: lvl, itemUseMinLevel: _, itemUseMaxLevel: _, itemUseQuality: _, itemUseConsume: shouldConsume, itemUseMessage: msgOpt, itemUseRepeatMessage: repOpt }) ->
+                    playerKnowsArtAtLeast(pid, aid, lvl) >>= ((known) ->
+                        if (known) {
+                            let rmsg = optOr(repOpt, "你又翻了一遍" + item.itemName + "，其中关窍早已记在心里。");
+                            tellGame(pid, UseItemMsg(player.playerCharacter.charName, rmsg))
+                            *>> sendPlayerInventory(pid)
+                        } else {
+                            let msg = optOr(msgOpt, "你使用了" + item.itemName + "。");
+                            grantArt(pid, aid, lvl)
+                            *>> whenM(shouldConsume, () -> consumeInventoryItem(pid, item.itemId, 1))
+                            *>> tellGame(pid, UseItemMsg(player.playerCharacter.charName, msg))
+                            *>> sendPlayerInventory(pid)
+                        }
+                    ),
+                Some(MedicineUse(med)) -> {
+                    let d = deriveStats(player);
+                    let ch = player.playerCharacter;
+                    let nextHp = minInt(d.dsMaxHp, ch.charHP + maxInt(0, med.medicineHp));
+                    let nextQi = minInt(d.dsMaxQi, ch.charQi + maxInt(0, med.medicineQi));
+                    let nextJing = minInt(d.dsMaxJing, ch.charJing + maxInt(0, med.medicineJing));
+                    updatePlayer(pid, overF(playerCharL(), (c) ->
+                        c
+                            |> setF(charHpL(), nextHp)
+                            |> setF(charQiL(), nextQi)
+                            |> setF(charJingL(), nextJing)
+                    ))
+                    *>> whenM(med.medicineCureInjury > 0, () ->
+                        usePlayerRuntime(pid) >>= ((rt) -> {
+                            let nextInj = maxFloat(0.0, rt.runtimeInjuredRemaining - intToFloat(med.medicineCureInjury));
+                            putPlayerRuntime(pid, rt |> setF(runtimeInjuredL(), nextInj))
+                        })
+                    )
+                    *>> whenM(med.medicineConsume, () -> consumeInventoryItem(pid, item.itemId, 1))
+                    *>> tellGame(pid, UseItemMsg(ch.charName, optOr(med.medicineMessage, "你服下了" + item.itemName + "，气息渐趋平缓。")))
+                    *>> sendPlayerStats(pid)
+                    *>> markPlayerDirty(pid)
+                    *>> sendPlayerInventory(pid)
+                },
+                Some(EquipUse(eq)) -> {
+                    let step = match mapLookup(player.playerCharacter.charEquipped, eq.equipSlot) {
+                        Some(ex) if (ex.equippedItemId == item.itemId) ->
+                            unequipSlotWithMsg(pid, eq.equipSlot, optOr(eq.unequipMessage, "你卸下了" + item.itemName + "。")),
+                        _ ->
+                            equipItemWithMsg(pid, item, eq, optOr(eq.equipMessage, "你佩好了" + item.itemName + "。")),
+                    };
+                    step *>> sendPlayerInventory(pid)
+                },
+            })
+        }
+    )
+
+def resolveShopMerchant(pid: String, maybeMerchant: Option String, iid: String): Game Character =
+    match maybeMerchant {
+        Some(mid) -> getsRoomCharacter(pid, mid, Dialogue),
+        None ->
+            getsPlayer(pid) >>= ((player) -> {
+                let (curMapId, curPos) = player.playerPosition;
+                getsWorldRoom(curMapId, curPos) >>= ((room) ->
+                filterM(room.roomChar, (cid) -> npcVisibleToPlayer(pid, cid)) >>= ((visIds) ->
+                get() >>= ((gs) -> {
+                    let matching = fp.listFilterMap(visIds, (cid) ->
+                        match mapLookup(gs.world.chars, cid) {
+                            Some(ch) if (charStatusEq(ch.charStatus, CharAlive) && mapMember(ch.charShop, iid)) -> Some(ch),
+                            _ -> None,
+                        }
+                    );
+                    match matching {
+                        Cons(m, _) -> pure(m),
+                        Nil -> throwStructured("merchant_not_carrying_item", [("itemId", iid)]),
+                    }
+                })))
+            }),
+    }
+
+pub def playerBuyItem(pid: String, maybeMerchant: Option String, iid: String): Game Void =
+    resolveShopMerchant(pid, maybeMerchant, iid) >>= ((merchant) ->
+        match mapLookup(merchant.charShop, iid) {
+            None -> throwStructured("merchant_not_carrying_item", [("merchant", merchant.charName), ("itemId", iid)]),
+            Some(price) ->
+                getsPlayer(pid) >>= ((player) ->
+                    if (player.playerMoney < price) {
+                        throwStructured("not_enough_money", [
+                            ("required", intToStr(price)),
+                            ("current", intToStr(player.playerMoney)),
+                        ])
+                    } else {
+                        getsWorldItem(iid) >>= ((item) ->
+                            updatePlayer(pid, overF(playerMoneyL(), (m) -> m - price))
+                            *>> addInventoryItem(pid, iid, 1)
+                            *>> itemRewardSummary(iid, 1) >>= ((sum) ->
+                                tellGame(pid, RewardMsg([sum]))
+                                *>> tellGame(pid, SystemMsg(MkSystemMessage {
+                                    systemMessageKey: "item_bought",
+                                    systemMessageParams: mapFromList([
+                                        ("merchant", merchant.charName),
+                                        ("item", item.itemName),
+                                        ("price", intToStr(price)),
+                                    ]),
+                                }))
+                                *>> sendPlayerInventory(pid)
+                                *>> sendPlayerStats(pid)
+                                *>> markPlayerDirty(pid)
+                            )
+                        )
+                    }
+                ),
+        }
+    )
+
+// ============================================================================
+// Progression Training Steps & Busy Queue (`practice`, `learn`, `study`, `research`, `meditate`)
+// ============================================================================
+
+def lookupMartialArt(missingCode: String, artId: String): Game MartialArt =
+    get() >>= ((gs) -> match mapLookup(gs.world.martialArts, artId) {
+        Some(ma) -> pure(ma),
+        None -> throwStructured(missingCode, [("artId", artId)]),
+    })
+
+def requireKnownArtLevel(player: Player, ma: MartialArt): Game Int =
+    match playerKnownArtLevel(player, ma.artId) {
+        Some(lv) -> pure(lv),
+        None -> throwStructured("art_not_learned", [("art", ma.artName)]),
+    }
+
+def knownFoundationArt(player: Player, ma: MartialArt): Game (Option (MartialArt, Int)) =
+    match ma.artFoundation {
+        None -> pure(None),
+        Some(fid) ->
+            lookupMartialArt("foundation_art_not_found", fid) >>= ((fArt) ->
+                pure(fmap((lv) -> (fArt, lv), playerKnownArtLevel(player, fid)))
+            ),
+    }
+
+def ensureArtCanGain(
+    pid: String,
+    ma: MartialArt,
+    sourceCap: Option Int,
+    onSourceCap: Int -> Game Void
+): Game Void =
+    getsPlayer(pid) >>= ((player) -> match playerKnownArtEntity(player, ma.artId) {
+        None -> throwStructured("art_not_learned", [("art", ma.artName)]),
+        Some((_, known)) -> match canGainProgress(ma.artMaxLevel, player.playerCombatExp, sourceCap, known.artLevel, known.artProgress) {
+            None -> pure(()),
+            Some(BlockedByMaxLevel) -> throwStructured("art_already_max", [("art", ma.artName)]),
+            Some(BlockedByCombatExp(targetLv)) -> throwStructured("combat_exp_too_low", [
+                ("required", intToStr(combatExpRequiredForLevel(targetLv))),
+                ("current", intToStr(player.playerCombatExp)),
+                ("level", intToStr(targetLv)),
+            ]),
+            Some(BlockedBySourceCap(cap)) -> onSourceCap(cap),
+        },
+    })
+
+def addKnownArtProgress(pid: String, ma: MartialArt, sourceCap: Option Int, gain: Int): Game (List RewardSummary) =
+    getsPlayer(pid) >>= ((player) -> match playerKnownArtEntity(player, ma.artId) {
+        None -> pure(Nil),
+        Some((at, known)) -> {
+            let (newLv, newProg) = addArtProgress(ma.artMaxLevel, player.playerCombatExp, sourceCap, gain, known.artLevel, known.artProgress);
+            let updated = MkArtEntity { artDef: known.artDef, artLevel: newLv, artProgress: newProg };
+            upsertKnownArtEntity(pid, at, updated)
+            *>> refreshEquippedArt(pid, at, updated)
+            *>> markPlayerDirty(pid)
+            *>> pure(if (newLv > known.artLevel) [martialArtRewardSummary(ma, newLv)] else Nil)
+        },
+    })
+
+def gainArtProgress(pid: String, ma: MartialArt, sourceCap: Option Int, gain: Int): Game (List RewardSummary) =
+    addKnownArtProgress(pid, ma, sourceCap, gain) >>= ((rew1) ->
+    getsPlayer(pid) >>= ((player) -> {
+        let fndStep = if (artTypeEq(ma.artType, Foundation)) pure(None) else knownFoundationArt(player, ma);
+        fndStep >>= ((fndOpt) -> match fndOpt {
+            None -> pure(rew1),
+            Some((fArt, _)) ->
+                addKnownArtProgress(pid, fArt, None, foundationShare(gain)) >>= ((rew2) ->
+                    pure(rew1 <+> rew2)
+                ),
+        })
+    }))
+
+def currentRoomInsight(pid: String, artType: ArtType): Game (Int, Int) =
+    getsPlayer(pid) >>= ((player) ->
+    get() >>= ((gs) -> {
+        let (mid, pos) = player.playerPosition;
+        match world.lookupWorldRoom(gs.world, mid, pos) {
+            Some(room) -> match room.roomInsight {
+                Some(ri) -> {
+                    let applies = listLen(ri.roomInsightArts) == 0 || listAny(ri.roomInsightArts, (t) -> artTypeEq(t, artType));
+                    if (applies) pure((maxInt(0, ri.roomInsightBonus), maxInt(0, ri.roomInsightJingDiscount)))
+                    else pure((0, 0))
+                },
+                None -> pure((0, 0)),
+            },
+            None -> pure((0, 0)),
+        }
+    }))
+
+def consumeCombatInsightBonus(pid: String, bonusPerStack: Int): Game Int =
+    usePlayerRuntime(pid) >>= ((rt) ->
+        if (rt.runtimeCombatInsight > 0) {
+            putPlayerRuntime(pid, rt |> setF(runtimeInsightL(), rt.runtimeCombatInsight - 1))
+            *>> pure(bonusPerStack)
+        } else pure(0)
+    )
+
+def consumeJing(pid: String, cost: Int): Game Void =
+    whenM(cost > 0, () ->
+        getsPlayer(pid) >>= ((player) -> {
+            let cur = player.playerCharacter.charJing;
+            if (cur < cost) {
+                throwStructured("not_enough_jing", [("required", intToStr(cost)), ("current", intToStr(cur))])
+            } else {
+                updatePlayer(pid, overF(playerCharL() ~>> charJingL(), (j) -> j - cost))
+                *>> markPlayerDirty(pid)
+            }
+        })
+    )
+
+def sendTrainingResult(pid: String, rewards: List RewardSummary): Game Void =
+    unlessM(listLen(rewards) == 0, () -> tellGame(pid, RewardMsg(rewards)))
+    *>> playerArts(pid)
+    *>> sendPlayerStats(pid)
+    *>> markPlayerDirty(pid)
+
+def consumePracticeBody(pid: String, ma: MartialArt, level: Int): Game Void =
+    getsPlayer(pid) >>= ((player) -> {
+        let ch = player.playerCharacter;
+        let vit = deriveStats(player).dsVitality;
+        match ma.artType {
+            Internal -> {
+                let cost = practiceQiCost(level);
+                if (ch.charQi < cost) {
+                    throwStructured("not_enough_qi", [("required", intToStr(cost)), ("current", intToStr(ch.charQi))])
+                } else {
+                    updatePlayer(pid, overF(playerCharL() ~>> charQiL(), (q) -> q - cost))
+                }
+            },
+            Sword -> {
+                let cost = practiceHpCost(level, vit);
+                if (cost > 0 && ch.charHP <= cost) {
+                    throwStructured("not_enough_hp", [("required", intToStr(cost + 1)), ("current", intToStr(ch.charHP))])
+                } else {
+                    updatePlayer(pid, overF(playerCharL() ~>> charHpL(), (h) -> h - cost))
+                }
+            },
+            Fist -> {
+                let cost = practiceHpCost(level, vit);
+                if (cost > 0 && ch.charHP <= cost) {
+                    throwStructured("not_enough_hp", [("required", intToStr(cost + 1)), ("current", intToStr(ch.charHP))])
+                } else {
+                    updatePlayer(pid, overF(playerCharL() ~>> charHpL(), (h) -> h - cost))
+                }
+            },
+            _ -> pure(()),
+        }
+    })
+
+pub def practiceStep(pid: String, artId: String): Game Void =
+    lookupMartialArt("martial_art_not_found_training", artId) >>= ((ma) ->
+        if (artTypeEq(ma.artType, Foundation)) {
+            throwStructured("foundation_art_cannot_train", [("art", ma.artName)])
+        } else {
+            getsPlayer(pid) >>= ((player) ->
+            requireKnownArtLevel(player, ma) >>= ((level) ->
+            knownFoundationArt(player, ma) >>= ((fndOpt) -> {
+                let fndLevel = match fndOpt { Some((_, fl)) -> fl, None -> 0 };
+                let intoFnd = match fndOpt {
+                    Some((fArt, fl)) if (level >= fl) -> Some(fArt),
+                    _ -> None,
+                };
+                let sourceCap = fmap((p) -> match p { (_, fl) -> fl }, fndOpt);
+                let gateCheck = match intoFnd {
+                    Some(fArt) -> ensureArtCanGain(pid, fArt, None, (_) -> pure(())),
+                    None -> ensureArtCanGain(pid, ma, sourceCap, (_) -> pure(())),
+                };
+                gateCheck
+                *>> currentRoomInsight(pid, ma.artType) >>= ((ins) -> match ins {
+                    (locBonus, locDiscount) ->
+                        consumeJing(pid, maxInt(1, practiceJingCost(level) - locDiscount))
+                        *>> consumePracticeBody(pid, ma, level)
+                        *>> consumeCombatInsightBonus(pid, combatInsightPracticeBonus()) >>= ((cBonus) -> {
+                            let gain = practiceProgress(fndLevel) + locBonus + cBonus;
+                            let stepRew = match intoFnd {
+                                Some(fArt) -> addKnownArtProgress(pid, fArt, None, gain),
+                                None -> gainArtProgress(pid, ma, sourceCap, gain),
+                            };
+                            stepRew >>= ((rewards) -> sendTrainingResult(pid, rewards))
+                        }),
+                })
+            })))
+        }
+    )
+
+pub def learnStep(pid: String, teacherId: String, artId: String): Game Void =
+    getsRoomCharacter(pid, teacherId, Dialogue) >>= ((teacher) ->
+    ensureStoryState(pid) >>= ((st) -> {
+        let flagCheck = match teacher.charTeachRequires {
+            Some(req) if (!setMember(st.storyFlags, req.teachRequiresFlag)) ->
+                throwStructured("teacher_refuses", [("teacher", teacher.charName), ("reason", req.teachRefusal)]),
+            _ -> pure(()),
+        };
+        flagCheck *>> match mapLookup(teacher.charTeaches, artId) {
+            None -> throwStructured("teacher_cannot_teach_art", [("teacher", teacher.charName), ("artId", artId)]),
+            Some(tMax) ->
+                get() >>= ((gs) ->
+                lookupMartialArt("martial_art_not_found_learning", artId) >>= ((ma) ->
+                    ensureArtRequirements(pid, gs.world.martialArts, ma)
+                    *>> getsPlayer(pid) >>= ((player) ->
+                        if (player.playerPotential < 1) {
+                            throwStructured("not_enough_potential", [("required", "1"), ("current", intToStr(player.playerPotential))])
+                        } else {
+                            let curLv = optOr(playerKnownArtLevel(player, artId), 0);
+                            if (curLv <= 0) {
+                                consumeJing(pid, learnJingCost(0))
+                                *>> updatePlayer(pid, overF(playerPotentialL(), (p) -> p - 1))
+                                *>> grantArtRewards(pid, artId, 1) >>= ((rewards) -> sendTrainingResult(pid, rewards))
+                            } else {
+                                ensureArtCanGain(pid, ma, Some(tMax), (cap) ->
+                                    throwStructured("teacher_art_level_cap", [
+                                        ("teacher", teacher.charName),
+                                        ("art", ma.artName),
+                                        ("max", intToStr(cap)),
+                                    ])
+                                )
+                                *>> consumeJing(pid, learnJingCost(curLv))
+                                *>> updatePlayer(pid, overF(playerPotentialL(), (p) -> p - 1))
+                                *>> gainArtProgress(pid, ma, Some(tMax), learnProgress(teacher.charTeachBonus)) >>= ((rewards) ->
+                                    sendTrainingResult(pid, rewards)
+                                )
+                            }
+                        }
+                    )
+                )),
+        }
+    }))
+
+def ensureCombatExpForLevel(pid: String, targetLevel: Int): Game Void =
+    getsPlayer(pid) >>= ((player) -> {
+        let reqExp = combatExpRequiredForLevel(targetLevel);
+        if (player.playerCombatExp < reqExp) {
+            throwStructured("combat_exp_too_low", [
+                ("required", intToStr(reqExp)),
+                ("current", intToStr(player.playerCombatExp)),
+                ("level", intToStr(targetLevel)),
+            ])
+        } else pure(())
+    })
+
+pub def studyStep(pid: String, iid: String): Game Void =
+    getsPlayer(pid) >>= ((player) ->
+        if (optOr(mapLookup(player.playerInventory, iid), 0) <= 0) {
+            throwStructured("item_not_in_inventory", [("itemId", iid)])
+        } else {
+            getsWorldItem(iid) >>= ((item) -> match item.itemUse {
+                Some(LearnArtUse { itemUseArt: aid, itemUseLevel: lvl, itemUseMinLevel: minL, itemUseMaxLevel: maybeMax, itemUseQuality: qual, itemUseConsume: _, itemUseMessage: _, itemUseRepeatMessage: _ }) ->
+                    get() >>= ((gs) ->
+                    lookupMartialArt("martial_art_not_found_learning", aid) >>= ((ma) ->
+                        ensureArtRequirements(pid, gs.world.martialArts, ma)
+                        *>> currentRoomInsight(pid, ma.artType) >>= ((ins) -> match ins {
+                            (locBonus, locDiscount) -> {
+                                let curLv = optOr(playerKnownArtLevel(player, aid), 0);
+                                let bandMax = optOr(maybeMax, ma.artMaxLevel);
+                                let jCost = maxInt(1, studyJingCost(curLv) - locDiscount);
+                                if (curLv < lvl) {
+                                    ensureCombatExpForLevel(pid, lvl)
+                                    *>> consumeJing(pid, jCost)
+                                    *>> grantArtRewards(pid, aid, lvl) >>= ((rewards) -> sendTrainingResult(pid, rewards))
+                                } else if (curLv < minL) {
+                                    throwStructured("book_too_advanced", [("item", item.itemName), ("level", intToStr(minL))])
+                                } else {
+                                    ensureArtCanGain(pid, ma, Some(bandMax), (_) ->
+                                        throwStructured("book_exhausted", [("item", item.itemName)])
+                                    )
+                                    *>> consumeJing(pid, jCost)
+                                    *>> gainArtProgress(pid, ma, Some(bandMax), studyProgress(qual) + locBonus) >>= ((rewards) ->
+                                        sendTrainingResult(pid, rewards)
+                                    )
+                                }
+                            },
+                        })
+                    )),
+                _ -> throwStructured("item_cannot_be_studied", [("item", item.itemName)]),
+            })
+        }
+    )
+
+pub def researchStep(pid: String, artId: String): Game Void =
+    lookupMartialArt("martial_art_not_found_research", artId) >>= ((ma) ->
+        if (artTypeEq(ma.artType, Foundation)) {
+            throwStructured("foundation_art_cannot_research", [("art", ma.artName)])
+        } else {
+            getsPlayer(pid) >>= ((player) ->
+            requireKnownArtLevel(player, ma) >>= ((curLv) ->
+                if (curLv < ma.artResearchFrom) {
+                    throwStructured("research_too_early", [("art", ma.artName), ("level", intToStr(ma.artResearchFrom))])
+                } else if (player.playerPotential <= 0) {
+                    throwStructured("not_enough_potential", [("required", "1"), ("current", intToStr(player.playerPotential))])
+                } else {
+                    ensureArtCanGain(pid, ma, None, (_) -> pure(()))
+                    *>> currentRoomInsight(pid, ma.artType) >>= ((ins) -> match ins {
+                        (locBonus, locDiscount) ->
+                            consumeJing(pid, maxInt(1, researchJingCost(curLv) - locDiscount))
+                            *>> consumeCombatInsightBonus(pid, combatInsightResearchBonus()) >>= ((cBonus) ->
+                                updatePlayer(pid, overF(playerPotentialL(), (p) -> p - 1))
+                                *>> gainArtProgress(pid, ma, None, researchProgressWithInsight(locBonus + cBonus)) >>= ((rewards) ->
+                                    sendTrainingResult(pid, rewards)
+                                )
+                            ),
+                    })
+                }
+            ))
+        }
+    )
+
+pub def meditateStep(pid: String, amount: Int): Game Void =
+    if (amount <= 0) {
+        throwStructured("meditate_amount_must_be_positive", [("amount", intToStr(amount))])
+    } else {
+        getsPlayer(pid) >>= ((player) -> {
+            let ch = player.playerCharacter;
+            let qi = ch.charQi;
+            let basicInt = characterKnownArtLevel("basic_internal", ch);
+            let enInt = equippedArtLevel(Internal, ch);
+            let cap = storedMaxQiCap(basicInt, enInt);
+            let stored = ch.charMaxQi;
+            let zenBonus = match mapLookup(ch.charEnabled, Internal) {
+                Some(ent) if (ent.artDef == "duan_zen_breath" && ent.artLevel >= 1) -> 1 + floorDiv(ent.artLevel, 20),
+                _ -> 0,
+            };
+            let maxQiGain = minInt(cap - stored, meditateMaxQiGain(amount, floorDiv(basicInt, 2) + enInt) + zenBonus);
+            if (qi < amount) {
+                throwStructured("not_enough_qi", [("required", intToStr(amount)), ("current", intToStr(qi))])
+            } else if (stored >= cap) {
+                throwStructured("max_qi_at_cap", [("cap", intToStr(cap))])
+            } else {
+                currentRoomInsight(pid, Internal) >>= ((ins) -> match ins {
+                    (_, locDiscount) ->
+                        consumeJing(pid, maxInt(1, meditateJingCost(amount) - locDiscount))
+                        *>> updatePlayer(pid, overF(playerCharL(), (c) ->
+                            c
+                                |> overF(charQiL(), (q) -> q - amount)
+                                |> overF(charMaxQiL(), (mq) -> mq + maxQiGain)
+                        ))
+                        *>> tellGame(pid, RewardMsg([resourceRewardSummary("max_qi", "真气上限", maxQiGain)]))
+                        *>> sendPlayerStats(pid)
+                        *>> markPlayerDirty(pid),
+                })
+            }
+        })
+    }
+
+pub def runTrainingStep(pid: String, act: TrainingAction): Game Void = match act {
+    TrainPractice(aid) -> practiceStep(pid, aid),
+    TrainLearn(tid, aid) -> learnStep(pid, tid, aid),
+    TrainStudy(iid) -> studyStep(pid, iid),
+    TrainResearch(aid) -> researchStep(pid, aid),
+    TrainMeditate(amt) -> meditateStep(pid, amt),
+}
+
+pub def startTraining(pid: String, act: TrainingAction, times: Int): Game Void =
+    if (times <= 0) {
+        throwStructured("training_times_must_be_positive", [("times", intToStr(times))])
+    } else {
+        usePlayerRuntime(pid) >>= ((rt) -> match rt.runtimeBusy {
+            Some(b) -> throwStructured("player_busy", [("seconds", intToStr(ceilInt(b.busyTimer)))]),
+            None ->
+                runTrainingStep(pid, act)
+                *>> usePlayerRuntime(pid) >>= ((rtAfter) -> {
+                    let task = MkBusyTask {
+                        busyAction: act,
+                        busyRemaining: minInt(100, times) - 1,
+                        busyTimer: trainingStepSeconds(act),
+                        busyCompleted: 1,
+                    };
+                    putPlayerRuntime(pid, rtAfter |> setF(runtimeBusyL(), Some(task)))
+                    *>> sendPlayerStats(pid)
+                }),
+        })
+    }
+
+pub def playerLearnArt(pid: String, teacherId: String, artId: String, times: Int): Game Void =
+    startTraining(pid, TrainLearn(teacherId, artId), times)
+
+pub def playerPracticeArt(pid: String, artId: String): Game Void =
+    startTraining(pid, TrainPractice(artId), 1)
+
+pub def playerStudyItem(pid: String, iid: String): Game Void =
+    startTraining(pid, TrainStudy(iid), 1)
+
+pub def playerResearchArt(pid: String, artId: String): Game Void =
+    startTraining(pid, TrainResearch(artId), 1)
+
+pub def playerMeditate(pid: String, amount: Int): Game Void =
+    startTraining(pid, TrainMeditate(amount), 1)
+
+def finishTraining(pid: String, task: BusyTask, reason: Option String): Game Void =
+    usePlayerRuntime(pid) >>= ((rt) -> {
+        let (code, target) = trainingActionCode(task.busyAction);
+        let baseParams = [("action", code), ("target", target), ("completed", intToStr(task.busyCompleted))];
+        let allParams = match reason {
+            Some(r) -> baseParams <+> [("reason", r)],
+            None -> baseParams,
+        };
+        putPlayerRuntime(pid, rt |> setF(runtimeBusyL(), None))
+        *>> tellGame(pid, SystemMsg(MkSystemMessage {
+            systemMessageKey: "training_finished",
+            systemMessageParams: mapFromList(allParams),
+        }))
+        *>> sendPlayerStats(pid)
+    })
+
+pub def haltTraining(pid: String): Game Void =
+    usePlayerRuntime(pid) >>= ((rt) -> match rt.runtimeBusy {
+        Some(task) -> finishTraining(pid, task, Some("halted")),
+        None -> pure(()),
+    })
+
+pub def tickTraining(dt: Float): Game Void =
+    get() >>= ((gs) -> {
+        let busyList = fp.listFilterMap(mapToAscList(gs.playerRuntime), (p) -> match p {
+            (pid, rt) -> fmap((t) -> (pid, t), rt.runtimeBusy),
+        });
+        forEachM(busyList, (pair) -> match pair {
+            (pid, task) ->
+                get() >>= ((curGs) -> {
+                    let isNormal = match mapLookup(curGs.players, pid) {
+                        Some(pl) -> playerStatusEq(pl.playerStatus, PlayerNormal),
+                        None -> false,
+                    };
+                    let timer = task.busyTimer - dt;
+                    if (!isNormal) {
+                        finishTraining(pid, task, Some("interrupted"))
+                    } else if (timer > 0.0) {
+                        usePlayerRuntime(pid) >>= ((rt) ->
+                            putPlayerRuntime(pid, rt |> setF(runtimeBusyL(), Some(MkBusyTask {
+                                busyAction: task.busyAction,
+                                busyRemaining: task.busyRemaining,
+                                busyTimer: timer,
+                                busyCompleted: task.busyCompleted,
+                            })))
+                        )
+                    } else if (task.busyRemaining <= 0) {
+                        finishTraining(pid, task, None)
+                    } else {
+                        // Transactional step: if `runTrainingStep` fails, `catchGame` automatically preserves prior `GameState`!
+                        catchGame(
+                            fmap((_) -> None, runTrainingStep(pid, task.busyAction)),
+                            (err) -> pure(Some(err))
+                        ) >>= ((errOpt) -> match errOpt {
+                            None ->
+                                usePlayerRuntime(pid) >>= ((rt2) ->
+                                    putPlayerRuntime(pid, rt2 |> setF(runtimeBusyL(), Some(MkBusyTask {
+                                        busyAction: task.busyAction,
+                                        busyRemaining: task.busyRemaining - 1,
+                                        busyTimer: trainingStepSeconds(task.busyAction),
+                                        busyCompleted: task.busyCompleted + 1,
+                                    })))
+                                    *>> sendPlayerStats(pid)
+                                ),
+                            Some(err) -> {
+                                let sum = gameExceptionToSummary(err);
+                                tellGame(pid, ErrorMsg(sum))
+                                *>> finishTraining(pid, task, Some(sum.errorSummaryCode))
+                            },
+                        })
+                    }
+                }),
+        })
+    })
+
+pub def playerEnableArt(pid: String, expectedType: ArtType, artId: String): Game Void =
+    get() >>= ((gs) -> match mapLookup(gs.world.martialArts, artId) {
+        None -> throwStructured("martial_art_not_found", [("artId", artId)]),
+        Some(ma) ->
+            if (!artTypeEq(ma.artType, expectedType)) {
+                throwStructured("enable_art_type_mismatch", [
+                    ("art", ma.artName),
+                    ("expected", artTypeToText(expectedType)),
+                    ("actual", artTypeToText(ma.artType)),
+                ])
+            } else {
+                getsPlayer(pid) >>= ((player) -> match playerKnownArtEntity(player, artId) {
+                    None -> throwStructured("art_not_learned", [("art", ma.artName)]),
+                    Some((_, artEnt)) ->
+                        if (artTypeEq(expectedType, Foundation)) {
+                            throwStructured("foundation_art_cannot_enable", [("artId", artId)])
+                        } else {
+                            updatePlayer(pid, overF(playerCharL() ~>> charEnabledL(), (m) -> mapInsert(m, expectedType, artEnt)))
+                            *>> tellGame(pid, SystemMsg(MkSystemMessage {
+                                systemMessageKey: "art_enabled",
+                                systemMessageParams: mapFromList([("type", artTypeToText(expectedType)), ("artId", artId)]),
+                            }))
+                            *>> playerArts(pid)
+                            *>> markPlayerDirty(pid)
+                        },
+                })
+            },
+    })
+
+// ============================================================================
+// Active Skill Execution, Battle Settlement, Respawns & Out-of-Combat Recovery
+// ============================================================================
+
+def activeSkillUseFailure(sk: ActiveSkill, battle: Battle): Option ActiveSkillFailureReason = {
+    let st = battle.battleState;
+    if (st.battleQi < sk.activeSkillCost) {
+        Some(ActiveSkillNeedQi(sk.activeSkillCost, st.battleQi))
+    } else match mapLookup(st.battleActiveSkillCooldowns, sk.activeSkillId) {
+        Some(rem) -> Some(ActiveSkillOnCooldown(ceilInt(rem))),
+        None -> {
+            let missing = listFilter(sk.activeSkillReqStatus, (eid) -> !mapMember(st.battleEffects, eid));
+            match missing {
+                Nil -> None,
+                _ -> Some(ActiveSkillMissingStatus(missing)),
+            }
+        },
+    }
+}
+
+def battleEnemyCharacter(battle: Battle): Character =
+    battle.battleEnemyState.battleChar |> setF(charQiL(), battle.battleEnemyState.battleQi)
+
+def writeBattleEnemyToWorld(status: CharStatus, battle: Battle): Game Void = {
+    let enemy = battleEnemyCharacter(battle) |> setF(charStatusL(), status);
+    overL(gsWorldL() ~>> worldCharsL(), (m) -> mapInsert(m, enemy.charId, enemy))
+}
+
+def syncBattleEnemyToWorld(battle: Battle): Game Void =
+    writeBattleEnemyToWorld(CharBattle, battle)
+
+pub def releasePlayerBattleLock(pid: String, gs: GameState): GameState = {
+    let isolated = setMember(gs.isolatedBattles, pid);
+    let gs1 = gs |> overF(state.gsIsolatedBattlesL(), (s) -> setDelete(s, pid));
+    match mapLookup(gs1.battles, pid) {
+        None -> gs1,
+        Some(battle) ->
+            if (isolated) gs1
+            else {
+                let enemy = battleEnemyCharacter(battle) |> setF(charStatusL(), CharAlive);
+                gs1 |> overF(gsWorldL() ~>> worldCharsL(), (m) -> mapInsert(m, enemy.charId, enemy))
+            },
+    }
+}
+
+def grantBattleGrowthReward(pid: String, enemy: Character): Game Void =
+    getsPlayer(pid) >>= ((player) -> {
+        let pRank = characterCombatRank(player.playerCharacter);
+        let eRank = characterCombatRank(enemy);
+        let outgrown = match enemy.charRewardExpCeiling {
+            Some(ceilExp) -> player.playerCombatExp >= ceilExp,
+            None -> false,
+        };
+        let (expGain, potGain) = match enemy.charFixedReward {
+            Some(fixed) -> fixed,
+            None ->
+                if (outgrown) (0, 0)
+                else {
+                    let eg = battleCombatExpGain(pRank, eRank);
+                    (eg, battlePotentialGain(eg))
+                },
+        };
+        grantGrowth(pid, expGain, potGain) >>= ((rewards) -> {
+            let insightStep = if (expGain > 0) {
+                let stacks = combatInsightStacksForWin(pRank, eRank);
+                if (stacks > 0) {
+                    usePlayerRuntime(pid) >>= ((rt) ->
+                        putPlayerRuntime(pid, rt |> overF(runtimeInsightL(), (cur) -> minInt(10, cur + stacks)))
+                        *>> tellGame(pid, SystemMsg(MkSystemMessage {
+                            systemMessageKey: "combat_insight_gained",
+                            systemMessageParams: mapFromList([("stacks", intToStr(stacks))]),
+                        }))
+                    )
+                } else pure(())
+            } else pure(());
+            insightStep *>> (
+                if (listLen(rewards) == 0) {
+                    tellGame(pid, SystemMsg(MkSystemMessage {
+                        systemMessageKey: "battle_reward_none",
+                        systemMessageParams: mapFromList([("enemy", enemy.charName)]),
+                    }))
+                } else {
+                    tellGame(pid, RewardMsg(rewards))
+                }
+            )
+        })
+    })
+
+pub def battleSettlement(won: Bool, battle: Battle): Game Void = {
+    let pChar = battle.battleState.battleChar;
+    let eChar = battle.battleEnemyState.battleChar;
+    let pid = battle.battleOwner;
+    get() >>= ((gs) -> {
+        let isolated = setMember(gs.isolatedBattles, pid);
+        overL(gsBattlesL(), (m) -> mapDelete(m, pid))
+        *>> overL(gsIsolatedBattlesL(), (s) -> setDelete(s, pid))
+        *>> updatePlayer(pid, (pl) ->
+            pl
+                |> setF(playerStatusL(), PlayerNormal)
+                |> overF(playerCharL(), (c) ->
+                    c
+                        |> setF(charHpL(), maxInt(1, pChar.charHP))
+                        |> setF(charQiL(), battle.battleState.battleQi)
+                )
+        )
+        *>> unlessM(isolated, () ->
+            if (won) writeBattleEnemyToWorld(CharDead, battle)
+            else writeBattleEnemyToWorld(CharAlive, battle)
+        )
+        *>> whenM(won && !isolated, () ->
+            overL(gsRespawnL(), (m) -> mapInsert(m, eChar.charId, intToFloat(eChar.charRespawn)))
+        )
+        *>> unlessM(won, () ->
+            usePlayerRuntime(pid) >>= ((rt) ->
+                putPlayerRuntime(pid, rt |> setF(runtimeInjuredL(), 300.0))
+            )
+        )
+        *>> tellGame(pid, CombatSettlementMsg(pid, eChar.charName, won))
+        *>> tellGame(pid, StoryDelayMsg(1800))
+        *>> whenM(won, () ->
+            runStoryTrigger(pid, TriggerKill(eChar.charId))
+            *>> grantBattleGrowthReward(pid, eChar)
+        )
+        *>> sendPlayerStats(pid)
+        *>> markPlayerDirty(pid)
+    })
+}
+
+pub def playerPerformActiveSkill(pid: String, targetSkillId: String): Game Void =
+    get() >>= ((gs) ->
+    getsBattle(pid) >>= ((battle) ->
+    getsPlayer(pid) >>= ((player) ->
+        match listFind(preparedActiveSkills(gs.world, player), (p) -> p.preparedActiveSkillSkill.activeSkillId == targetSkillId) {
+            None ->
+                tellGame(pid, ActiveSkillFailureMsg(ActiveSkillUnavailable(targetSkillId)))
+                *>> sendBattleSnapshot(pid, battle),
+            Some(prep) -> {
+                let sk = prep.preparedActiveSkillSkill;
+                match activeSkillUseFailure(sk, battle) {
+                    Some(reason) ->
+                        tellGame(pid, ActiveSkillFailureMsg(reason))
+                        *>> sendBattleSnapshot(pid, battle),
+                    None ->
+                        if (battle.battleActionLockRemaining > 0.0) {
+                            let queued = battle |> setF(battlePendingSkillL(), Some(MkPendingActiveSkill {
+                                pendingActiveSkillMartialArt: prep.preparedActiveSkillArt,
+                                pendingActiveSkillSkill: sk,
+                            }));
+                            overL(gsBattlesL(), (m) -> mapInsert(m, pid, queued))
+                            *>> sendBattleSnapshot(pid, queued)
+                        } else {
+                            liftCombat(
+                                gs.world,
+                                battle,
+                                useActiveSkill(prep.preparedActiveSkillArt, sk, playerSideL(), enemySideL())
+                            ) >>= ((res) -> match res {
+                                (_, b2, msgs) -> {
+                                    let enemyDefeated = b2.battleEnemyState.battleChar.charHP <= 0;
+                                    let playerDefeated = b2.battleState.battleChar.charHP <= 0;
+                                    tell(msgs)
+                                    *>> (
+                                        if (enemyDefeated || playerDefeated) {
+                                            battleSettlement(enemyDefeated, b2)
+                                        } else {
+                                            syncBattleEnemyToWorld(b2)
+                                            *>> overL(gsBattlesL(), (m) -> mapInsert(m, pid, b2))
+                                            *>> sendBattleSnapshot(pid, b2)
+                                        }
+                                    )
+                                },
+                            })
+                        },
+                }
+            },
+        }
+    )))
+
+pub def updateBattleWith(
+    policy: BattleSyncPolicy,
+    combatTick: Float -> Combat Bool,
+    dt: Float,
+    bid: String
+): Game Void =
+    get() >>= ((gs) ->
+    getsBattle(bid) >>= ((battle) ->
+        liftCombat(gs.world, battle, combatTick(dt)) >>= ((res) -> match res {
+            (battleOver, b2, msgs) -> {
+                let pid = b2.battleOwner;
+                let cdExpired = mapSize(b2.battleState.battleActiveSkillCooldowns) < mapSize(battle.battleState.battleActiveSkillCooldowns);
+                let effExpired =
+                    mapSize(b2.battleState.battleEffects) < mapSize(battle.battleState.battleEffects)
+                    || mapSize(b2.battleEnemyState.battleEffects) < mapSize(battle.battleEnemyState.battleEffects);
+                let shouldSync = syncPolicyEq(policy, SyncEveryTick) || battleOver || listLen(msgs) > 0 || cdExpired || effExpired;
+                tell(msgs)
+                *>> whenM(shouldSync, () -> sendBattleStats(pid, b2))
+                *>> (
+                    if (battleOver) {
+                        let playerDefeated = b2.battleState.battleChar.charHP <= 0;
+                        battleSettlement(!playerDefeated, b2)
+                    } else {
+                        get() >>= ((curGs) -> {
+                            let isolated = setMember(curGs.isolatedBattles, pid);
+                            unlessM(isolated, () -> syncBattleEnemyToWorld(b2))
+                            *>> overL(gsBattlesL(), (m) -> mapInsert(m, bid, b2))
+                        })
+                    }
+                )
+            },
+        })
+    ))
+
+pub def updateBattle(dt: Float, bid: String): Game Void =
+    updateBattleWith(SyncEveryTick, flushBattleTick, dt, bid)
+
+pub def tickBattlesWith(policy: BattleSyncPolicy, combatTick: Float -> Combat Bool, dt: Float): Game Void =
+    get() >>= ((gs) ->
+        forEachM(mapKeys(gs.battles), (bid) -> updateBattleWith(policy, combatTick, dt, bid))
+    )
+
+pub def tickBattleMaintenance(dt: Float): Game Void =
+    tickBattlesWith(SyncOnVisibleResponse, flushBattleMaintenanceTick, dt)
+
+pub def tickBattleActions(dt: Float): Game Void =
+    tickBattlesWith(SyncOnVisibleResponse, flushBattleActionTick, dt)
+
+def reviveCharacter(ch: Character): Character = {
+    let d = deriveCharacterStats(ch, 0, emptyDerivedStatSources());
+    ch
+        |> setF(charStatusL(), CharAlive)
+        |> setF(charHpL(), d.dsMaxHp)
+        |> setF(charQiL(), d.dsMaxQi)
+        |> overF(charJingL(), (j) -> minInt(j, d.dsMaxJing))
+}
+
+pub def tickRespawns(dt: Float): Game Void =
+    get() >>= ((gs) -> {
+        let decremented = mapMap(gs.respawn, (t) -> t - dt);
+        let (toKeep, toRevive) = mapPartition(decremented, (t) -> t > 0.0);
+        let revivedKeys = mapKeys(toRevive);
+        let revivedSet = setFromList(revivedKeys);
+        assignL(gsRespawnL(), toKeep)
+        *>> forEachM(revivedKeys, (cid) ->
+            overL(gsWorldL() ~>> worldCharsL(), (m) -> mapUpdate(m, cid, reviveCharacter))
+        )
+        *>> unlessM(setIsEmpty(revivedSet), () ->
+            get() >>= ((gs2) ->
+                forEachM(mapToAscList(gs2.players), (pp) -> match pp {
+                    (pid, pl) -> {
+                        let (mid, pos) = pl.playerPosition;
+                        let rChars = match world.lookupWorldRoom(gs2.world, mid, pos) {
+                            Some(r) -> r.roomChar,
+                            None -> Nil,
+                        };
+                        whenM(listAny(rChars, (cid) -> setMember(revivedSet, cid)), () -> playerView(pid))
+                    },
+                })
+            )
+        )
+    })
+
+def recoverResource(dt: Float, rate: Float, current: Int, maxVal: Int, carry: Float): (Int, Float) =
+    if (current >= maxVal) (current, 0.0)
+    else if (rate <= 0.0) (current, carry)
+    else {
+        let total = carry + dt * rate;
+        let gain = floorInt(total);
+        let next = minInt(maxVal, current + gain);
+        (next, if (next >= maxVal) 0.0 else total - intToFloat(gain))
+    }
+
+pub def tickPlayerRecovery(dt: Float): Game Void =
+    get() >>= ((gs) ->
+        forEachM(mapKeys(gs.players), (pid) ->
+            getsPlayer(pid) >>= ((player) ->
+            usePlayerRuntime(pid) >>= ((rt) ->
+            get() >>= ((curGs) -> {
+                let (mid, pos) = player.playerPosition;
+                let resting = match world.lookupWorldRoom(curGs.world, mid, pos) {
+                    Some(r) -> r.roomRest,
+                    None -> false,
+                };
+                let st = player.playerStatus;
+                let outOfCombat = playerStatusEq(st, PlayerNormal);
+                let activeStatus = outOfCombat || playerStatusEq(st, PlayerInBattle);
+                if (!activeStatus) pure(())
+                else {
+                    let wasInjured = rt.runtimeInjuredRemaining > 0.0;
+                    let d = deriveStats(player);
+                    let ch = player.playerCharacter;
+                    let restFactor = if (resting && outOfCombat) 3.0 else 1.0;
+                    let hasTaihu = match mapLookup(ch.charEnabled, Internal) {
+                        Some(ent) -> ent.artDef == "taihu_breath",
+                        None -> false,
+                    };
+                    let injuryPenalty = if (wasInjured) (if (hasTaihu) 0.75 else 0.5) else 1.0;
+                    let injuryDecayRate = (if (hasTaihu) 1.5 else 1.0) * (if (resting && outOfCombat) 2.0 else 1.0);
+                    let hpRate = if (outOfCombat) d.dsHpRegen * restFactor * injuryPenalty else 0.0;
+                    let qiRate = if (outOfCombat) d.dsQiRegen * restFactor else 0.0;
+                    let jingRate = d.dsJingRegen * restFactor;
+                    let (hpC, qiC, jgC) = rt.runtimeRecoveryCarry;
+                    let (nextHp, hpC2) = recoverResource(dt, hpRate, ch.charHP, d.dsMaxHp, hpC);
+                    let (nextQi, qiC2) = recoverResource(dt, qiRate, ch.charQi, d.dsMaxQi, qiC);
+                    let (nextJg, jgC2) = recoverResource(dt, jingRate, ch.charJing, d.dsMaxJing, jgC);
+                    let changed = nextHp != ch.charHP || nextQi != ch.charQi || nextJg != ch.charJing;
+                    let injRem = maxFloat(0.0, rt.runtimeInjuredRemaining - dt * injuryDecayRate);
+                    putPlayerRuntime(pid, MkPlayerRuntime {
+                        runtimeRecoveryCarry: (hpC2, qiC2, jgC2),
+                        runtimeInjuredRemaining: injRem,
+                        runtimeBusy: rt.runtimeBusy,
+                        runtimeCombatInsight: rt.runtimeCombatInsight,
+                    })
+                    *>> whenM(changed, () ->
+                        updatePlayer(pid, overF(playerCharL(), (c) ->
+                            c
+                                |> setF(charHpL(), nextHp)
+                                |> setF(charQiL(), nextQi)
+                                |> setF(charJingL(), nextJg)
+                        ))
+                        *>> markPlayerDirty(pid)
+                    )
+                    *>> whenM(outOfCombat && (changed || (wasInjured && injRem <= 0.0)), () ->
+                        sendPlayerStats(pid)
+                    )
+                }
+            })))
+        )
+    )
+
+pub def onGameTick(dt: Float): Game Void =
+    tickBattleMaintenance(dt)
+    *>> tickRespawns(dt)
+    *>> tickPlayerRecovery(dt)
+    *>> tickTraining(dt)
+
+pub def onBattleTick(dt: Float): Game Void =
+    tickBattleActions(dt)
+
+// ============================================================================
+// Top-Level Action Dispatcher (`processPlayerAction`)
+// ============================================================================
+
+pub def processNormalAction(pid: String, action: PlayerAction): Game Void = match action {
+    Go(dir) -> haltTraining(pid) *>> playerMove(pid, dir),
+    Attack(target) -> haltTraining(pid) *>> playerAttack(pid, target),
+    Talk(target) -> haltTraining(pid) *>> playerTalk(pid, target),
+    Use(iid) -> haltTraining(pid) *>> playerUseItem(pid, iid),
+    Equip(iid) -> haltTraining(pid) *>> playerEquipItem(pid, iid),
+    Unequip(slot) -> haltTraining(pid) *>> playerUnequipSlot(pid, slot),
+    Buy(maybeMerch, iid) -> haltTraining(pid) *>> playerBuyItem(pid, maybeMerch, iid),
+    Train(aid) -> startTraining(pid, TrainPractice(aid), 1),
+    Practice(aid, n) -> startTraining(pid, TrainPractice(aid), n),
+    Learn(tid, aid, n) -> startTraining(pid, TrainLearn(tid, aid), n),
+    Study(iid, n) -> startTraining(pid, TrainStudy(iid), n),
+    Research(aid, n) -> startTraining(pid, TrainResearch(aid), n),
+    Meditate(amt, n) -> startTraining(pid, TrainMeditate(amt), n),
+    EnableArt(ty, aid) -> playerEnableArt(pid, ty, aid),
+    PrepareArt(ty, aid) -> playerEnableArt(pid, ty, aid),
+    Say(msg) ->
+        getsPlayer(pid) >>= ((player) -> {
+            let (mid, pos) = player.playerPosition;
+            getsWorldRoom(mid, pos) >>= ((room) ->
+                forEachM(setToAscList(room.roomPlayer), (otherPid) ->
+                    tellGame(otherPid, SayMsg(player.playerCharacter.charName, msg))
+                )
+            )
+        }),
+    Other(cmd) ->
+        if (cmd == "halt") haltTraining(pid)
+        else if (cmd == "quests") playerQuestLog(pid)
+        else if (cmd == "inventory") sendPlayerInventory(pid)
+        else if (cmd == "arts") playerArts(pid)
+        else if (cmd == "map") playerMapOverview(pid)
+        else if (cmd == "view") playerView(pid)
+        else pure(()),
+    _ -> pure(()),
+}
+
+pub def processBattleAction(pid: String, action: PlayerAction): Game Void = match action {
+    Perform(sid) -> playerPerformActiveSkill(pid, sid),
+    Other(cmd) ->
+        if (cmd == "quests") playerQuestLog(pid)
+        else if (cmd == "inventory") sendPlayerInventory(pid)
+        else if (cmd == "arts") playerArts(pid)
+        else if (cmd == "map") playerMapOverview(pid)
+        else pure(()),
+    _ -> pure(()),
+}
+
+pub def processPlayerAction(pid: String, action: PlayerAction): Game Void =
+    getsPlayer(pid) >>= ((player) -> match player.playerStatus {
+        PlayerNormal -> processNormalAction(pid, action),
+        PlayerInBattle -> processBattleAction(pid, action),
+        _ -> pure(()),
+    })

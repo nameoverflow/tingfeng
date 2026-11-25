@@ -1,0 +1,409 @@
+// Higher-Kinded & Multi-Param Effect Prelude (`fp`), built on Geisha's `std.control`
+// (Kind checking, Superclasses `Functor -> Applicative -> Monad`, Multi-Param Concepts & FunDeps).
+
+use std.option.{Option, Some, None}
+use std.result.{Result, Ok, Err}
+use std.list.{listRev, listAppend, listLen, listNth}
+use std.buf.{bufNew, bufPushByte, bufToString}
+pub use std.control.{
+    Functor, fmap,
+    Applicative, pure, ap,
+    Monad, (>>=),
+    MonadState, get, put, modify,
+    MonadReader, ask,
+    MonadError, throwErr,
+    (<$>), (<*>), voidM, sequenceM
+}
+
+// ============================================================================
+// Total Ordering (`Ord`)
+// ============================================================================
+
+pub data Ordering {
+    Lt,
+    EqOrd,
+    Gt,
+}
+
+pub concept Ord a {
+    def compare(x: a, y: a): Ordering
+}
+
+pub def ordEq(a: t, b: t): Bool = match compare(a, b) {
+    EqOrd -> true,
+    _ -> false,
+}
+
+pub def ordLt(a: t, b: t): Bool = match compare(a, b) {
+    Lt -> true,
+    _ -> false,
+}
+
+pub def ordGt(a: t, b: t): Bool = match compare(a, b) {
+    Gt -> true,
+    _ -> false,
+}
+
+instance Ord Int {
+    def compare(a, b) = if (a < b) Lt else if (a > b) Gt else EqOrd
+}
+
+instance Ord Int64 {
+    def compare(a, b) = if (a < b) Lt else if (a > b) Gt else EqOrd
+}
+
+instance Ord Float {
+    def compare(a, b) = if (a < b) Lt else if (a > b) Gt else EqOrd
+}
+
+instance Ord Bool {
+    def compare(a, b) = match (a, b) {
+        (false, true) -> Lt,
+        (true, false) -> Gt,
+        _ -> EqOrd,
+    }
+}
+
+def compareStrBytes(a: String, b: String, idx: Int, na: Int, nb: Int): Ordering =
+    if (idx >= na && idx >= nb) EqOrd
+    else if (idx >= na) Lt
+    else if (idx >= nb) Gt
+    else {
+        let ba = strByteAt(a, idx) & 255;
+        let bb = strByteAt(b, idx) & 255;
+        if (ba < bb) Lt
+        else if (ba > bb) Gt
+        else compareStrBytes(a, b, idx + 1, na, nb)
+    }
+
+instance Ord String {
+    def compare(a, b) =
+        if (a == b) EqOrd
+        else compareStrBytes(a, b, 0, strLen(a), strLen(b))
+}
+
+instance (Ord a, Ord b) => Ord (a, b) {
+    def compare(p1, p2) = match (p1, p2) {
+        ((a1, b1), (a2, b2)) -> match compare(a1, a2) {
+            EqOrd -> compare(b1, b2),
+            other -> other,
+        },
+    }
+}
+
+// ============================================================================
+// Semigroup & Monoid (with Superclass `Monoid a : Semigroup a`!)
+// ============================================================================
+
+pub concept Semigroup a {
+    def (<+>)(x: a, y: a): a
+}
+
+pub concept Monoid a : Semigroup a {
+    def empty(): a
+}
+
+instance Semigroup (List a) {
+    def (<+>)(xs, ys) = listAppend(xs, ys)
+}
+
+instance Monoid (List a) {
+    def empty() = Nil
+}
+
+// Superclass expansion: `Monoid a` automatically entails `Semigroup a` (`<+>`)!
+pub def mconcat(xs: List a): a = match xs {
+    Nil -> empty(),
+    Cons(h, t) -> h <+> mconcat(t),
+}
+
+pub def foldMapList(xs: List a, f: a -> m): m = match xs {
+    Nil -> empty(),
+    Cons(h, t) -> f(h) <+> foldMapList(t, f),
+}
+
+// ============================================================================
+// Multi-Param Domain Effect Concepts (`MonadWriter`, `MonadRng`)
+// ============================================================================
+
+pub concept MonadWriter w m : Monad m | m -> w {
+    def tell(out: w): m Void
+}
+
+pub concept MonadRng m : Monad m {
+    def rollRange(lo: Int, hi: Int): m Int
+}
+
+// Sequencing & Kleisli operators (`*>>` avoids clashing with Int bitwise `>>`)
+pub def (*>>)(ma: m a, mb: m b): m b =
+    ma >>= (_) -> mb
+
+pub def (>=>)(f: a -> m b, g: b -> m c): a -> m c =
+    (x) -> f(x) >>= g
+
+// Polymorphic monadic traversals over any `Monad m` / `MonadRng m`
+pub def pickRandom(xs: List a): m (Option a) =
+    if (listLen(xs) == 0) pure(None)
+    else rollRange(0, listLen(xs) - 1) >>= (idx) -> pure(listNth(xs, idx))
+
+pub def mapListM(xs: List a, f: a -> m b): m (List b) = match xs {
+    Nil -> pure(Nil),
+    Cons(h, t) ->
+        f(h) >>= (y) ->
+        mapListM(t, f) >>= (ys) ->
+        pure(Cons(y, ys)),
+}
+
+pub def forEachM(xs: List a, f: a -> m Void): m Void = match xs {
+    Nil -> pure(()),
+    Cons(h, t) -> f(h) >>= (_) -> forEachM(t, f),
+}
+
+pub def filterM(xs: List a, pred: a -> m Bool): m (List a) = match xs {
+    Nil -> pure(Nil),
+    Cons(h, t) ->
+        pred(h) >>= (keep) ->
+        filterM(t, pred) >>= (rest) ->
+        pure(if (keep) Cons(h, rest) else rest),
+}
+
+pub def allM(xs: List a, pred: a -> m Bool): m Bool = match xs {
+    Nil -> pure(true),
+    Cons(h, t) ->
+        pred(h) >>= (ok) ->
+        if (ok) allM(t, pred) else pure(false),
+}
+
+pub def foldM(xs: List a, init: b, f: (b, a) -> m b): m b = match xs {
+    Nil -> pure(init),
+    Cons(h, t) -> f(init, h) >>= (acc) -> foldM(t, acc, f),
+}
+
+pub def whenM(cond: Bool, action: () -> m Void): m Void =
+    if (cond) action() else pure(())
+
+pub def unlessM(cond: Bool, action: () -> m Void): m Void =
+    if (!cond) action() else pure(())
+
+pub def replicateM(n: Int, action: () -> m Void): m Void =
+    if (n <= 0) pure(())
+    else action() >>= (_) -> replicateM(n - 1, action)
+
+// ============================================================================
+// First-Class Composable Lenses (`Lens s a`) + Polymorphic `MonadState` Zooming
+// ============================================================================
+
+pub data Lens s a {
+    MkLens { viewL: s -> a, setL: (s, a) -> s },
+}
+
+pub def lens(getter: s -> a, setter: (s, a) -> s): Lens s a =
+    MkLens { viewL: getter, setL: setter }
+
+pub def (~>>)(outer: Lens s a, inner: Lens a b): Lens s b =
+    MkLens {
+        viewL: (s) -> inner.viewL(outer.viewL(s)),
+        setL: (s, b) -> outer.setL(s, inner.setL(outer.viewL(s), b)),
+    }
+
+pub def view(l: Lens s a, s: s): a = l.viewL(s)
+
+pub def set(l: Lens s a, val: a, s: s): s = l.setL(s, val)
+
+pub def over(l: Lens s a, f: a -> a, s: s): s = l.setL(s, f(l.viewL(s)))
+
+pub def setF(l: Lens s a, val: a): s -> s = (s) -> l.setL(s, val)
+
+pub def overF(l: Lens s a, f: a -> a): s -> s = (s) -> l.setL(s, f(l.viewL(s)))
+
+// Polymorphic Lens-over-`MonadState` (`s` resolved from `m` via `m -> s` FunDep!)
+pub def useL(l: Lens s a): m a =
+    get() >>= (s) -> pure(view(l, s))
+
+pub def assignL(l: Lens s a, val: a): m Void =
+    modify((s) -> set(l, val, s))
+
+pub def overL(l: Lens s a, f: a -> a): m Void =
+    modify((s) -> over(l, f, s))
+
+// ============================================================================
+// Numeric, Rounding, Option, List & UTF-8 String Utilities
+// ============================================================================
+
+pub def minInt(a: Int, b: Int): Int = if (a < b) a else b
+pub def maxInt(a: Int, b: Int): Int = if (a > b) a else b
+pub def clampInt(lo: Int, hi: Int, x: Int): Int = maxInt(lo, minInt(hi, x))
+
+pub def minFloat(a: Float, b: Float): Float = if (a < b) a else b
+pub def maxFloat(a: Float, b: Float): Float = if (a > b) a else b
+pub def clampFloat(lo: Float, hi: Float, x: Float): Float = maxFloat(lo, minFloat(hi, x))
+
+pub def floorDiv(a: Int, b: Int): Int = {
+    let q = a / b;
+    let r = a % b;
+    if (r != 0 && ((r < 0 && b > 0) || (r > 0 && b < 0))) q - 1
+    else q
+}
+
+pub def floorInt(x: Float): Int = {
+    let t = floatToInt(x);
+    if (intToFloat(t) > x) t - 1 else t
+}
+
+pub def ceilInt(x: Float): Int = {
+    let t = floatToInt(x);
+    if (intToFloat(t) < x) t + 1 else t
+}
+
+pub def roundInt(x: Float): Int = {
+    let f = floorInt(x);
+    let diff = x - intToFloat(f);
+    if (diff < 0.5) f
+    else if (diff > 0.5) f + 1
+    else if ((f & 1) == 0) f
+    else f + 1
+}
+
+pub def optOr(opt: Option a, fallback: a): a = match opt {
+    Some(x) -> x,
+    None -> fallback,
+}
+
+pub def optOrElse(opt: Option a, fallback: Option a): Option a = match opt {
+    Some(x) -> Some(x),
+    None -> fallback,
+}
+
+pub def optIsSome(opt: Option a): Bool = match opt {
+    Some(_) -> true,
+    None -> false,
+}
+
+pub def optIsNone(opt: Option a): Bool = match opt {
+    Some(_) -> false,
+    None -> true,
+}
+
+pub def listHead(xs: List a): Option a = match xs {
+    Nil -> None,
+    Cons(h, _) -> Some(h),
+}
+
+pub def listLast(xs: List a): Option a = match xs {
+    Nil -> None,
+    Cons(h, Nil) -> Some(h),
+    Cons(_, t) -> listLast(t),
+}
+
+pub def listFind(xs: List a, pred: a -> Bool): Option a = match xs {
+    Nil -> None,
+    Cons(h, t) -> if (pred(h)) Some(h) else listFind(t, pred),
+}
+
+def listFindIndexLoop(xs: List a, pred: a -> Bool, idx: Int): Option Int = match xs {
+    Nil -> None,
+    Cons(h, t) -> if (pred(h)) Some(idx) else listFindIndexLoop(t, pred, idx + 1),
+}
+
+pub def listFindIndex(xs: List a, pred: a -> Bool): Option Int =
+    listFindIndexLoop(xs, pred, 0)
+
+def filterMapLoop(xs: List a, f: a -> Option b, acc: List b): List b = match xs {
+    Nil -> listRev(acc),
+    Cons(h, t) -> match f(h) {
+        Some(y) -> filterMapLoop(t, f, Cons(y, acc)),
+        None -> filterMapLoop(t, f, acc),
+    },
+}
+
+pub def listFilterMap(xs: List a, f: a -> Option b): List b =
+    filterMapLoop(xs, f, Nil)
+
+pub def listConcatMap(xs: List a, f: a -> List b): List b = match xs {
+    Nil -> Nil,
+    Cons(h, t) -> listAppend(f(h), listConcatMap(t, f)),
+}
+
+def zipWithLoop(xs: List a, ys: List b, f: (a, b) -> c, acc: List c): List c = match (xs, ys) {
+    (Cons(x, xr), Cons(y, yr)) -> zipWithLoop(xr, yr, f, Cons(f(x, y), acc)),
+    _ -> listRev(acc),
+}
+
+pub def listZipWith(xs: List a, ys: List b, f: (a, b) -> c): List c =
+    zipWithLoop(xs, ys, f, Nil)
+
+pub def listContainsStr(xs: List String, target: String): Bool = match xs {
+    Nil -> false,
+    Cons(h, t) -> if (h == target) true else listContainsStr(t, target),
+}
+
+pub def listMaxInt(xs: List Int, fallback: Int): Int = match xs {
+    Nil -> fallback,
+    Cons(h, t) -> std.list.listFold(t, h, (acc, x) -> maxInt(acc, x)),
+}
+
+pub def listMinInt(xs: List Int, fallback: Int): Int = match xs {
+    Nil -> fallback,
+    Cons(h, t) -> std.list.listFold(t, h, (acc, x) -> minInt(acc, x)),
+}
+
+pub def strToLowerAscii(s: String): String = {
+    let n = strLen(s);
+    let b = bufNew();
+    let i = cellNew(0);
+    while (cellGet(i) < n) {
+        let c = strByteAt(s, cellGet(i));
+        let lc = if (c >= 65 && c <= 90) c + 32 else c;
+        bufPushByte(b, lc);
+        cellSet(i, cellGet(i) + 1)
+    };
+    bufToString(b)
+}
+
+pub def strToUpperAscii(s: String): String = {
+    let n = strLen(s);
+    let b = bufNew();
+    let i = cellNew(0);
+    while (cellGet(i) < n) {
+        let c = strByteAt(s, cellGet(i));
+        let uc = if (c >= 97 && c <= 122) c - 32 else c;
+        bufPushByte(b, uc);
+        cellSet(i, cellGet(i) + 1)
+    };
+    bufToString(b)
+}
+
+pub def strContains(haystack: String, needle: String): Bool = {
+    let hl = strLen(haystack);
+    let nl = strLen(needle);
+    if (nl == 0) true
+    else if (nl > hl) false
+    else {
+        let limit = hl - nl;
+        let i = cellNew(0);
+        let found = cellNew(false);
+        while (cellGet(i) <= limit && !cellGet(found)) {
+            let cur = cellGet(i);
+            if (strSlice(haystack, cur, cur + nl) == needle) {
+                cellSet(found, true)
+            } else {
+                cellSet(i, cur + 1)
+            }
+        };
+        cellGet(found)
+    }
+}
+
+pub def utf8CharCount(s: String): Int = {
+    let n = strLen(s);
+    let count = cellNew(0);
+    let i = cellNew(0);
+    while (cellGet(i) < n) {
+        let b = strByteAt(s, cellGet(i)) & 255;
+        if ((b & 192) != 128) {
+            cellSet(count, cellGet(count) + 1)
+        } else ();
+        cellSet(i, cellGet(i) + 1)
+    };
+    cellGet(count)
+}

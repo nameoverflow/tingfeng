@@ -1,0 +1,1978 @@
+// Core Wuxia Domain Entities, Derived Stat Algebra (`Monoid`), Composable Lenses,
+// and Declarative `std.codec` Pipelines (`entity`).
+
+use std.option.{Option, Some, None}
+use std.result.{Result, Ok, Err}
+use std.list.{listRev, listMap, listFilter, listAppend}
+use std.str.intToStr
+use std.codec.{
+    Value, VNull, VObj, VArr,
+    DecodeErr, makeErr,
+    Encode, encode, object, array, (:=),
+    Decoder, run, (|>), (<|>),
+    succeed, fail, value, bool, int, float, str, list,
+    at, atOpt, atOr, req, opt, withDefault, tagged
+}
+use fp.{
+    Ordering, Lt, EqOrd, Gt, Ord, compare,
+    Semigroup, (<+>), Monoid, empty, foldMapList,
+    Lens, lens, (~>>),
+    minInt, maxInt, clampInt, floorDiv, optOr, optOrElse, listMaxInt, strToLowerAscii
+}
+use ordmap.{
+    OrdMap, OrdSet,
+    mapEmpty, mapLookup, mapMember, mapInsert, mapFromList, mapToAscList, mapElems, mapMap, mapUnion,
+    setEmpty, setFromList, setToAscList
+}
+use yaml.Configurable
+
+// ============================================================================
+// Reusable Combinator Extensions (`custom`, `pos2`, `ordMapOf`)
+// ============================================================================
+
+pub def custom(dec: Decoder a): Decoder (a -> b) -> Decoder b =
+    (df) -> std.codec.apply(df, dec)
+
+pub def mapD(f: a -> b): Decoder a -> Decoder b =
+    (dec) -> std.codec.map(f, dec)
+
+pub def decodePos(): Decoder (Int, Int) =
+    Decoder((v) -> match v {
+        VArr(Cons(a, Cons(b, Nil))) -> match (run(int, a), run(int, b)) {
+            (Ok(x), Ok(y)) -> Ok((x, y)),
+            (Err(e), _) -> Err(e),
+            (_, Err(e)) -> Err(e),
+        },
+        _ -> Err(makeErr("$", "expected [x, y] coordinate pair")),
+    })
+
+pub def encodePos(p: (Int, Int)): Value = match p {
+    (x, y) -> array([encode(x), encode(y)]),
+}
+
+def decodeObjPairsLoop(
+    fields: List (String, Value),
+    keyParse: String -> Result k String,
+    valDec: Decoder v,
+    acc: List (k, v)
+): Result (List (k, v)) DecodeErr = match fields {
+    Nil -> Ok(listRev(acc)),
+    Cons((rawK, rawV), rest) -> match keyParse(rawK) {
+        Err(ke) -> Err(makeErr("$." + rawK, ke)),
+        Ok(k) -> match run(valDec, rawV) {
+            Err(ve) -> Err(makeErr("$." + rawK, ve.message)),
+            Ok(v) -> decodeObjPairsLoop(rest, keyParse, valDec, Cons((k, v), acc)),
+        },
+    },
+}
+
+pub def decodeTypedMap(keyParse, valDec): forall k v. (Ord k) => (String -> Result k String, Decoder v) -> Decoder (OrdMap k v) =
+    Decoder((v) -> match v {
+        VObj(fields) -> match decodeObjPairsLoop(fields, keyParse, valDec, Nil) {
+            Ok(pairs) -> Ok(mapFromList(pairs)),
+            Err(e) -> Err(e),
+        },
+        _ -> Err(makeErr("$", "expected object map")),
+    })
+
+pub def decodeStrOrdMap(valDec: Decoder v): Decoder (OrdMap String v) =
+    decodeTypedMap((k) -> Ok(k), valDec)
+
+pub def encodeTypedMap(keyToStr: k -> String, valEnc: v -> Value, m: OrdMap k v): Value =
+    object(listMap(mapToAscList(m), (p) -> match p { (k, v) -> (keyToStr(k), valEnc(v)) }))
+
+pub def encodeStrOrdMap(m): forall v. (Encode v) => OrdMap String v -> Value =
+    encodeTypedMap((k) -> k, (v) -> encode(v), m)
+
+pub def decodeOrdSet(elemDec): forall a. (Ord a) => Decoder a -> Decoder (OrdSet a) =
+    std.codec.map((xs) -> setFromList(xs), list(elemDec))
+
+pub def encodeOrdSet(s): forall a. (Encode a) => OrdSet a -> Value =
+    encode(setToAscList(s))
+
+// ============================================================================
+// Equipment Slots & Weapon Kinds
+// ============================================================================
+
+pub data EquipSlot {
+    WeaponSlot,
+    ArmorSlot,
+}
+
+def equipSlotRank(s: EquipSlot): Int = match s {
+    WeaponSlot -> 0,
+    ArmorSlot -> 1,
+}
+
+pub def equipSlotEq(a: EquipSlot, b: EquipSlot): Bool =
+    equipSlotRank(a) == equipSlotRank(b)
+
+instance Ord EquipSlot {
+    def compare(a, b) = compare(equipSlotRank(a), equipSlotRank(b))
+}
+
+pub def equipSlotToText(s: EquipSlot): String = match s {
+    WeaponSlot -> "weapon",
+    ArmorSlot -> "armor",
+}
+
+pub def equipSlotFromText(raw: String): Option EquipSlot = {
+    let s = strToLowerAscii(raw);
+    if (s == "weapon") Some(WeaponSlot)
+    else if (s == "armor") Some(ArmorSlot)
+    else None
+}
+
+pub def decodeEquipSlot(): Decoder EquipSlot =
+    std.codec.andThen(
+        (s) -> match equipSlotFromText(s) {
+            Some(slot) -> succeed(slot),
+            None -> fail("Invalid EquipSlot: " + s),
+        },
+        str
+    )
+
+instance Encode EquipSlot {
+    def encode(s) = encode(equipSlotToText(s))
+}
+
+pub data WeaponKind {
+    SwordWeapon,
+    FistWeapon,
+}
+
+pub def weaponKindEq(a: WeaponKind, b: WeaponKind): Bool = match (a, b) {
+    (SwordWeapon, SwordWeapon) -> true,
+    (FistWeapon, FistWeapon) -> true,
+    _ -> false,
+}
+
+pub def weaponKindToText(w: WeaponKind): String = match w {
+    SwordWeapon -> "sword",
+    FistWeapon -> "fist",
+}
+
+pub def weaponKindFromText(raw: String): Option WeaponKind = {
+    let s = strToLowerAscii(raw);
+    if (s == "sword") Some(SwordWeapon)
+    else if (s == "fist") Some(FistWeapon)
+    else None
+}
+
+pub def decodeWeaponKind(): Decoder WeaponKind =
+    std.codec.andThen(
+        (s) -> match weaponKindFromText(s) {
+            Some(k) -> succeed(k),
+            None -> fail("Invalid WeaponKind: " + s),
+        },
+        str
+    )
+
+instance Encode WeaponKind {
+    def encode(w) = encode(weaponKindToText(w))
+}
+
+// ============================================================================
+// Derived Stat Modifiers (`Semigroup` & `Monoid` Algebra)
+// ============================================================================
+
+pub data DerivedStatModifiers {
+    MkDerivedStatModifiers {
+        dsmStrength: Int,
+        dsmAgility: Int,
+        dsmVitality: Int,
+        dsmMaxHp: Int,
+        dsmMaxQi: Int,
+        dsmMaxJing: Int,
+        dsmHpRegen: Float,
+        dsmQiRegen: Float,
+        dsmJingRegen: Float,
+        dsmHit: Int,
+        dsmDodge: Int,
+        dsmParry: Int,
+        dsmDamageBonus: Int,
+        dsmDamageReduction: Int,
+        dsmLoadLimit: Int,
+    },
+}
+
+pub def emptyDerivedStatModifiers(): DerivedStatModifiers =
+    MkDerivedStatModifiers {
+        dsmStrength: 0,
+        dsmAgility: 0,
+        dsmVitality: 0,
+        dsmMaxHp: 0,
+        dsmMaxQi: 0,
+        dsmMaxJing: 0,
+        dsmHpRegen: 0.0,
+        dsmQiRegen: 0.0,
+        dsmJingRegen: 0.0,
+        dsmHit: 0,
+        dsmDodge: 0,
+        dsmParry: 0,
+        dsmDamageBonus: 0,
+        dsmDamageReduction: 0,
+        dsmLoadLimit: 0,
+    }
+
+instance Semigroup DerivedStatModifiers {
+    def (<+>)(a, b) = MkDerivedStatModifiers {
+        dsmStrength: a.dsmStrength + b.dsmStrength,
+        dsmAgility: a.dsmAgility + b.dsmAgility,
+        dsmVitality: a.dsmVitality + b.dsmVitality,
+        dsmMaxHp: a.dsmMaxHp + b.dsmMaxHp,
+        dsmMaxQi: a.dsmMaxQi + b.dsmMaxQi,
+        dsmMaxJing: a.dsmMaxJing + b.dsmMaxJing,
+        dsmHpRegen: a.dsmHpRegen + b.dsmHpRegen,
+        dsmQiRegen: a.dsmQiRegen + b.dsmQiRegen,
+        dsmJingRegen: a.dsmJingRegen + b.dsmJingRegen,
+        dsmHit: a.dsmHit + b.dsmHit,
+        dsmDodge: a.dsmDodge + b.dsmDodge,
+        dsmParry: a.dsmParry + b.dsmParry,
+        dsmDamageBonus: a.dsmDamageBonus + b.dsmDamageBonus,
+        dsmDamageReduction: a.dsmDamageReduction + b.dsmDamageReduction,
+        dsmLoadLimit: a.dsmLoadLimit + b.dsmLoadLimit,
+    }
+}
+
+instance Monoid DerivedStatModifiers {
+    def empty() = emptyDerivedStatModifiers()
+}
+
+def decodeModPart1(): Decoder (Int, Int, Int, Int, Int, Int) =
+    succeed((s) -> (a) -> (v) -> (hp) -> (qi) -> (jg) -> (s, a, v, hp, qi, jg))
+        |> withDefault("strength", int, 0)
+        |> withDefault("agility", int, 0)
+        |> withDefault("vitality", int, 0)
+        |> withDefault("max_hp", int, 0)
+        |> withDefault("max_qi", int, 0)
+        |> withDefault("max_jing", int, 0)
+
+def decodeModPart2(): Decoder (Float, Float, Float, Int, Int, Int) =
+    succeed((hr) -> (qr) -> (jr) -> (hit) -> (dod) -> (par) -> (hr, qr, jr, hit, dod, par))
+        |> withDefault("hp_regen", float, 0.0)
+        |> withDefault("qi_regen", float, 0.0)
+        |> withDefault("jing_regen", float, 0.0)
+        |> withDefault("hit", int, 0)
+        |> withDefault("dodge", int, 0)
+        |> withDefault("parry", int, 0)
+
+def decodeModPart3(): Decoder (Int, Int, Int) =
+    succeed((db) -> (dr) -> (ll) -> (db, dr, ll))
+        |> withDefault("damage_bonus", int, 0)
+        |> withDefault("damage_reduction", int, 0)
+        |> withDefault("load_limit", int, 0)
+
+pub def decodeDerivedStatModifiers(): Decoder DerivedStatModifiers =
+    succeed((p1) -> (p2) -> (p3) -> match (p1, p2, p3) {
+        ((s, a, v, hp, qi, jg), (hr, qr, jr, hit, dod, par), (db, dr, ll)) ->
+            MkDerivedStatModifiers {
+                dsmStrength: s,
+                dsmAgility: a,
+                dsmVitality: v,
+                dsmMaxHp: hp,
+                dsmMaxQi: qi,
+                dsmMaxJing: jg,
+                dsmHpRegen: hr,
+                dsmQiRegen: qr,
+                dsmJingRegen: jr,
+                dsmHit: hit,
+                dsmDodge: dod,
+                dsmParry: par,
+                dsmDamageBonus: db,
+                dsmDamageReduction: dr,
+                dsmLoadLimit: ll,
+            },
+    })
+        |> custom(decodeModPart1())
+        |> custom(decodeModPart2())
+        |> custom(decodeModPart3())
+
+// ============================================================================
+// Items (`ItemMedicine`, `ItemEquip`, `EquippedItem`, `ItemUse`, `Item`)
+// ============================================================================
+
+pub data ItemMedicine {
+    MkItemMedicine {
+        medicineHp: Int,
+        medicineQi: Int,
+        medicineJing: Int,
+        medicineCureInjury: Int,
+        medicineConsume: Bool,
+        medicineMessage: Option String,
+    },
+}
+
+pub data ItemEquip {
+    MkItemEquip {
+        equipSlot: EquipSlot,
+        equipWeaponKind: Option WeaponKind,
+        equipModifiers: DerivedStatModifiers,
+        equipMessage: Option String,
+        unequipMessage: Option String,
+    },
+}
+
+pub data EquippedItem {
+    MkEquippedItem {
+        equippedItemId: String,
+        equippedSlot: EquipSlot,
+        equippedWeaponKind: Option WeaponKind,
+        equippedModifiers: DerivedStatModifiers,
+    },
+}
+
+pub data ItemUse {
+    LearnArtUse {
+        itemUseArt: String,
+        itemUseLevel: Int,
+        itemUseMinLevel: Int,
+        itemUseMaxLevel: Option Int,
+        itemUseQuality: Int,
+        itemUseConsume: Bool,
+        itemUseMessage: Option String,
+        itemUseRepeatMessage: Option String,
+    },
+    MedicineUse(ItemMedicine),
+    EquipUse(ItemEquip),
+}
+
+def decodeLearnArtHead(): Decoder (String, Int, Int, Option Int) =
+    succeed((art) -> (lvl) -> (minL) -> (maxL) -> (art, lvl, minL, maxL))
+        |> req("art", str)
+        |> withDefault("level", int, 1)
+        |> withDefault("min_level", int, 1)
+        |> opt("max_level", int)
+
+def decodeLearnArtTail(): Decoder (Int, Bool, Option String, Option String) =
+    succeed((qual) -> (cons) -> (msg) -> (rmsg) -> (qual, cons, msg, rmsg))
+        |> withDefault("quality", int, 0)
+        |> withDefault("consume", bool, false)
+        |> opt("message", str)
+        |> opt("repeat_message", str)
+
+def decodeLearnArtUse(): Decoder ItemUse =
+    succeed((h) -> (t) -> match (h, t) {
+        ((art, lvl, minL, maxL), (qual, cons, msg, rmsg)) ->
+            LearnArtUse {
+                itemUseArt: art,
+                itemUseLevel: lvl,
+                itemUseMinLevel: minL,
+                itemUseMaxLevel: maxL,
+                itemUseQuality: qual,
+                itemUseConsume: cons,
+                itemUseMessage: msg,
+                itemUseRepeatMessage: rmsg,
+            },
+    })
+        |> custom(decodeLearnArtHead())
+        |> custom(decodeLearnArtTail())
+
+def decodeMedicineUse(): Decoder ItemUse =
+    succeed((hp) -> (qi) -> (jg) -> (cure) -> (cons) -> (msg) ->
+        MedicineUse(MkItemMedicine {
+            medicineHp: hp,
+            medicineQi: qi,
+            medicineJing: jg,
+            medicineCureInjury: cure,
+            medicineConsume: cons,
+            medicineMessage: msg,
+        })
+    )
+        |> withDefault("hp", int, 0)
+        |> withDefault("qi", int, 0)
+        |> withDefault("jing", int, 0)
+        |> withDefault("cure_injury", int, 0)
+        |> withDefault("consume", bool, true)
+        |> opt("message", str)
+
+def decodeEquipUse(): Decoder ItemUse =
+    succeed((slot) -> (wk) -> (msg) -> (umsg) -> (mods) ->
+        EquipUse(MkItemEquip {
+            equipSlot: slot,
+            equipWeaponKind: wk,
+            equipModifiers: mods,
+            equipMessage: msg,
+            unequipMessage: umsg,
+        })
+    )
+        |> req("slot", decodeEquipSlot())
+        |> opt("weapon_kind", decodeWeaponKind())
+        |> opt("message", str)
+        |> opt("unequip_message", str)
+        |> custom(decodeDerivedStatModifiers())
+
+pub def decodeItemUse(): Decoder ItemUse =
+    tagged("type", [
+        ("learn_art", decodeLearnArtUse()),
+        ("medicine", decodeMedicineUse()),
+        ("equip", decodeEquipUse()),
+    ])
+
+pub data Item {
+    MkItem {
+        itemId: String,
+        itemName: String,
+        itemDesc: String,
+        itemUse: Option ItemUse,
+    },
+}
+
+pub def decodeItem(): Decoder Item =
+    succeed((id) -> (name) -> (desc) -> (useOpt) ->
+        MkItem { itemId: id, itemName: name, itemDesc: desc, itemUse: useOpt }
+    )
+        |> req("id", str)
+        |> req("name", str)
+        |> withDefault("desc", str, "")
+        |> opt("use", decodeItemUse())
+
+instance Configurable Item {
+    def configId(i) = i.itemId
+    def configDecoder() = decodeItem()
+}
+
+// ============================================================================
+// Status Effects & Combat Action Timings
+// ============================================================================
+
+pub data EffectType {
+    DoT,
+    HoT,
+    Buff,
+    DeBuff,
+}
+
+pub def effectTypeEq(a: EffectType, b: EffectType): Bool = match (a, b) {
+    (DoT, DoT) -> true,
+    (HoT, HoT) -> true,
+    (Buff, Buff) -> true,
+    (DeBuff, DeBuff) -> true,
+    _ -> false,
+}
+
+pub def listContainsEffectType(xs: List EffectType, target: EffectType): Bool = match xs {
+    Nil -> false,
+    Cons(h, t) -> if (effectTypeEq(h, target)) true else listContainsEffectType(t, target),
+}
+
+pub def effectTypeToText(et: EffectType): String = match et {
+    DoT -> "dot",
+    HoT -> "hot",
+    Buff -> "buff",
+    DeBuff -> "debuff",
+}
+
+pub def decodeEffectType(): Decoder EffectType =
+    std.codec.andThen(
+        (s) ->
+            if (s == "dot") succeed(DoT)
+            else if (s == "hot") succeed(HoT)
+            else if (s == "buff") succeed(Buff)
+            else if (s == "debuff") succeed(DeBuff)
+            else fail("Invalid EffectType: " + s),
+        str
+    )
+
+pub data Effect {
+    MkEffect {
+        effectId: String,
+        effectName: String,
+        effectType: EffectType,
+        effectDesc: String,
+    },
+}
+
+pub def decodeEffect(): Decoder Effect =
+    succeed((id) -> (name) -> (ty) -> (desc) ->
+        MkEffect { effectId: id, effectName: name, effectType: ty, effectDesc: desc }
+    )
+        |> req("id", str)
+        |> req("name", str)
+        |> req("type", decodeEffectType())
+        |> req("desc", str)
+
+instance Configurable Effect {
+    def configId(e) = e.effectId
+    def configDecoder() = decodeEffect()
+}
+
+pub data ActiveEffect {
+    MkActiveEffect {
+        activeEffectDef: String,
+        activeEffectRemaining: Float,
+        activeEffectValue: Int,
+    },
+}
+
+pub data CombatActionTiming {
+    MkCombatActionTiming {
+        combatActionTimingId: String,
+        combatActionTimingLockMs: Int,
+        combatActionTimingApproachMs: Int,
+        combatActionTimingHitShares: List Float,
+    },
+}
+
+pub def decodeCombatActionTiming(): Decoder CombatActionTiming =
+    succeed((id) -> (lockMs) -> (appOpt) -> (rawShares) -> {
+        let shares = match rawShares {
+            Nil -> [1.0],
+            _ -> rawShares,
+        };
+        MkCombatActionTiming {
+            combatActionTimingId: id,
+            combatActionTimingLockMs: lockMs,
+            combatActionTimingApproachMs: optOr(appOpt, 0),
+            combatActionTimingHitShares: shares,
+        }
+    })
+        |> req("id", str)
+        |> custom(at("lock_ms", int) <|> at("duration_ms", int) <|> at("durationMs", int))
+        |> opt("approach", atOr("durationMs", int, 0))
+        |> withDefault("hits", list(atOr("share", float, 1.0)), Nil)
+
+instance Configurable CombatActionTiming {
+    def configId(t) = t.combatActionTimingId
+    def configDecoder() = decodeCombatActionTiming()
+}
+
+// ============================================================================
+// Animations, Martial Arts, Moves & Active Skills
+// ============================================================================
+
+pub data ActiveSkillTarget {
+    SingleTarget,
+    AllTarget,
+    SelfTarget,
+}
+
+pub def decodeActiveSkillTarget(): Decoder ActiveSkillTarget =
+    std.codec.andThen(
+        (s) ->
+            if (s == "Single" || s == "single") succeed(SingleTarget)
+            else if (s == "All" || s == "all") succeed(AllTarget)
+            else if (s == "Self" || s == "self") succeed(SelfTarget)
+            else fail("Invalid ActiveSkillTarget: " + s),
+        str
+    )
+
+pub data AnimationRef {
+    MkAnimationRef {
+        animationRefAction: String,
+        animationRefTags: List String,
+        animationRefParams: Option Value,
+    },
+}
+
+pub def decodeAnimationRef(): Decoder AnimationRef =
+    succeed((act) -> (tags) -> (params) ->
+        MkAnimationRef { animationRefAction: act, animationRefTags: tags, animationRefParams: params }
+    )
+        |> req("action", str)
+        |> withDefault("tags", list(str), Nil)
+        |> opt("params", value)
+
+pub data CombatVisualHint {
+    MkCombatVisualHint {
+        combatVisualActionId: String,
+        combatVisualTags: List String,
+        combatVisualDurationMs: Option Int,
+        combatVisualParams: Option Value,
+    },
+}
+
+instance Encode CombatVisualHint {
+    def encode(v) = object([
+        "actionId"   := v.combatVisualActionId,
+        "tags"       := v.combatVisualTags,
+        "durationMs" := v.combatVisualDurationMs,
+        "params"     := v.combatVisualParams,
+    ])
+}
+
+def decodeSkillEffectEntry(): Decoder (String, Float, Int) =
+    succeed((id) -> (dur) -> (val) -> (id, dur, val))
+        |> withDefault("id", str, "")
+        |> withDefault("duration", float, 0.0)
+        |> withDefault("value", int, 0)
+
+pub data ActiveSkill {
+    MkActiveSkill {
+        activeSkillId: String,
+        activeSkillName: String,
+        activeSkillDesc: String,
+        activeSkillMsg: String,
+        activeSkillUnlockLevel: Int,
+        activeSkillCooldown: Float,
+        activeSkillTarget: ActiveSkillTarget,
+        activeSkillCost: Int,
+        activeSkillApReq: Int,
+        activeSkillReqArts: List String,
+        activeSkillReqStatus: List String,
+        activeSkillHeal: Option Int,
+        activeSkillDamage: Option Int,
+        activeSkillCleanse: List EffectType,
+        activeSkillAnimation: AnimationRef,
+        activeSkillEffSelf: List (String, Float, Int),
+        activeSkillEffTarget: List (String, Float, Int),
+    },
+}
+
+def decodeActiveSkillPart1(): Decoder (String, String, String, String, Int, Float) =
+    succeed((id) -> (nm) -> (desc) -> (msg) -> (ul) -> (cd) -> (id, nm, desc, msg, ul, cd))
+        |> req("id", str)
+        |> req("name", str)
+        |> req("desc", str)
+        |> req("msg", str)
+        |> withDefault("unlock_level", int, 1)
+        |> req("cd", float)
+
+def decodeActiveSkillPart2(): Decoder (ActiveSkillTarget, Int, Int, List String, List String) =
+    succeed((tgt) -> (cost) -> (ap) -> (ra) -> (rs) -> (tgt, cost, ap, ra, rs))
+        |> req("target", decodeActiveSkillTarget())
+        |> req("cost", int)
+        |> withDefault("ap_req", int, 0)
+        |> withDefault("req_arts", list(str), Nil)
+        |> withDefault("req_status", list(str), Nil)
+
+def decodeActiveSkillPart3(): Decoder (Option Int, Option Int, List EffectType, AnimationRef, (List (String, Float, Int), List (String, Float, Int))) =
+    succeed((hl) -> (dmg) -> (cl) -> (anim) -> (effs) -> (hl, dmg, cl, anim, effs))
+        |> opt("heal", int)
+        |> opt("damage", int)
+        |> withDefault("cleanse", list(decodeEffectType()), Nil)
+        |> req("animation", decodeAnimationRef())
+        |> req(
+            "effect",
+            succeed((s) -> (t) -> (s, t))
+                |> withDefault("self", list(decodeSkillEffectEntry()), Nil)
+                |> withDefault("target", list(decodeSkillEffectEntry()), Nil)
+        )
+
+pub def decodeActiveSkill(): Decoder ActiveSkill =
+    succeed((p1) -> (p2) -> (p3) -> match (p1, p2, p3) {
+        ((id, nm, desc, msg, ul, cd), (tgt, cost, ap, ra, rs), (hl, dmg, cl, anim, (effS, effT))) ->
+            MkActiveSkill {
+                activeSkillId: id,
+                activeSkillName: nm,
+                activeSkillDesc: desc,
+                activeSkillMsg: msg,
+                activeSkillUnlockLevel: ul,
+                activeSkillCooldown: cd,
+                activeSkillTarget: tgt,
+                activeSkillCost: cost,
+                activeSkillApReq: ap,
+                activeSkillReqArts: ra,
+                activeSkillReqStatus: rs,
+                activeSkillHeal: hl,
+                activeSkillDamage: dmg,
+                activeSkillCleanse: cl,
+                activeSkillAnimation: anim,
+                activeSkillEffSelf: effS,
+                activeSkillEffTarget: effT,
+            },
+    })
+        |> custom(decodeActiveSkillPart1())
+        |> custom(decodeActiveSkillPart2())
+        |> custom(decodeActiveSkillPart3())
+
+pub data AttackMove {
+    MkAttackMove {
+        attackMoveId: String,
+        attackMoveName: String,
+        attackMoveDesc: String,
+        attackMoveMsg: String,
+        attackMoveUnlockLevel: Int,
+        attackMoveDamage: Int,
+        attackMoveAnimation: AnimationRef,
+    },
+}
+
+pub def decodeAttackMove(): Decoder AttackMove =
+    succeed((id) -> (nm) -> (desc) -> (msg) -> (ul) -> (dmg) -> (anim) ->
+        MkAttackMove {
+            attackMoveId: id,
+            attackMoveName: nm,
+            attackMoveDesc: desc,
+            attackMoveMsg: msg,
+            attackMoveUnlockLevel: ul,
+            attackMoveDamage: dmg,
+            attackMoveAnimation: anim,
+        }
+    )
+        |> req("id", str)
+        |> req("name", str)
+        |> req("desc", str)
+        |> req("msg", str)
+        |> withDefault("unlock_level", int, 1)
+        |> req("damage", int)
+        |> req("animation", decodeAnimationRef())
+
+pub data ArtType {
+    Foundation,
+    Internal,
+    Lightness,
+    Sword,
+    Fist,
+}
+
+def artTypeRank(t: ArtType): Int = match t {
+    Foundation -> 0,
+    Internal -> 1,
+    Lightness -> 2,
+    Sword -> 3,
+    Fist -> 4,
+}
+
+pub def artTypeEq(a: ArtType, b: ArtType): Bool =
+    artTypeRank(a) == artTypeRank(b)
+
+instance Ord ArtType {
+    def compare(a, b) = compare(artTypeRank(a), artTypeRank(b))
+}
+
+pub def artTypeToText(t: ArtType): String = match t {
+    Foundation -> "foundation",
+    Internal -> "internal",
+    Lightness -> "lightness",
+    Sword -> "sword",
+    Fist -> "fist",
+}
+
+pub def artTypeFromText(s: String): Option ArtType =
+    if (s == "foundation") Some(Foundation)
+    else if (s == "internal") Some(Internal)
+    else if (s == "lightness") Some(Lightness)
+    else if (s == "sword") Some(Sword)
+    else if (s == "fist") Some(Fist)
+    else None
+
+pub def parseArtTypeKey(s: String): Result ArtType String = match artTypeFromText(s) {
+    Some(t) -> Ok(t),
+    None -> Err("Invalid ArtType: " + s),
+}
+
+pub def decodeArtType(): Decoder ArtType =
+    std.codec.andThen(
+        (s) -> match artTypeFromText(s) {
+            Some(t) -> succeed(t),
+            None -> fail("Invalid ArtType in MartialArt: " + s),
+        },
+        str
+    )
+
+instance Encode ArtType {
+    def encode(t) = encode(artTypeToText(t))
+}
+
+pub data ArtRequirement {
+    MkArtRequirement {
+        artRequirementArt: String,
+        artRequirementLevel: Int,
+    },
+}
+
+pub def decodeArtRequirement(): Decoder ArtRequirement =
+    succeed((a) -> (l) -> MkArtRequirement { artRequirementArt: a, artRequirementLevel: l })
+        |> req("art", str)
+        |> req("level", int)
+
+pub data ArtTier {
+    EntryTier,
+    RegionalTier,
+    LineageTier,
+}
+
+pub def artTierEq(a: ArtTier, b: ArtTier): Bool = match (a, b) {
+    (EntryTier, EntryTier) -> true,
+    (RegionalTier, RegionalTier) -> true,
+    (LineageTier, LineageTier) -> true,
+    _ -> false,
+}
+
+pub def artTierToText(t: ArtTier): String = match t {
+    EntryTier -> "entry",
+    RegionalTier -> "regional",
+    LineageTier -> "lineage",
+}
+
+pub def decodeArtTier(): Decoder ArtTier =
+    std.codec.andThen(
+        (s) ->
+            if (s == "entry") succeed(EntryTier)
+            else if (s == "regional") succeed(RegionalTier)
+            else if (s == "lineage") succeed(LineageTier)
+            else fail("Invalid ArtTier: " + s),
+        str
+    )
+
+pub data MartialArt {
+    MkMartialArt {
+        artId: String,
+        artType: ArtType,
+        artTier: ArtTier,
+        artName: String,
+        artDesc: String,
+        artFoundation: Option String,
+        artRequires: List ArtRequirement,
+        artMaxLevel: Int,
+        artResearchFrom: Int,
+        artAttackMoves: List AttackMove,
+        artActiveSkills: List ActiveSkill,
+    },
+}
+
+def decodeMartialArtPart1(): Decoder (String, ArtType, ArtTier, String, String, Option String) =
+    succeed((id) -> (ty) -> (tier) -> (nm) -> (desc) -> (fnd) -> (id, ty, tier, nm, desc, fnd))
+        |> req("id", str)
+        |> req("type", decodeArtType())
+        |> withDefault("tier", decodeArtTier(), EntryTier)
+        |> req("name", str)
+        |> req("desc", str)
+        |> opt("foundation", str)
+
+def decodeMartialArtPart2(): Decoder (List ArtRequirement, Int, Option Int, List AttackMove, List ActiveSkill) =
+    succeed((reqs) -> (maxL) -> (resOpt) -> (moves) -> (skills) -> (reqs, maxL, resOpt, moves, skills))
+        |> withDefault("requires", list(decodeArtRequirement()), Nil)
+        |> withDefault("max_level", int, 100)
+        |> opt("research_from", int)
+        |> withDefault("attack_moves", list(decodeAttackMove()), Nil)
+        |> withDefault("active_skills", list(decodeActiveSkill()), Nil)
+
+pub def decodeMartialArt(): Decoder MartialArt =
+    succeed((p1) -> (p2) -> match (p1, p2) {
+        ((id, ty, tier, nm, desc, fnd), (reqs, maxL, resOpt, moves, skills)) ->
+            MkMartialArt {
+                artId: id,
+                artType: ty,
+                artTier: tier,
+                artName: nm,
+                artDesc: desc,
+                artFoundation: fnd,
+                artRequires: reqs,
+                artMaxLevel: maxL,
+                artResearchFrom: optOr(resOpt, floorDiv(maxL + 1, 2)),
+                artAttackMoves: moves,
+                artActiveSkills: skills,
+            },
+    })
+        |> custom(decodeMartialArtPart1())
+        |> custom(decodeMartialArtPart2())
+
+instance Configurable MartialArt {
+    def configId(a) = a.artId
+    def configDecoder() = decodeMartialArt()
+}
+
+pub data ArtEntity {
+    MkArtEntity {
+        artDef: String,
+        artLevel: Int,
+        artProgress: Int,
+    },
+}
+
+pub def decodeArtEntity(): Decoder ArtEntity =
+    succeed((id) -> (lvl) -> (prog) -> MkArtEntity { artDef: id, artLevel: lvl, artProgress: prog })
+        |> req("id", str)
+        |> req("level", int)
+        |> withDefault("progress", int, 0)
+
+instance Encode ArtEntity {
+    def encode(a) = object([
+        "id"       := a.artDef,
+        "level"    := a.artLevel,
+        "progress" := a.artProgress,
+    ])
+}
+
+// ============================================================================
+// Characters, Attributes, Profile & Player
+// ============================================================================
+
+pub data CharAction {
+    Attacking,
+    Dialogue,
+    Sparring,
+}
+
+def charActionRank(a: CharAction): Int = match a {
+    Attacking -> 0,
+    Dialogue -> 1,
+    Sparring -> 2,
+}
+
+pub def charActionEq(a: CharAction, b: CharAction): Bool =
+    charActionRank(a) == charActionRank(b)
+
+instance Ord CharAction {
+    def compare(a, b) = compare(charActionRank(a), charActionRank(b))
+}
+
+pub def decodeCharAction(): Decoder CharAction =
+    std.codec.andThen(
+        (s) ->
+            if (s == "attacking") succeed(Attacking)
+            else if (s == "sparring") succeed(Sparring)
+            else if (s == "dialogue") succeed(Dialogue)
+            else fail("Invalid CharAction: " + s),
+        str
+    )
+
+pub data CharStatus {
+    CharAlive,
+    CharDead,
+    CharBattle,
+    CharBusy,
+}
+
+pub def charStatusEq(a: CharStatus, b: CharStatus): Bool = match (a, b) {
+    (CharAlive, CharAlive) -> true,
+    (CharDead, CharDead) -> true,
+    (CharBattle, CharBattle) -> true,
+    (CharBusy, CharBusy) -> true,
+    _ -> false,
+}
+
+pub data Gender {
+    Male,
+    Female,
+    UnknownGender,
+}
+
+pub def genderEq(a: Gender, b: Gender): Bool = match (a, b) {
+    (Male, Male) -> true,
+    (Female, Female) -> true,
+    (UnknownGender, UnknownGender) -> true,
+    _ -> false,
+}
+
+pub def genderToText(g: Gender): String = match g {
+    Male -> "male",
+    Female -> "female",
+    UnknownGender -> "unknown",
+}
+
+pub def decodeGender(): Decoder Gender =
+    std.codec.andThen(
+        (raw) -> {
+            let s = strToLowerAscii(raw);
+            if (s == "male") succeed(Male)
+            else if (s == "female") succeed(Female)
+            else if (s == "unknown") succeed(UnknownGender)
+            else fail("Invalid Gender: " + raw)
+        },
+        str
+    )
+
+instance Encode Gender {
+    def encode(g) = encode(genderToText(g))
+}
+
+pub data InnateAttrs {
+    MkInnateAttrs {
+        innateStrength: Int,
+        innateAgility: Int,
+        innateVitality: Int,
+    },
+}
+
+pub def innateAttrsEq(a: InnateAttrs, b: InnateAttrs): Bool =
+    a.innateStrength == b.innateStrength
+    && a.innateAgility == b.innateAgility
+    && a.innateVitality == b.innateVitality
+
+pub def clampAppearanceScore(score: Int): Int = clampInt(0, 10, score)
+pub def clampInnateScore(score: Int): Int = clampInt(1, 60, score)
+pub def clampLegacyInnateScore(score: Int): Int = clampInt(6, 45, score)
+pub def clampEffectiveAttr(score: Int): Int = clampInt(1, 60, score)
+
+pub def defaultAppearanceScore(): Int = 5
+pub def defaultJing(): Int = 120
+
+pub def defaultInnateAttrs(): InnateAttrs =
+    MkInnateAttrs { innateStrength: 18, innateAgility: 18, innateVitality: 18 }
+
+def normalizeOldStrength(old: Int): Int =
+    if (old > 100) 18 + minInt(12, floorDiv(old - 100, 50))
+    else clampLegacyInnateScore(old)
+
+pub def legacyInnateAttrs(ls: Option Int, la: Option Int, lv: Option Int): InnateAttrs =
+    MkInnateAttrs {
+        innateStrength: match ls { Some(x) -> normalizeOldStrength(x), None -> 18 },
+        innateAgility: match la { Some(x) -> clampLegacyInnateScore(x), None -> 18 },
+        innateVitality: match lv { Some(x) -> clampLegacyInnateScore(x), None -> 18 },
+    }
+
+pub def decodeInnateAttrs(): Decoder InnateAttrs =
+    succeed((s) -> (a) -> (v) -> MkInnateAttrs {
+        innateStrength: clampInnateScore(s),
+        innateAgility: clampInnateScore(a),
+        innateVitality: clampInnateScore(v),
+    })
+        |> req("strength", int)
+        |> req("agility", int)
+        |> req("vitality", int)
+
+instance Encode InnateAttrs {
+    def encode(ia) = object([
+        "strength" := ia.innateStrength,
+        "agility"  := ia.innateAgility,
+        "vitality" := ia.innateVitality,
+    ])
+}
+
+pub def appearanceDescription(score: Int): String = {
+    let c = clampAppearanceScore(score);
+    if (c == 0) "面貌残破，令人不敢细看"
+    else if (c == 1) "形貌粗陋，眉眼多有乖戾"
+    else if (c == 2) "容色黯淡，不易令人记住"
+    else if (c == 3) "相貌平常，胜在人还干净"
+    else if (c == 4) "五官端正，已有几分顺眼"
+    else if (c == 5) "清清爽爽，不惹眼也不失礼"
+    else if (c == 6) "眉目清秀，举止间有些风致"
+    else if (c == 7) "容貌出众，行在人群里很难被忽略"
+    else if (c == 8) "明艳或俊逸，足以让旁人多看一眼"
+    else if (c == 9) "姿容极盛，近乎江湖传闻中的人物"
+    else "风华照人，几可称倾城之色"
+}
+
+pub def appearancePortraitKey(score: Int): String = {
+    let c = clampAppearanceScore(score);
+    let prefix = if (c < 10) "beauty-score-0" else "beauty-score-";
+    prefix + intToStr(c)
+}
+
+pub data TeachRequirement {
+    MkTeachRequirement {
+        teachRequiresFlag: String,
+        teachRefusal: String,
+    },
+}
+
+pub def decodeTeachRequirement(): Decoder TeachRequirement =
+    succeed((fl) -> (ref) -> MkTeachRequirement { teachRequiresFlag: fl, teachRefusal: ref })
+        |> req("flag", str)
+        |> req("refusal", str)
+
+pub data Character {
+    MkCharacter {
+        charId: String,
+        charName: String,
+        charDesc: String,
+        charGender: Gender,
+        charAppearance: Int,
+        charDialogue: List String,
+        charActions: OrdSet CharAction,
+        charInitiallyHidden: Bool,
+        charRespawn: Int,
+        charHP: Int,
+        charMaxHP: Int,
+        charQi: Int,
+        charMaxQi: Int,
+        charJing: Int,
+        charQiRegen: Float,
+        charInnate: InnateAttrs,
+        charStrength: Int,
+        charAgility: Int,
+        charVitality: Int,
+        charEquipped: OrdMap EquipSlot EquippedItem,
+        charEnabled: OrdMap ArtType ArtEntity,
+        charTeaches: OrdMap String Int,
+        charTeachBonus: Int,
+        charTeachRequires: Option TeachRequirement,
+        charShop: OrdMap String Int,
+        charRank: Option Int,
+        charRewardExpCeiling: Option Int,
+        charFixedReward: Option (Int, Int),
+        charArt: OrdMap ArtType (List ArtEntity),
+        charStatus: CharStatus,
+    },
+}
+
+data CharAttrBlock {
+    MkCharAttrBlock {
+        caHp: Int,
+        caMaxHp: Int,
+        caQi: Int,
+        caMaxQi: Int,
+        caJing: Int,
+        caQiRegen: Float,
+        caInnate: InnateAttrs,
+        caStr: Int,
+        caAgi: Int,
+        caVit: Int,
+    },
+}
+
+def decodeCharAttrPart1(): Decoder (Int, Option Int, Int, Int, Int, Float) =
+    succeed((hp) -> (mhp) -> (qi) -> (mqi) -> (jg) -> (qr) -> (hp, mhp, qi, mqi, jg, qr))
+        |> req("hp", int)
+        |> opt("max_hp", int)
+        |> withDefault("qi", int, 0)
+        |> withDefault("max_qi", int, 0)
+        |> withDefault("jing", int, defaultJing())
+        |> withDefault("qi_regen", float, 0.0)
+
+def decodeCharAttrPart2(): Decoder (Option Int, Option Int, Option Int, Option InnateAttrs) =
+    succeed((ls) -> (la) -> (lv) -> (inn) -> (ls, la, lv, inn))
+        |> opt("str", int)
+        |> opt("agi", int)
+        |> opt("vit", int)
+        |> opt("innate", decodeInnateAttrs())
+
+def decodeCharAttrBlock(): Decoder CharAttrBlock =
+    succeed((p1) -> (p2) -> match (p1, p2) {
+        ((hp, mhpOpt, qi, mqi, jg, qr), (ls, la, lv, innOpt)) -> {
+            let inn = optOr(innOpt, legacyInnateAttrs(ls, la, lv));
+            MkCharAttrBlock {
+                caHp: hp,
+                caMaxHp: optOr(mhpOpt, hp),
+                caQi: qi,
+                caMaxQi: mqi,
+                caJing: jg,
+                caQiRegen: qr,
+                caInnate: inn,
+                caStr: optOr(ls, inn.innateStrength),
+                caAgi: optOr(la, inn.innateAgility),
+                caVit: optOr(lv, inn.innateVitality),
+            }
+        },
+    })
+        |> custom(decodeCharAttrPart1())
+        |> custom(decodeCharAttrPart2())
+
+def decodeProfileCfg(): Decoder (Gender, Int) =
+    succeed((g) -> (app) -> (g, clampAppearanceScore(app)))
+        |> withDefault("gender", decodeGender(), UnknownGender)
+        |> withDefault("appearance", int, defaultAppearanceScore())
+
+def decodeCharHead(): Decoder (String, String, String, Gender, Int) =
+    succeed((id) -> (nm) -> (desc) -> (prof) -> (rg) -> (ra) -> match prof {
+        (pg, pa) -> (id, nm, desc, optOr(rg, pg), clampAppearanceScore(optOr(ra, pa))),
+    })
+        |> req("id", str)
+        |> req("name", str)
+        |> req("desc", str)
+        |> withDefault("profile", decodeProfileCfg(), (UnknownGender, defaultAppearanceScore()))
+        |> opt("gender", decodeGender())
+        |> opt("appearance", int)
+
+def decodeCharBehav(): Decoder (List String, OrdSet CharAction, Bool, Int, CharAttrBlock) =
+    succeed((dlg) -> (acts) -> (hid) -> (resp) -> (attr) -> (dlg, acts, hid, resp, attr))
+        |> req("dialogue", list(str))
+        |> req("actions", decodeOrdSet(decodeCharAction()))
+        |> withDefault("hidden", bool, false)
+        |> req("respawn", int)
+        |> req("attr", decodeCharAttrBlock())
+
+def decodeArtMap(): Decoder (OrdMap ArtType (List ArtEntity)) =
+    decodeTypedMap(parseArtTypeKey, list(decodeArtEntity()))
+
+pub def decodeEnabledArtMap(): Decoder (OrdMap ArtType ArtEntity) =
+    decodeTypedMap(parseArtTypeKey, decodeArtEntity())
+
+def decodeCharArtsAndSocial(): Decoder (
+    OrdMap ArtType (List ArtEntity),
+    OrdMap ArtType ArtEntity,
+    OrdMap String Int,
+    Int,
+    Option TeachRequirement,
+    OrdMap String Int
+) =
+    succeed((arts) -> (prep) -> (enab) -> (teaches) -> (tbonus) -> (treq) -> (shop) ->
+        // Explicit `enabled` wins over legacy `prepared` via left-biased `<+>`!
+        (arts, enab <+> prep, teaches, tbonus, treq, shop)
+    )
+        |> req("martial_arts", decodeArtMap())
+        |> withDefault("prepared", decodeEnabledArtMap(), mapEmpty())
+        |> withDefault("enabled", decodeEnabledArtMap(), mapEmpty())
+        |> withDefault("teaches", decodeStrOrdMap(int), mapEmpty())
+        |> withDefault("teach_bonus", int, 0)
+        |> opt("teach_requires", decodeTeachRequirement())
+        |> withDefault("shop", decodeStrOrdMap(int), mapEmpty())
+
+def decodeCharRewardMeta(): Decoder (Option Int, Option Int, Option (Int, Int)) =
+    succeed((rnk) -> (ceil) -> (rew) -> (rnk, ceil, rew))
+        |> opt("rank", int)
+        |> opt("reward_exp_ceiling", int)
+        |> opt(
+            "reward",
+            succeed((ce) -> (pot) -> (ce, pot))
+                |> withDefault("combat_exp", int, 0)
+                |> withDefault("potential", int, 0)
+        )
+
+pub def decodeCharacter(): Decoder Character =
+    succeed((h) -> (b) -> (s) -> (rm) -> match (h, b, s, rm) {
+        (
+            (id, nm, desc, gender, app),
+            (dlg, acts, hid, resp, attr),
+            (arts, enabled, teaches, tbonus, treq, shop),
+            (rnk, ceil, fixedRew)
+        ) ->
+            MkCharacter {
+                charId: id,
+                charName: nm,
+                charDesc: desc,
+                charGender: gender,
+                charAppearance: app,
+                charDialogue: dlg,
+                charActions: acts,
+                charInitiallyHidden: hid,
+                charRespawn: resp,
+                charHP: attr.caHp,
+                charMaxHP: attr.caMaxHp,
+                charQi: attr.caQi,
+                charMaxQi: attr.caMaxQi,
+                charJing: attr.caJing,
+                charQiRegen: attr.caQiRegen,
+                charInnate: attr.caInnate,
+                charStrength: attr.caStr,
+                charAgility: attr.caAgi,
+                charVitality: attr.caVit,
+                charEquipped: mapEmpty(),
+                charEnabled: enabled,
+                charTeaches: teaches,
+                charTeachBonus: tbonus,
+                charTeachRequires: treq,
+                charShop: shop,
+                charRank: rnk,
+                charRewardExpCeiling: ceil,
+                charFixedReward: fixedRew,
+                charArt: arts,
+                charStatus: CharAlive,
+            },
+    })
+        |> custom(decodeCharHead())
+        |> custom(decodeCharBehav())
+        |> custom(decodeCharArtsAndSocial())
+        |> custom(decodeCharRewardMeta())
+
+instance Configurable Character {
+    def configId(c) = c.charId
+    def configDecoder() = decodeCharacter()
+}
+
+pub data PlayerStatus {
+    PlayerNormal,
+    PlayerInBattle,
+    PlayerDead,
+    PlayerBanned,
+}
+
+pub def playerStatusEq(a: PlayerStatus, b: PlayerStatus): Bool = match (a, b) {
+    (PlayerNormal, PlayerNormal) -> true,
+    (PlayerInBattle, PlayerInBattle) -> true,
+    (PlayerDead, PlayerDead) -> true,
+    (PlayerBanned, PlayerBanned) -> true,
+    _ -> false,
+}
+
+pub def decodePlayerStatus(): Decoder PlayerStatus =
+    std.codec.andThen(
+        (s) ->
+            if (s == "normal") succeed(PlayerNormal)
+            else if (s == "inbattle") succeed(PlayerInBattle)
+            else if (s == "dead") succeed(PlayerDead)
+            else if (s == "banned") succeed(PlayerBanned)
+            else fail("Invalid PlayerStatus: " + s),
+        str
+    )
+
+pub data Player {
+    MkPlayer {
+        playerId: String,
+        playerPosition: (String, (Int, Int)),
+        playerConcurrency: OrdMap String Int,
+        playerStatus: PlayerStatus,
+        playerInventory: OrdMap String Int,
+        playerMoney: Int,
+        playerPotential: Int,
+        playerCombatExp: Int,
+        playerCharacter: Character,
+    },
+}
+
+pub def decodePlayerPosPair(): Decoder (String, (Int, Int)) =
+    Decoder((v) -> match v {
+        VArr(Cons(mVal, Cons(pVal, Nil))) -> match (run(str, mVal), run(decodePos(), pVal)) {
+            (Ok(mid), Ok(pos)) -> Ok((mid, pos)),
+            (Err(e), _) -> Err(e),
+            (_, Err(e)) -> Err(e),
+        },
+        _ -> Err(makeErr("$", "expected [mapId, [x, y]] player position")),
+    })
+
+def decodePlayerHead(): Decoder (String, (String, (Int, Int)), OrdMap String Int, PlayerStatus) =
+    succeed((id) -> (pos) -> (conc) -> (st) -> (id, pos, conc, st))
+        |> req("id", str)
+        |> req("position", decodePlayerPosPair())
+        |> req("concurrency", decodeStrOrdMap(int))
+        |> req("status", decodePlayerStatus())
+
+def decodePlayerTail(): Decoder (OrdMap String Int, Int, Int, Int, Character) =
+    succeed((inv) -> (mon) -> (pot) -> (exp) -> (ch) -> (inv, mon, pot, exp, ch))
+        |> withDefault("inventory", decodeStrOrdMap(int), mapEmpty())
+        |> withDefault("money", int, 0)
+        |> withDefault("potential", int, 0)
+        |> withDefault("combat_exp", int, 0)
+        |> req("char", decodeCharacter())
+
+pub def decodePlayer(): Decoder Player =
+    succeed((h) -> (t) -> match (h, t) {
+        ((id, pos, conc, st), (inv, mon, pot, exp, ch)) ->
+            MkPlayer {
+                playerId: id,
+                playerPosition: pos,
+                playerConcurrency: conc,
+                playerStatus: st,
+                playerInventory: inv,
+                playerMoney: mon,
+                playerPotential: pot,
+                playerCombatExp: exp,
+                playerCharacter: ch,
+            },
+    })
+        |> custom(decodePlayerHead())
+        |> custom(decodePlayerTail())
+
+instance Configurable Player {
+    def configId(p) = p.playerId
+    def configDecoder() = decodePlayer()
+}
+
+// ============================================================================
+// Focused State Lenses for `Character` & `Player` (used across `Combat` & `Game`)
+// ============================================================================
+
+pub def charHpL(): Lens Character Int =
+    lens((c) -> c.charHP, (c, v) -> MkCharacter {
+        charId: c.charId, charName: c.charName, charDesc: c.charDesc, charGender: c.charGender,
+        charAppearance: c.charAppearance, charDialogue: c.charDialogue, charActions: c.charActions,
+        charInitiallyHidden: c.charInitiallyHidden, charRespawn: c.charRespawn,
+        charHP: v, charMaxHP: c.charMaxHP, charQi: c.charQi, charMaxQi: c.charMaxQi,
+        charJing: c.charJing, charQiRegen: c.charQiRegen, charInnate: c.charInnate,
+        charStrength: c.charStrength, charAgility: c.charAgility, charVitality: c.charVitality,
+        charEquipped: c.charEquipped, charEnabled: c.charEnabled, charTeaches: c.charTeaches,
+        charTeachBonus: c.charTeachBonus, charTeachRequires: c.charTeachRequires, charShop: c.charShop,
+        charRank: c.charRank, charRewardExpCeiling: c.charRewardExpCeiling, charFixedReward: c.charFixedReward,
+        charArt: c.charArt, charStatus: c.charStatus,
+    })
+
+pub def charQiL(): Lens Character Int =
+    lens((c) -> c.charQi, (c, v) -> MkCharacter {
+        charId: c.charId, charName: c.charName, charDesc: c.charDesc, charGender: c.charGender,
+        charAppearance: c.charAppearance, charDialogue: c.charDialogue, charActions: c.charActions,
+        charInitiallyHidden: c.charInitiallyHidden, charRespawn: c.charRespawn,
+        charHP: c.charHP, charMaxHP: c.charMaxHP, charQi: v, charMaxQi: c.charMaxQi,
+        charJing: c.charJing, charQiRegen: c.charQiRegen, charInnate: c.charInnate,
+        charStrength: c.charStrength, charAgility: c.charAgility, charVitality: c.charVitality,
+        charEquipped: c.charEquipped, charEnabled: c.charEnabled, charTeaches: c.charTeaches,
+        charTeachBonus: c.charTeachBonus, charTeachRequires: c.charTeachRequires, charShop: c.charShop,
+        charRank: c.charRank, charRewardExpCeiling: c.charRewardExpCeiling, charFixedReward: c.charFixedReward,
+        charArt: c.charArt, charStatus: c.charStatus,
+    })
+
+pub def charMaxQiL(): Lens Character Int =
+    lens((c) -> c.charMaxQi, (c, v) -> MkCharacter {
+        charId: c.charId, charName: c.charName, charDesc: c.charDesc, charGender: c.charGender,
+        charAppearance: c.charAppearance, charDialogue: c.charDialogue, charActions: c.charActions,
+        charInitiallyHidden: c.charInitiallyHidden, charRespawn: c.charRespawn,
+        charHP: c.charHP, charMaxHP: c.charMaxHP, charQi: c.charQi, charMaxQi: v,
+        charJing: c.charJing, charQiRegen: c.charQiRegen, charInnate: c.charInnate,
+        charStrength: c.charStrength, charAgility: c.charAgility, charVitality: c.charVitality,
+        charEquipped: c.charEquipped, charEnabled: c.charEnabled, charTeaches: c.charTeaches,
+        charTeachBonus: c.charTeachBonus, charTeachRequires: c.charTeachRequires, charShop: c.charShop,
+        charRank: c.charRank, charRewardExpCeiling: c.charRewardExpCeiling, charFixedReward: c.charFixedReward,
+        charArt: c.charArt, charStatus: c.charStatus,
+    })
+
+pub def charJingL(): Lens Character Int =
+    lens((c) -> c.charJing, (c, v) -> MkCharacter {
+        charId: c.charId, charName: c.charName, charDesc: c.charDesc, charGender: c.charGender,
+        charAppearance: c.charAppearance, charDialogue: c.charDialogue, charActions: c.charActions,
+        charInitiallyHidden: c.charInitiallyHidden, charRespawn: c.charRespawn,
+        charHP: c.charHP, charMaxHP: c.charMaxHP, charQi: c.charQi, charMaxQi: c.charMaxQi,
+        charJing: v, charQiRegen: c.charQiRegen, charInnate: c.charInnate,
+        charStrength: c.charStrength, charAgility: c.charAgility, charVitality: c.charVitality,
+        charEquipped: c.charEquipped, charEnabled: c.charEnabled, charTeaches: c.charTeaches,
+        charTeachBonus: c.charTeachBonus, charTeachRequires: c.charTeachRequires, charShop: c.charShop,
+        charRank: c.charRank, charRewardExpCeiling: c.charRewardExpCeiling, charFixedReward: c.charFixedReward,
+        charArt: c.charArt, charStatus: c.charStatus,
+    })
+
+pub def charEquippedL(): Lens Character (OrdMap EquipSlot EquippedItem) =
+    lens((c) -> c.charEquipped, (c, v) -> MkCharacter {
+        charId: c.charId, charName: c.charName, charDesc: c.charDesc, charGender: c.charGender,
+        charAppearance: c.charAppearance, charDialogue: c.charDialogue, charActions: c.charActions,
+        charInitiallyHidden: c.charInitiallyHidden, charRespawn: c.charRespawn,
+        charHP: c.charHP, charMaxHP: c.charMaxHP, charQi: c.charQi, charMaxQi: c.charMaxQi,
+        charJing: c.charJing, charQiRegen: c.charQiRegen, charInnate: c.charInnate,
+        charStrength: c.charStrength, charAgility: c.charAgility, charVitality: c.charVitality,
+        charEquipped: v, charEnabled: c.charEnabled, charTeaches: c.charTeaches,
+        charTeachBonus: c.charTeachBonus, charTeachRequires: c.charTeachRequires, charShop: c.charShop,
+        charRank: c.charRank, charRewardExpCeiling: c.charRewardExpCeiling, charFixedReward: c.charFixedReward,
+        charArt: c.charArt, charStatus: c.charStatus,
+    })
+
+pub def charEnabledL(): Lens Character (OrdMap ArtType ArtEntity) =
+    lens((c) -> c.charEnabled, (c, v) -> MkCharacter {
+        charId: c.charId, charName: c.charName, charDesc: c.charDesc, charGender: c.charGender,
+        charAppearance: c.charAppearance, charDialogue: c.charDialogue, charActions: c.charActions,
+        charInitiallyHidden: c.charInitiallyHidden, charRespawn: c.charRespawn,
+        charHP: c.charHP, charMaxHP: c.charMaxHP, charQi: c.charQi, charMaxQi: c.charMaxQi,
+        charJing: c.charJing, charQiRegen: c.charQiRegen, charInnate: c.charInnate,
+        charStrength: c.charStrength, charAgility: c.charAgility, charVitality: c.charVitality,
+        charEquipped: c.charEquipped, charEnabled: v, charTeaches: c.charTeaches,
+        charTeachBonus: c.charTeachBonus, charTeachRequires: c.charTeachRequires, charShop: c.charShop,
+        charRank: c.charRank, charRewardExpCeiling: c.charRewardExpCeiling, charFixedReward: c.charFixedReward,
+        charArt: c.charArt, charStatus: c.charStatus,
+    })
+
+pub def charArtL(): Lens Character (OrdMap ArtType (List ArtEntity)) =
+    lens((c) -> c.charArt, (c, v) -> MkCharacter {
+        charId: c.charId, charName: c.charName, charDesc: c.charDesc, charGender: c.charGender,
+        charAppearance: c.charAppearance, charDialogue: c.charDialogue, charActions: c.charActions,
+        charInitiallyHidden: c.charInitiallyHidden, charRespawn: c.charRespawn,
+        charHP: c.charHP, charMaxHP: c.charMaxHP, charQi: c.charQi, charMaxQi: c.charMaxQi,
+        charJing: c.charJing, charQiRegen: c.charQiRegen, charInnate: c.charInnate,
+        charStrength: c.charStrength, charAgility: c.charAgility, charVitality: c.charVitality,
+        charEquipped: c.charEquipped, charEnabled: c.charEnabled, charTeaches: c.charTeaches,
+        charTeachBonus: c.charTeachBonus, charTeachRequires: c.charTeachRequires, charShop: c.charShop,
+        charRank: c.charRank, charRewardExpCeiling: c.charRewardExpCeiling, charFixedReward: c.charFixedReward,
+        charArt: v, charStatus: c.charStatus,
+    })
+
+pub def charStatusL(): Lens Character CharStatus =
+    lens((c) -> c.charStatus, (c, v) -> MkCharacter {
+        charId: c.charId, charName: c.charName, charDesc: c.charDesc, charGender: c.charGender,
+        charAppearance: c.charAppearance, charDialogue: c.charDialogue, charActions: c.charActions,
+        charInitiallyHidden: c.charInitiallyHidden, charRespawn: c.charRespawn,
+        charHP: c.charHP, charMaxHP: c.charMaxHP, charQi: c.charQi, charMaxQi: c.charMaxQi,
+        charJing: c.charJing, charQiRegen: c.charQiRegen, charInnate: c.charInnate,
+        charStrength: c.charStrength, charAgility: c.charAgility, charVitality: c.charVitality,
+        charEquipped: c.charEquipped, charEnabled: c.charEnabled, charTeaches: c.charTeaches,
+        charTeachBonus: c.charTeachBonus, charTeachRequires: c.charTeachRequires, charShop: c.charShop,
+        charRank: c.charRank, charRewardExpCeiling: c.charRewardExpCeiling, charFixedReward: c.charFixedReward,
+        charArt: c.charArt, charStatus: v,
+    })
+
+pub def playerPosL(): Lens Player (String, (Int, Int)) =
+    lens((p) -> p.playerPosition, (p, v) -> MkPlayer {
+        playerId: p.playerId, playerPosition: v, playerConcurrency: p.playerConcurrency,
+        playerStatus: p.playerStatus, playerInventory: p.playerInventory, playerMoney: p.playerMoney,
+        playerPotential: p.playerPotential, playerCombatExp: p.playerCombatExp, playerCharacter: p.playerCharacter,
+    })
+
+pub def playerStatusL(): Lens Player PlayerStatus =
+    lens((p) -> p.playerStatus, (p, v) -> MkPlayer {
+        playerId: p.playerId, playerPosition: p.playerPosition, playerConcurrency: p.playerConcurrency,
+        playerStatus: v, playerInventory: p.playerInventory, playerMoney: p.playerMoney,
+        playerPotential: p.playerPotential, playerCombatExp: p.playerCombatExp, playerCharacter: p.playerCharacter,
+    })
+
+pub def playerInventoryL(): Lens Player (OrdMap String Int) =
+    lens((p) -> p.playerInventory, (p, v) -> MkPlayer {
+        playerId: p.playerId, playerPosition: p.playerPosition, playerConcurrency: p.playerConcurrency,
+        playerStatus: p.playerStatus, playerInventory: v, playerMoney: p.playerMoney,
+        playerPotential: p.playerPotential, playerCombatExp: p.playerCombatExp, playerCharacter: p.playerCharacter,
+    })
+
+pub def playerMoneyL(): Lens Player Int =
+    lens((p) -> p.playerMoney, (p, v) -> MkPlayer {
+        playerId: p.playerId, playerPosition: p.playerPosition, playerConcurrency: p.playerConcurrency,
+        playerStatus: p.playerStatus, playerInventory: p.playerInventory, playerMoney: v,
+        playerPotential: p.playerPotential, playerCombatExp: p.playerCombatExp, playerCharacter: p.playerCharacter,
+    })
+
+pub def playerPotentialL(): Lens Player Int =
+    lens((p) -> p.playerPotential, (p, v) -> MkPlayer {
+        playerId: p.playerId, playerPosition: p.playerPosition, playerConcurrency: p.playerConcurrency,
+        playerStatus: p.playerStatus, playerInventory: p.playerInventory, playerMoney: p.playerMoney,
+        playerPotential: v, playerCombatExp: p.playerCombatExp, playerCharacter: p.playerCharacter,
+    })
+
+pub def playerCombatExpL(): Lens Player Int =
+    lens((p) -> p.playerCombatExp, (p, v) -> MkPlayer {
+        playerId: p.playerId, playerPosition: p.playerPosition, playerConcurrency: p.playerConcurrency,
+        playerStatus: p.playerStatus, playerInventory: p.playerInventory, playerMoney: p.playerMoney,
+        playerPotential: p.playerPotential, playerCombatExp: v, playerCharacter: p.playerCharacter,
+    })
+
+pub def playerCharL(): Lens Player Character =
+    lens((p) -> p.playerCharacter, (p, v) -> MkPlayer {
+        playerId: p.playerId, playerPosition: p.playerPosition, playerConcurrency: p.playerConcurrency,
+        playerStatus: p.playerStatus, playerInventory: p.playerInventory, playerMoney: p.playerMoney,
+        playerPotential: p.playerPotential, playerCombatExp: p.playerCombatExp, playerCharacter: v,
+    })
+
+// ============================================================================
+// Derived Stats Formulas (1:1 parity with `Game/Entity.hs`)
+// ============================================================================
+
+pub data DerivedStats {
+    MkDerivedStats {
+        dsMaxHp: Int,
+        dsMaxQi: Int,
+        dsMaxJing: Int,
+        dsHpRegen: Float,
+        dsQiRegen: Float,
+        dsJingRegen: Float,
+        dsStrength: Int,
+        dsAgility: Int,
+        dsVitality: Int,
+        dsAttack: Int,
+        dsDefense: Int,
+        dsHit: Int,
+        dsDodge: Int,
+        dsParry: Int,
+        dsDamageBonus: Int,
+        dsDamageReduction: Int,
+        dsLoadLimit: Int,
+    },
+}
+
+pub data DerivedStatSources {
+    MkDerivedStatSources {
+        derivedEquipmentModifiers: DerivedStatModifiers,
+        derivedTechniqueModifiers: DerivedStatModifiers,
+        derivedStatusModifiers: DerivedStatModifiers,
+    },
+}
+
+pub def emptyDerivedStatSources(): DerivedStatSources =
+    MkDerivedStatSources {
+        derivedEquipmentModifiers: empty(),
+        derivedTechniqueModifiers: empty(),
+        derivedStatusModifiers: empty(),
+    }
+
+pub def characterKnownArtLevel(targetArtId: String, char: Character): Int = {
+    let groups = mapElems(char.charArt);
+    let levels = fp.listConcatMap(
+        groups,
+        (knownArts) -> fp.listFilterMap(
+            knownArts,
+            (known) -> if (known.artDef == targetArtId) Some(known.artLevel) else None
+        )
+    );
+    listMaxInt(levels, 0)
+}
+
+pub def equippedArtLevel(artType: ArtType, char: Character): Int =
+    match mapLookup(char.charEnabled, artType) {
+        Some(ent) -> ent.artLevel,
+        None -> 0,
+    }
+
+pub def characterCombatRank(char: Character): Int = match char.charRank {
+    Some(r) -> r,
+    None -> listMaxInt([
+        equippedArtLevel(Sword, char),
+        equippedArtLevel(Fist, char),
+        characterKnownArtLevel("basic_sword", char),
+        characterKnownArtLevel("basic_fist", char),
+    ], 0),
+}
+
+pub def equipmentDerivedModifiers(char: Character): DerivedStatModifiers =
+    foldMapList(mapElems(char.charEquipped), (eq) -> eq.equippedModifiers)
+
+pub def techniqueDerivedModifiers(char: Character): DerivedStatModifiers =
+    match mapLookup(char.charEnabled, Internal) {
+        Some(ent) ->
+            if (ent.artDef == "taihu_breath") {
+                let lvl = ent.artLevel;
+                let base = emptyDerivedStatModifiers();
+                MkDerivedStatModifiers {
+                    dsmStrength: base.dsmStrength,
+                    dsmAgility: base.dsmAgility,
+                    dsmVitality: base.dsmVitality,
+                    dsmMaxHp: base.dsmMaxHp,
+                    dsmMaxQi: base.dsmMaxQi,
+                    dsmMaxJing: base.dsmMaxJing,
+                    dsmHpRegen: 0.4 + intToFloat(lvl) * 0.05,
+                    dsmQiRegen: 0.3 + intToFloat(lvl) * 0.04,
+                    dsmJingRegen: 0.2 + intToFloat(lvl) * 0.02,
+                    dsmHit: base.dsmHit,
+                    dsmDodge: 2 + floorDiv(lvl, 3),
+                    dsmParry: base.dsmParry,
+                    dsmDamageBonus: base.dsmDamageBonus,
+                    dsmDamageReduction: base.dsmDamageReduction,
+                    dsmLoadLimit: base.dsmLoadLimit,
+                }
+            } else if (ent.artDef == "duan_zen_breath") {
+                let lvl = ent.artLevel;
+                let base = emptyDerivedStatModifiers();
+                MkDerivedStatModifiers {
+                    dsmStrength: base.dsmStrength,
+                    dsmAgility: base.dsmAgility,
+                    dsmVitality: maxInt(1, floorDiv(lvl, 8)),
+                    dsmMaxHp: base.dsmMaxHp,
+                    dsmMaxQi: 10 + lvl * 2,
+                    dsmMaxJing: base.dsmMaxJing,
+                    dsmHpRegen: base.dsmHpRegen,
+                    dsmQiRegen: base.dsmQiRegen,
+                    dsmJingRegen: base.dsmJingRegen,
+                    dsmHit: base.dsmHit,
+                    dsmDodge: base.dsmDodge,
+                    dsmParry: 3 + floorDiv(lvl, 3),
+                    dsmDamageBonus: base.dsmDamageBonus,
+                    dsmDamageReduction: 2 + floorDiv(lvl, 4),
+                    dsmLoadLimit: base.dsmLoadLimit,
+                }
+            } else emptyDerivedStatModifiers(),
+        None -> emptyDerivedStatModifiers(),
+    }
+
+def statusMagnitudeModifiers(mag: Int): DerivedStatModifiers = {
+    let base = emptyDerivedStatModifiers();
+    MkDerivedStatModifiers {
+        dsmStrength: mag,
+        dsmAgility: mag,
+        dsmVitality: mag,
+        dsmMaxHp: base.dsmMaxHp,
+        dsmMaxQi: base.dsmMaxQi,
+        dsmMaxJing: base.dsmMaxJing,
+        dsmHpRegen: base.dsmHpRegen,
+        dsmQiRegen: base.dsmQiRegen,
+        dsmJingRegen: base.dsmJingRegen,
+        dsmHit: mag * 4,
+        dsmDodge: mag * 4,
+        dsmParry: mag * 4,
+        dsmDamageBonus: mag,
+        dsmDamageReduction: mag,
+        dsmLoadLimit: base.dsmLoadLimit,
+    }
+}
+
+pub def activeEffectDerivedModifiers(
+    effectDefs: OrdMap String Effect,
+    activeEffects: OrdMap String ActiveEffect
+): DerivedStatModifiers =
+    foldMapList(
+        mapElems(activeEffects),
+        (ae) -> match mapLookup(effectDefs, ae.activeEffectDef) {
+            Some(eff) -> match eff.effectType {
+                Buff -> statusMagnitudeModifiers(ae.activeEffectValue),
+                DeBuff -> statusMagnitudeModifiers(-ae.activeEffectValue),
+                DoT -> emptyDerivedStatModifiers(),
+                HoT -> emptyDerivedStatModifiers(),
+            },
+            None -> emptyDerivedStatModifiers(),
+        }
+    )
+
+pub def characterDerivedStatSources(
+    effectDefs: OrdMap String Effect,
+    activeEffects: OrdMap String ActiveEffect,
+    char: Character
+): DerivedStatSources =
+    MkDerivedStatSources {
+        derivedEquipmentModifiers: equipmentDerivedModifiers(char),
+        derivedTechniqueModifiers: techniqueDerivedModifiers(char),
+        derivedStatusModifiers: activeEffectDerivedModifiers(effectDefs, activeEffects),
+    }
+
+pub def deriveCharacterStats(char: Character, combatExp: Int, sources: DerivedStatSources): DerivedStats = {
+    // Combine all three modifier sources via `Semigroup` `<+>`!
+    let mods = sources.derivedEquipmentModifiers <+> sources.derivedTechniqueModifiers <+> sources.derivedStatusModifiers;
+    let innate = char.charInnate;
+    let basicInternal = characterKnownArtLevel("basic_internal", char);
+    let basicLightness = characterKnownArtLevel("basic_lightness", char);
+    let basicFist = characterKnownArtLevel("basic_fist", char);
+    let basicSword = characterKnownArtLevel("basic_sword", char);
+
+    let effStr = clampEffectiveAttr(innate.innateStrength + floorDiv(basicFist, 20) + mods.dsmStrength);
+    let effAgi = clampEffectiveAttr(innate.innateAgility + floorDiv(basicLightness, 20) + mods.dsmAgility);
+    let effVit = clampEffectiveAttr(innate.innateVitality + floorDiv(basicInternal, 20) + mods.dsmVitality);
+
+    let enabledInternal = equippedArtLevel(Internal, char);
+    let enabledLightness = equippedArtLevel(Lightness, char);
+    let internalPower = floorDiv(basicInternal, 2) + enabledInternal;
+    let lightnessPower = floorDiv(basicLightness, 2) + enabledLightness;
+
+    let meleeLevel = match mapLookup(char.charEquipped, WeaponSlot) {
+        Some(eq) -> match eq.equippedWeaponKind {
+            Some(SwordWeapon) if (mapMember(char.charEnabled, Sword)) -> equippedArtLevel(Sword, char),
+            Some(FistWeapon) if (mapMember(char.charEnabled, Fist)) -> equippedArtLevel(Fist, char),
+            _ -> maxInt(equippedArtLevel(Sword, char), equippedArtLevel(Fist, char)),
+        },
+        None -> maxInt(equippedArtLevel(Sword, char), equippedArtLevel(Fist, char)),
+    };
+
+    let foundationMelee = maxInt(basicFist, basicSword);
+    let parryArtLevel = meleeLevel;
+    let combatExpHpBonus = minInt(80, floorDiv(combatExp, 2000));
+    let combatExpJingBonus = minInt(60, floorDiv(combatExp, 3000));
+    let damageReduction = maxInt(0, floorDiv(effVit - 10, 4)) + floorDiv(internalPower, 12);
+    let finalDamageBonus = maxInt(0, maxInt(0, floorDiv(effStr - 10, 3)) + mods.dsmDamageBonus);
+    let finalDamageReduction = maxInt(0, damageReduction + mods.dsmDamageReduction);
+
+    MkDerivedStats {
+        dsMaxHp: 80 + effVit * 5 + internalPower * 4 + combatExpHpBonus + mods.dsmMaxHp,
+        dsMaxQi: char.charMaxQi + effVit * 2 + internalPower * 6 + mods.dsmMaxQi,
+        dsMaxJing: 80 + effVit * 4 + internalPower * 2 + combatExpJingBonus + mods.dsmMaxJing,
+        dsHpRegen: 0.5 + intToFloat(effVit) / 30.0 + mods.dsmHpRegen,
+        dsQiRegen: 1.0 + intToFloat(effVit) / 25.0 + intToFloat(internalPower) / 30.0 + mods.dsmQiRegen,
+        dsJingRegen: 0.5 + intToFloat(effVit) / 40.0 + intToFloat(internalPower) / 60.0 + mods.dsmJingRegen,
+        dsStrength: effStr,
+        dsAgility: effAgi,
+        dsVitality: effVit,
+        dsAttack: 30 + meleeLevel * 7 + foundationMelee * 2 + effStr * 3 + effAgi * 2,
+        dsDefense: finalDamageReduction,
+        dsHit: effStr * 2 + effAgi * 2 + meleeLevel * 3 + mods.dsmHit,
+        dsDodge: 20 + effAgi * 5 + effVit * 2 + lightnessPower * 6 + mods.dsmDodge,
+        dsParry: 15 + effVit * 4 + effStr * 2 + parryArtLevel * 6 + mods.dsmParry,
+        dsDamageBonus: finalDamageBonus,
+        dsDamageReduction: finalDamageReduction,
+        dsLoadLimit: 20000 + effStr * 1500 + basicFist * 100 + mods.dsmLoadLimit,
+    }
+}
+
+pub def deriveStats(player: Player): DerivedStats =
+    deriveCharacterStats(
+        player.playerCharacter,
+        player.playerCombatExp,
+        characterDerivedStatSources(mapEmpty(), mapEmpty(), player.playerCharacter)
+    )
+
+// ============================================================================
+// Directions, Rooms & Maps
+// ============================================================================
+
+pub data Direction {
+    North,
+    South,
+    East,
+    West,
+    NorthEast,
+    NorthWest,
+    SouthEast,
+    SouthWest,
+}
+
+def directionRank(d: Direction): Int = match d {
+    North -> 0,
+    South -> 1,
+    East -> 2,
+    West -> 3,
+    NorthEast -> 4,
+    NorthWest -> 5,
+    SouthEast -> 6,
+    SouthWest -> 7,
+}
+
+pub def directionEq(a: Direction, b: Direction): Bool =
+    directionRank(a) == directionRank(b)
+
+instance Ord Direction {
+    def compare(a, b) = compare(directionRank(a), directionRank(b))
+}
+
+// Capitalized constructor name (matches Haskell `ToJSON Direction` / `Prelude.show`)
+pub def directionToText(d: Direction): String = match d {
+    North -> "North",
+    South -> "South",
+    East -> "East",
+    West -> "West",
+    NorthEast -> "NorthEast",
+    NorthWest -> "NorthWest",
+    SouthEast -> "SouthEast",
+    SouthWest -> "SouthWest",
+}
+
+pub def directionFromText(raw: String): Option Direction = {
+    let s = strToLowerAscii(raw);
+    if (s == "north") Some(North)
+    else if (s == "south") Some(South)
+    else if (s == "east") Some(East)
+    else if (s == "west") Some(West)
+    else if (s == "northeast") Some(NorthEast)
+    else if (s == "northwest") Some(NorthWest)
+    else if (s == "southeast") Some(SouthEast)
+    else if (s == "southwest") Some(SouthWest)
+    else None
+}
+
+pub def parseDirectionKey(raw: String): Result Direction String = match directionFromText(raw) {
+    Some(d) -> Ok(d),
+    None -> Err("Invalid direction: " + raw),
+}
+
+pub def decodeDirection(): Decoder Direction =
+    std.codec.andThen(
+        (raw) -> match directionFromText(raw) {
+            Some(d) -> succeed(d),
+            None -> fail("Invalid direction: " + raw),
+        },
+        str
+    )
+
+instance Encode Direction {
+    def encode(d) = encode(directionToText(d))
+}
+
+pub data RoomRef {
+    MkRoomRef {
+        roomRefMapId: String,
+        roomRefPos: (Int, Int),
+    },
+}
+
+def decodeRoomExitRef(): Decoder RoomRef =
+    (succeed((m) -> (p) -> MkRoomRef { roomRefMapId: m, roomRefPos: p })
+        |> req("map", str)
+        |> req("position", decodePos()))
+    <|> std.codec.map((p) -> MkRoomRef { roomRefMapId: "", roomRefPos: p }, decodePos())
+
+pub data RoomInsight {
+    MkRoomInsight {
+        roomInsightArts: List ArtType,
+        roomInsightBonus: Int,
+        roomInsightJingDiscount: Int,
+        roomInsightNote: Option String,
+    },
+}
+
+pub def decodeRoomInsight(): Decoder RoomInsight =
+    succeed((arts) -> (bon) -> (disc) -> (note) ->
+        MkRoomInsight {
+            roomInsightArts: arts,
+            roomInsightBonus: bon,
+            roomInsightJingDiscount: disc,
+            roomInsightNote: note,
+        }
+    )
+        |> withDefault("arts", list(decodeArtType()), Nil)
+        |> withDefault("bonus", int, 0)
+        |> withDefault("jing_discount", int, 0)
+        |> opt("note", str)
+
+pub data Room {
+    MkRoom {
+        roomId: String,
+        roomPos: (Int, Int),
+        roomName: String,
+        roomDesc: String,
+        roomDescVariants: List (String, String),
+        roomKind: String,
+        roomRest: Bool,
+        roomInsight: Option RoomInsight,
+        roomScript: Option String,
+        roomExits: OrdMap Direction RoomRef,
+        roomChar: List String,
+        roomPlayer: OrdSet String,
+    },
+}
+
+pub def roomPlayerL(): Lens Room (OrdSet String) =
+    lens((r) -> r.roomPlayer, (r, v) -> MkRoom {
+        roomId: r.roomId, roomPos: r.roomPos, roomName: r.roomName, roomDesc: r.roomDesc,
+        roomDescVariants: r.roomDescVariants, roomKind: r.roomKind, roomRest: r.roomRest,
+        roomInsight: r.roomInsight, roomScript: r.roomScript, roomExits: r.roomExits,
+        roomChar: r.roomChar, roomPlayer: v,
+    })
+
+def decodeRoomPart1(): Decoder (String, (Int, Int), String, String, List (String, String)) =
+    succeed((id) -> (pos) -> (nm) -> (desc) -> (vars) -> (id, pos, nm, desc, vars))
+        |> req("id", str)
+        |> req("position", decodePos())
+        |> req("name", str)
+        |> req("desc", str)
+        |> withDefault(
+            "desc_variants",
+            list(succeed((fl) -> (d) -> (fl, d)) |> req("flag", str) |> req("desc", str)),
+            Nil
+        )
+
+def decodeRoomPart2(): Decoder (String, Bool, Option RoomInsight, Option String, OrdMap Direction RoomRef, List String) =
+    succeed((kind) -> (rest) -> (ins) -> (scr) -> (exits) -> (chars) -> (kind, rest, ins, scr, exits, chars))
+        |> withDefault("kind", str, "building")
+        |> withDefault("rest", bool, false)
+        |> opt("insight", decodeRoomInsight())
+        |> opt("script", str)
+        |> req("exits", decodeTypedMap(parseDirectionKey, decodeRoomExitRef()))
+        |> withDefault("char", list(str), Nil)
+
+pub def decodeRoom(): Decoder Room =
+    succeed((p1) -> (p2) -> match (p1, p2) {
+        ((id, pos, nm, desc, vars), (kind, rest, ins, scr, exits, chars)) ->
+            MkRoom {
+                roomId: id,
+                roomPos: pos,
+                roomName: nm,
+                roomDesc: desc,
+                roomDescVariants: vars,
+                roomKind: kind,
+                roomRest: rest,
+                roomInsight: ins,
+                roomScript: scr,
+                roomExits: exits,
+                roomChar: chars,
+                roomPlayer: setEmpty(),
+            },
+    })
+        |> custom(decodeRoomPart1())
+        |> custom(decodeRoomPart2())
+
+pub data GameMap {
+    MkGameMap {
+        mapId: String,
+        mapName: String,
+        mapDesc: String,
+        mapRooms: OrdMap (Int, Int) Room,
+    },
+}
+
+pub def mapRoomsL(): Lens GameMap (OrdMap (Int, Int) Room) =
+    lens((m) -> m.mapRooms, (m, v) -> MkGameMap {
+        mapId: m.mapId, mapName: m.mapName, mapDesc: m.mapDesc, mapRooms: v,
+    })
+
+def resolveRoomLocalExits(targetMapId: String, room: Room): Room = {
+    let resolvedExits = mapMap(
+        room.roomExits,
+        (ref) ->
+            if (strLen(ref.roomRefMapId) == 0) MkRoomRef { roomRefMapId: targetMapId, roomRefPos: ref.roomRefPos }
+            else ref
+    );
+    MkRoom {
+        roomId: room.roomId,
+        roomPos: room.roomPos,
+        roomName: room.roomName,
+        roomDesc: room.roomDesc,
+        roomDescVariants: room.roomDescVariants,
+        roomKind: room.roomKind,
+        roomRest: room.roomRest,
+        roomInsight: room.roomInsight,
+        roomScript: room.roomScript,
+        roomExits: resolvedExits,
+        roomChar: room.roomChar,
+        roomPlayer: room.roomPlayer,
+    }
+}
+
+pub def decodeGameMap(): Decoder GameMap =
+    succeed((id) -> (nm) -> (desc) -> (rooms) -> {
+        let pairs = listMap(rooms, (r) -> {
+            let r2 = resolveRoomLocalExits(id, r);
+            (r2.roomPos, r2)
+        });
+        MkGameMap {
+            mapId: id,
+            mapName: nm,
+            mapDesc: desc,
+            mapRooms: mapFromList(pairs),
+        }
+    })
+        |> req("id", str)
+        |> req("name", str)
+        |> req("desc", str)
+        |> req("rooms", list(decodeRoom()))
+
+instance Configurable GameMap {
+    def configId(m) = m.mapId
+    def configDecoder() = decodeGameMap()
+}

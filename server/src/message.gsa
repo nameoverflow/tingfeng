@@ -1,0 +1,859 @@
+// Network Protocol Messages (`NetEvent`, `PlayerAction`, `ActionResp`) and 100%
+// Aeson-Compatible Wire Encoders & Combinator Decoders (`message`).
+
+use std.option.{Option, Some, None}
+use std.result.{Result, Ok, Err}
+use std.codec.{
+    Value, DecodeErr,
+    Encode, encode, object, array, (:=),
+    Decoder, (|>), (<|>),
+    succeed, int, str, oneOf, at, atOpt, req, opt, withDefault, tagged
+}
+use std.json.{toJson, decodeString}
+use ordmap.OrdMap
+use entity.{
+    EquipSlot, decodeEquipSlot,
+    ArtType, decodeArtType,
+    Direction, decodeDirection,
+    CombatVisualHint, mapD,
+    encodePos, encodeStrOrdMap
+}
+use creation.{
+    CharacterCreationChoice, decodeCharacterCreationChoice,
+    CharacterCreationConfig
+}
+
+// ============================================================================
+// Client -> Server: `PlayerAction` & `NetEvent`
+// ============================================================================
+
+pub data PlayerAction {
+    Go(Direction),
+    Talk(String),
+    Attack(String),
+    Perform(String),
+    Train(String),
+    Practice(String, Int),
+    Learn(String, String, Int),
+    Study(String, Int),
+    Research(String, Int),
+    Meditate(Int, Int),
+    EnableArt(ArtType, String),
+    PrepareArt(ArtType, String),
+    Equip(String),
+    Unequip(EquipSlot),
+    Buy(Option String, String),
+    Use(String),
+    Say(String),
+    Other(String),
+}
+
+// Either `{"<key>": {"<field>": target, "times": n}}` or bare `{"<key>": target}` (defaults `times = 1`)
+def decodeTimedAction(
+    key: String,
+    field: String,
+    valDec: Decoder a,
+    build: (a, Int) -> PlayerAction
+): Decoder PlayerAction =
+    at(
+        key,
+        (succeed((x) -> (n) -> build(x, n))
+            |> req(field, valDec)
+            |> withDefault("times", int, 1))
+        <|> std.codec.map((x) -> build(x, 1), valDec)
+    )
+
+pub def decodePlayerAction(): Decoder PlayerAction =
+    oneOf([
+        at("go", decodeDirection()) |> mapD((d) -> Go(d)),
+        at("attack", str) |> mapD((c) -> Attack(c)),
+        at("perform", str) |> mapD((s) -> Perform(s)),
+        at("train", str) |> mapD((a) -> Train(a)),
+        decodeTimedAction("practice", "art", str, (a, n) -> Practice(a, n)),
+        at(
+            "learn",
+            succeed((t) -> (a) -> (n) -> Learn(t, a, n))
+                |> req("teacher", str)
+                |> req("art", str)
+                |> withDefault("times", int, 1)
+        ),
+        decodeTimedAction("study", "item", str, (i, n) -> Study(i, n)),
+        decodeTimedAction("research", "art", str, (a, n) -> Research(a, n)),
+        decodeTimedAction("meditate", "amount", int, (amt, n) -> Meditate(amt, n)),
+        at(
+            "enable",
+            succeed((ty) -> (a) -> EnableArt(ty, a))
+                |> req("type", decodeArtType())
+                |> req("art", str)
+        ),
+        at(
+            "prepare",
+            succeed((ty) -> (a) -> PrepareArt(ty, a))
+                |> req("type", decodeArtType())
+                |> req("art", str)
+        ),
+        at("equip", str) |> mapD((i) -> Equip(i)),
+        at("unequip", decodeEquipSlot()) |> mapD((s) -> Unequip(s)),
+        at(
+            "buy",
+            (succeed((m) -> (i) -> Buy(m, i))
+                |> opt("merchant", str)
+                |> req("item", str))
+            <|> std.codec.map((i) -> Buy(None, i), str)
+        ),
+        at("use", str) |> mapD((i) -> Use(i)),
+        at("say", str) |> mapD((m) -> Say(m)),
+        at("other", str) |> mapD((c) -> Other(c)),
+        at("talk", str) |> mapD((c) -> Talk(c)),
+    ])
+
+pub def decodePlayerActionJson(raw: String): Result PlayerAction DecodeErr =
+    decodeString(decodePlayerAction(), raw)
+
+pub data NetEvent {
+    RequestCharacterCreationConfig,
+    Login {
+        username: String,
+        password: String,
+        creation: Option CharacterCreationChoice,
+    },
+    Disconnect,
+    NetPlayerAction(PlayerAction),
+}
+
+pub def decodeNetEvent(): Decoder NetEvent =
+    tagged("tag", [
+        ("RequestCharacterCreationConfig", succeed(RequestCharacterCreationConfig)),
+        (
+            "Login",
+            succeed((u) -> (p) -> (c) -> Login { username: u, password: p, creation: c })
+                |> req("username", str)
+                |> req("password", str)
+                |> opt("creation", decodeCharacterCreationChoice())
+        ),
+        ("Disconnect", succeed(Disconnect)),
+        ("NetPlayerAction", at("contents", decodePlayerAction()) |> mapD((a) -> NetPlayerAction(a))),
+    ])
+
+pub def decodeNetEventJson(raw: String): Result NetEvent DecodeErr =
+    decodeString(decodeNetEvent(), raw)
+
+// ============================================================================
+// Server -> Client Summary Models & Wire Encoders
+// ============================================================================
+
+pub data ActiveSkillSummary {
+    MkActiveSkillSummary {
+        activeSkillSummaryId: String,
+        activeSkillSummaryName: String,
+        activeSkillSummaryDesc: String,
+        activeSkillSummaryCost: Int,
+        activeSkillSummaryApReq: Int,
+        activeSkillSummaryUnlockLevel: Int,
+        activeSkillSummaryCooldown: Float,
+        activeSkillSummaryReqStatus: List String,
+        activeSkillSummaryReqStatusNames: List String,
+        activeSkillSummaryDamage: Option Int,
+        activeSkillSummaryHeal: Option Int,
+    },
+}
+
+instance Encode ActiveSkillSummary {
+    def encode(s) = object([
+        "activeSkillSummaryId"             := s.activeSkillSummaryId,
+        "activeSkillSummaryName"           := s.activeSkillSummaryName,
+        "activeSkillSummaryDesc"           := s.activeSkillSummaryDesc,
+        "activeSkillSummaryCost"           := s.activeSkillSummaryCost,
+        "activeSkillSummaryApReq"          := s.activeSkillSummaryApReq,
+        "activeSkillSummaryUnlockLevel"    := s.activeSkillSummaryUnlockLevel,
+        "activeSkillSummaryCooldown"       := s.activeSkillSummaryCooldown,
+        "activeSkillSummaryReqStatus"      := s.activeSkillSummaryReqStatus,
+        "activeSkillSummaryReqStatusNames" := s.activeSkillSummaryReqStatusNames,
+        "activeSkillSummaryDamage"         := s.activeSkillSummaryDamage,
+        "activeSkillSummaryHeal"           := s.activeSkillSummaryHeal,
+    ])
+}
+
+pub data ArtRequirementSummary {
+    MkArtRequirementSummary {
+        artRequirementSummaryId: String,
+        artRequirementSummaryName: String,
+        artRequirementSummaryLevel: Int,
+    },
+}
+
+instance Encode ArtRequirementSummary {
+    def encode(r) = object([
+        "artRequirementSummaryId"    := r.artRequirementSummaryId,
+        "artRequirementSummaryName"  := r.artRequirementSummaryName,
+        "artRequirementSummaryLevel" := r.artRequirementSummaryLevel,
+    ])
+}
+
+pub data ArtSummary {
+    MkArtSummary {
+        artSummaryId: String,
+        artSummaryName: String,
+        artSummaryType: String,
+        artSummaryTier: String,
+        artSummaryLevel: Int,
+        artSummaryProgress: Int,
+        artSummaryNextProgress: Int,
+        artSummaryMaxLevel: Int,
+        artSummaryIsFoundation: Bool,
+        artSummaryEnabled: Bool,
+        artSummaryFoundation: Option String,
+        artSummaryRequirements: List ArtRequirementSummary,
+        artSummaryUnlockedAttackMoves: List String,
+        artSummaryUnlockedActiveSkills: List String,
+        artSummaryNextUnlocks: List String,
+        artSummaryResearchFrom: Int,
+        artSummaryNextCombatExp: Int,
+        artSummaryBlocker: Option String,
+    },
+}
+
+instance Encode ArtSummary {
+    def encode(a) = object([
+        "artSummaryId"                   := a.artSummaryId,
+        "artSummaryName"                 := a.artSummaryName,
+        "artSummaryType"                 := a.artSummaryType,
+        "artSummaryTier"                 := a.artSummaryTier,
+        "artSummaryLevel"                := a.artSummaryLevel,
+        "artSummaryProgress"             := a.artSummaryProgress,
+        "artSummaryNextProgress"         := a.artSummaryNextProgress,
+        "artSummaryMaxLevel"             := a.artSummaryMaxLevel,
+        "artSummaryIsFoundation"         := a.artSummaryIsFoundation,
+        "artSummaryEnabled"              := a.artSummaryEnabled,
+        "artSummaryFoundation"           := a.artSummaryFoundation,
+        "artSummaryRequirements"         := a.artSummaryRequirements,
+        "artSummaryUnlockedAttackMoves"  := a.artSummaryUnlockedAttackMoves,
+        "artSummaryUnlockedActiveSkills" := a.artSummaryUnlockedActiveSkills,
+        "artSummaryNextUnlocks"          := a.artSummaryNextUnlocks,
+        "artSummaryResearchFrom"         := a.artSummaryResearchFrom,
+        "artSummaryNextCombatExp"        := a.artSummaryNextCombatExp,
+        "artSummaryBlocker"              := a.artSummaryBlocker,
+    ])
+}
+
+pub data EffectSummary {
+    MkEffectSummary {
+        effectSummaryId: String,
+        effectSummaryName: String,
+        effectSummaryType: String,
+        effectSummaryRemaining: Float,
+        effectSummaryValue: Int,
+    },
+}
+
+instance Encode EffectSummary {
+    def encode(e) = object([
+        "effectSummaryId"        := e.effectSummaryId,
+        "effectSummaryName"      := e.effectSummaryName,
+        "effectSummaryType"      := e.effectSummaryType,
+        "effectSummaryRemaining" := e.effectSummaryRemaining,
+        "effectSummaryValue"     := e.effectSummaryValue,
+    ])
+}
+
+pub data ActiveSkillCooldownSummary {
+    MkActiveSkillCooldownSummary {
+        activeSkillCooldownSummaryActiveSkillId: String,
+        activeSkillCooldownSummaryRemaining: Float,
+    },
+}
+
+instance Encode ActiveSkillCooldownSummary {
+    def encode(c) = object([
+        "activeSkillCooldownSummaryActiveSkillId" := c.activeSkillCooldownSummaryActiveSkillId,
+        "activeSkillCooldownSummaryRemaining"     := c.activeSkillCooldownSummaryRemaining,
+    ])
+}
+
+pub data CombatantSnapshot {
+    MkCombatantSnapshot {
+        combatantSnapshotId: String,
+        combatantSnapshotName: String,
+        combatantSnapshotGender: String,
+        combatantSnapshotCombatStyle: String,
+        combatantSnapshotHp: Int,
+        combatantSnapshotMaxHp: Int,
+        combatantSnapshotQi: Int,
+        combatantSnapshotMaxQi: Int,
+        combatantSnapshotAp: Int,
+        combatantSnapshotApProgress: Float,
+        combatantSnapshotAgility: Int,
+        combatantSnapshotEffects: List EffectSummary,
+    },
+}
+
+instance Encode CombatantSnapshot {
+    def encode(c) = object([
+        "combatantSnapshotId"          := c.combatantSnapshotId,
+        "combatantSnapshotName"        := c.combatantSnapshotName,
+        "combatantSnapshotGender"      := c.combatantSnapshotGender,
+        "combatantSnapshotCombatStyle" := c.combatantSnapshotCombatStyle,
+        "combatantSnapshotHp"          := c.combatantSnapshotHp,
+        "combatantSnapshotMaxHp"       := c.combatantSnapshotMaxHp,
+        "combatantSnapshotQi"          := c.combatantSnapshotQi,
+        "combatantSnapshotMaxQi"       := c.combatantSnapshotMaxQi,
+        "combatantSnapshotAp"          := c.combatantSnapshotAp,
+        "combatantSnapshotApProgress"  := c.combatantSnapshotApProgress,
+        "combatantSnapshotAgility"     := c.combatantSnapshotAgility,
+        "combatantSnapshotEffects"     := c.combatantSnapshotEffects,
+    ])
+}
+
+pub data BattleSnapshot {
+    MkBattleSnapshot {
+        battleSnapshotPlayer: CombatantSnapshot,
+        battleSnapshotEnemy: CombatantSnapshot,
+        battleSnapshotActiveSkillCooldowns: List ActiveSkillCooldownSummary,
+        battleSnapshotActiveSkills: List ActiveSkillSummary,
+        battleSnapshotActionLockRemaining: Float,
+        battleSnapshotPendingActiveSkillId: Option String,
+    },
+}
+
+instance Encode BattleSnapshot {
+    def encode(b) = object([
+        "battleSnapshotPlayer"               := b.battleSnapshotPlayer,
+        "battleSnapshotEnemy"                := b.battleSnapshotEnemy,
+        "battleSnapshotActiveSkillCooldowns" := b.battleSnapshotActiveSkillCooldowns,
+        "battleSnapshotActiveSkills"         := b.battleSnapshotActiveSkills,
+        "battleSnapshotActionLockRemaining"  := b.battleSnapshotActionLockRemaining,
+        "battleSnapshotPendingActiveSkillId" := b.battleSnapshotPendingActiveSkillId,
+    ])
+}
+
+pub data TeachableArtSummary {
+    MkTeachableArtSummary {
+        teachableArtId: String,
+        teachableArtName: String,
+        teachableArtMaxLevel: Int,
+    },
+}
+
+instance Encode TeachableArtSummary {
+    def encode(t) = object([
+        "artId"    := t.teachableArtId,
+        "name"     := t.teachableArtName,
+        "maxLevel" := t.teachableArtMaxLevel,
+    ])
+}
+
+pub data ShopItemSummary {
+    MkShopItemSummary {
+        shopItemSummaryId: String,
+        shopItemSummaryName: String,
+        shopItemSummaryPrice: Int,
+    },
+}
+
+instance Encode ShopItemSummary {
+    def encode(s) = object([
+        "itemId" := s.shopItemSummaryId,
+        "name"   := s.shopItemSummaryName,
+        "price"  := s.shopItemSummaryPrice,
+    ])
+}
+
+pub data RoomCharacterSummary {
+    MkRoomCharacterSummary {
+        roomCharacterSummaryId: String,
+        roomCharacterSummaryName: String,
+        roomCharacterSummaryDesc: String,
+        roomCharacterSummaryActions: List String,
+        roomCharacterSummaryTeaches: List TeachableArtSummary,
+        roomCharacterSummaryShop: List ShopItemSummary,
+    },
+}
+
+instance Encode RoomCharacterSummary {
+    def encode(c) = object([
+        "id"      := c.roomCharacterSummaryId,
+        "name"    := c.roomCharacterSummaryName,
+        "desc"    := c.roomCharacterSummaryDesc,
+        "actions" := c.roomCharacterSummaryActions,
+        "teaches" := c.roomCharacterSummaryTeaches,
+        "shop"    := c.roomCharacterSummaryShop,
+    ])
+}
+
+pub data RoomExitSummary {
+    MkRoomExitSummary {
+        roomExitSummaryDirection: Direction,
+        roomExitSummaryMapId: String,
+        roomExitSummaryRoomId: String,
+        roomExitSummaryRoomName: String,
+        roomExitSummaryPosition: (Int, Int),
+    },
+}
+
+instance Encode RoomExitSummary {
+    def encode(e) = object([
+        "direction" := e.roomExitSummaryDirection,
+        "mapId"     := e.roomExitSummaryMapId,
+        "roomId"    := e.roomExitSummaryRoomId,
+        "roomName"  := e.roomExitSummaryRoomName,
+        "position"  := encodePos(e.roomExitSummaryPosition),
+    ])
+}
+
+pub data MapRoomSummary {
+    MkMapRoomSummary {
+        mapRoomSummaryRoomId: String,
+        mapRoomSummaryRoomName: String,
+        mapRoomSummaryRoomKind: String,
+        mapRoomSummaryPosition: (Int, Int),
+    },
+}
+
+instance Encode MapRoomSummary {
+    def encode(r) = object([
+        "roomId"   := r.mapRoomSummaryRoomId,
+        "roomName" := r.mapRoomSummaryRoomName,
+        "roomKind" := r.mapRoomSummaryRoomKind,
+        "position" := encodePos(r.mapRoomSummaryPosition),
+    ])
+}
+
+pub data MapEdgeSummary {
+    MkMapEdgeSummary {
+        mapEdgeSummaryDirection: Direction,
+        mapEdgeSummaryFromPosition: (Int, Int),
+        mapEdgeSummaryToPosition: (Int, Int),
+        mapEdgeSummaryToRoomId: String,
+        mapEdgeSummaryToRoomName: String,
+        mapEdgeSummaryToMapId: String,
+        mapEdgeSummaryToMapName: String,
+    },
+}
+
+instance Encode MapEdgeSummary {
+    def encode(e) = object([
+        "direction"  := e.mapEdgeSummaryDirection,
+        "from"       := encodePos(e.mapEdgeSummaryFromPosition),
+        "to"         := encodePos(e.mapEdgeSummaryToPosition),
+        "toRoomId"   := e.mapEdgeSummaryToRoomId,
+        "toRoomName" := e.mapEdgeSummaryToRoomName,
+        "toMapId"    := e.mapEdgeSummaryToMapId,
+        "toMapName"  := e.mapEdgeSummaryToMapName,
+    ])
+}
+
+pub data MapOverviewSummary {
+    MkMapOverviewSummary {
+        mapOverviewSummaryMapId: String,
+        mapOverviewSummaryMapName: String,
+        mapOverviewSummaryCurrentPosition: (Int, Int),
+        mapOverviewSummaryRooms: List MapRoomSummary,
+        mapOverviewSummaryEdges: List MapEdgeSummary,
+    },
+}
+
+instance Encode MapOverviewSummary {
+    def encode(m) = object([
+        "mapId"           := m.mapOverviewSummaryMapId,
+        "mapName"         := m.mapOverviewSummaryMapName,
+        "currentPosition" := encodePos(m.mapOverviewSummaryCurrentPosition),
+        "rooms"           := m.mapOverviewSummaryRooms,
+        "edges"           := m.mapOverviewSummaryEdges,
+    ])
+}
+
+pub data RewardSummary {
+    MkRewardSummary {
+        rewardSummaryKind: String,
+        rewardSummaryId: Option String,
+        rewardSummaryName: String,
+        rewardSummaryAmount: Int,
+    },
+}
+
+instance Encode RewardSummary {
+    def encode(r) = object([
+        "rewardSummaryKind"   := r.rewardSummaryKind,
+        "rewardSummaryId"     := r.rewardSummaryId,
+        "rewardSummaryName"   := r.rewardSummaryName,
+        "rewardSummaryAmount" := r.rewardSummaryAmount,
+    ])
+}
+
+pub data InventoryItemSummary {
+    MkInventoryItemSummary {
+        inventoryItemSummaryId: String,
+        inventoryItemSummaryName: String,
+        inventoryItemSummaryAmount: Int,
+        inventoryItemSummaryUsable: Bool,
+        inventoryItemSummaryStudyable: Bool,
+        inventoryItemSummaryEquipped: Bool,
+        inventoryItemSummaryEquipSlot: Option String,
+    },
+}
+
+instance Encode InventoryItemSummary {
+    def encode(i) = object([
+        "inventoryItemSummaryId"        := i.inventoryItemSummaryId,
+        "inventoryItemSummaryName"      := i.inventoryItemSummaryName,
+        "inventoryItemSummaryAmount"    := i.inventoryItemSummaryAmount,
+        "inventoryItemSummaryUsable"    := i.inventoryItemSummaryUsable,
+        "inventoryItemSummaryStudyable" := i.inventoryItemSummaryStudyable,
+        "inventoryItemSummaryEquipped"  := i.inventoryItemSummaryEquipped,
+        "inventoryItemSummaryEquipSlot" := i.inventoryItemSummaryEquipSlot,
+    ])
+}
+
+pub data QuestLogEntry {
+    MkQuestLogEntry {
+        questLogEntryId: String,
+        questLogEntryName: String,
+        questLogEntryStage: String,
+        questLogEntryObjective: Option String,
+        questLogEntryCompleted: Bool,
+        questLogEntryRewards: List RewardSummary,
+    },
+}
+
+instance Encode QuestLogEntry {
+    def encode(q) = object([
+        "questLogEntryId"        := q.questLogEntryId,
+        "questLogEntryName"      := q.questLogEntryName,
+        "questLogEntryStage"     := q.questLogEntryStage,
+        "questLogEntryObjective" := q.questLogEntryObjective,
+        "questLogEntryCompleted" := q.questLogEntryCompleted,
+        "questLogEntryRewards"   := q.questLogEntryRewards,
+    ])
+}
+
+pub data SystemMessage {
+    MkSystemMessage {
+        systemMessageKey: String,
+        systemMessageParams: OrdMap String String,
+    },
+}
+
+instance Encode SystemMessage {
+    def encode(s) = object([
+        "systemMessageKey"    := s.systemMessageKey,
+        "systemMessageParams" := encodeStrOrdMap(s.systemMessageParams),
+    ])
+}
+
+pub data ErrorSummary {
+    MkErrorSummary {
+        errorSummaryCode: String,
+        errorSummaryParams: OrdMap String String,
+    },
+}
+
+instance Encode ErrorSummary {
+    def encode(e) = object([
+        "errorSummaryCode"   := e.errorSummaryCode,
+        "errorSummaryParams" := encodeStrOrdMap(e.errorSummaryParams),
+    ])
+}
+
+pub data CombatMessage {
+    CombatScriptText(String),
+    CombatEffectTick(String, String, String, Int),
+}
+
+instance Encode CombatMessage {
+    def encode(m) = match m {
+        CombatScriptText(txt) -> object([
+            "kind" := "script",
+            "text" := txt,
+        ]),
+        CombatEffectTick(effId, effName, effKind, amt) -> object([
+            "kind"       := "effect_tick",
+            "effectId"   := effId,
+            "effectName" := effName,
+            "effectKind" := effKind,
+            "amount"     := amt,
+        ]),
+    }
+}
+
+pub data CombatEventKind {
+    CombatEventNormal,
+    CombatEventActiveSkill,
+    CombatEventEffectTick,
+}
+
+pub def combatEventKindEq(a: CombatEventKind, b: CombatEventKind): Bool = match (a, b) {
+    (CombatEventNormal, CombatEventNormal) -> true,
+    (CombatEventActiveSkill, CombatEventActiveSkill) -> true,
+    (CombatEventEffectTick, CombatEventEffectTick) -> true,
+    _ -> false,
+}
+
+pub def combatEventKindText(k: CombatEventKind): String = match k {
+    CombatEventNormal -> "normal",
+    CombatEventActiveSkill -> "active_skill",
+    CombatEventEffectTick -> "effect_tick",
+}
+
+pub data CombatResult {
+    CombatHit,
+    CombatDodge,
+    CombatParry,
+    CombatEffect,
+}
+
+pub def combatResultEq(a: CombatResult, b: CombatResult): Bool = match (a, b) {
+    (CombatHit, CombatHit) -> true,
+    (CombatDodge, CombatDodge) -> true,
+    (CombatParry, CombatParry) -> true,
+    (CombatEffect, CombatEffect) -> true,
+    _ -> false,
+}
+
+pub def combatResultText(r: CombatResult): String = match r {
+    CombatHit -> "hit",
+    CombatDodge -> "dodge",
+    CombatParry -> "parry",
+    CombatEffect -> "effect",
+}
+
+pub data CombatHitOutcome {
+    MkCombatHitOutcome {
+        combatHitResult: CombatResult,
+        combatHitDamage: Option Int,
+        combatHitHeal: Option Int,
+    },
+}
+
+instance Encode CombatHitOutcome {
+    def encode(h) = object([
+        "result" := combatResultText(h.combatHitResult),
+        "damage" := h.combatHitDamage,
+        "heal"   := h.combatHitHeal,
+    ])
+}
+
+pub data CombatEvent {
+    MkCombatEvent {
+        combatEventKind: CombatEventKind,
+        combatEventActorName: String,
+        combatEventTargetName: String,
+        combatEventMessage: CombatMessage,
+        combatEventDamage: Option Int,
+        combatEventHeal: Option Int,
+        combatEventResult: CombatResult,
+        combatEventHits: List CombatHitOutcome,
+        combatEventVisual: CombatVisualHint,
+    },
+}
+
+instance Encode CombatEvent {
+    def encode(e) = object([
+        "kind"       := combatEventKindText(e.combatEventKind),
+        "actorName"  := e.combatEventActorName,
+        "targetName" := e.combatEventTargetName,
+        "message"    := e.combatEventMessage,
+        "damage"     := e.combatEventDamage,
+        "heal"       := e.combatEventHeal,
+        "result"     := combatResultText(e.combatEventResult),
+        "hits"       := e.combatEventHits,
+        "visual"     := e.combatEventVisual,
+    ])
+}
+
+pub data ActiveSkillFailureReason {
+    ActiveSkillNeedAp(Int, Int),
+    ActiveSkillNeedQi(Int, Int),
+    ActiveSkillOnCooldown(Int),
+    ActiveSkillMissingStatus(List String),
+    ActiveSkillUnavailable(String),
+}
+
+instance Encode ActiveSkillFailureReason {
+    def encode(r) = match r {
+        ActiveSkillNeedAp(reqAp, curAp) -> object([
+            "reason"   := "need_ap",
+            "required" := reqAp,
+            "current"  := curAp,
+        ]),
+        ActiveSkillNeedQi(reqQi, curQi) -> object([
+            "reason"   := "need_qi",
+            "required" := reqQi,
+            "current"  := curQi,
+        ]),
+        ActiveSkillOnCooldown(rem) -> object([
+            "reason"    := "cooldown",
+            "remaining" := rem,
+        ]),
+        ActiveSkillMissingStatus(missing) -> object([
+            "reason"   := "missing_status",
+            "statuses" := missing,
+        ]),
+        ActiveSkillUnavailable(sid) -> object([
+            "reason"        := "unavailable",
+            "activeSkillId" := sid,
+        ]),
+    }
+}
+
+pub data BusySummary {
+    MkBusySummary {
+        busySummaryAction: String,
+        busySummaryTarget: String,
+        busySummaryCompleted: Int,
+        busySummaryRemaining: Int,
+        busySummarySeconds: Float,
+        busySummaryStepSeconds: Float,
+    },
+}
+
+instance Encode BusySummary {
+    def encode(b) = object([
+        "busySummaryAction"      := b.busySummaryAction,
+        "busySummaryTarget"      := b.busySummaryTarget,
+        "busySummaryCompleted"   := b.busySummaryCompleted,
+        "busySummaryRemaining"   := b.busySummaryRemaining,
+        "busySummarySeconds"     := b.busySummarySeconds,
+        "busySummaryStepSeconds" := b.busySummaryStepSeconds,
+    ])
+}
+
+pub data PlayerStatsSummary {
+    MkPlayerStatsSummary {
+        playerStatsSummaryHp: Int,
+        playerStatsSummaryMaxHp: Int,
+        playerStatsSummaryQi: Int,
+        playerStatsSummaryMaxQi: Int,
+        playerStatsSummaryJing: Int,
+        playerStatsSummaryMaxJing: Int,
+        playerStatsSummaryAp: Int,
+        playerStatsSummaryStatus: String,
+        playerStatsSummaryGender: String,
+        playerStatsSummaryAppearance: Int,
+        playerStatsSummaryAppearanceText: String,
+        playerStatsSummaryPortraitKey: String,
+        playerStatsSummaryStrength: Int,
+        playerStatsSummaryAgility: Int,
+        playerStatsSummaryVitality: Int,
+        playerStatsSummaryPotential: Int,
+        playerStatsSummaryCombatExp: Int,
+        playerStatsSummaryInjuredSeconds: Int,
+        playerStatsSummaryCombatInsight: Int,
+        playerStatsSummaryBusy: Option BusySummary,
+    },
+}
+
+instance Encode PlayerStatsSummary {
+    def encode(p) = object([
+        "playerStatsSummaryHp"             := p.playerStatsSummaryHp,
+        "playerStatsSummaryMaxHp"          := p.playerStatsSummaryMaxHp,
+        "playerStatsSummaryQi"             := p.playerStatsSummaryQi,
+        "playerStatsSummaryMaxQi"          := p.playerStatsSummaryMaxQi,
+        "playerStatsSummaryJing"           := p.playerStatsSummaryJing,
+        "playerStatsSummaryMaxJing"        := p.playerStatsSummaryMaxJing,
+        "playerStatsSummaryAp"             := p.playerStatsSummaryAp,
+        "playerStatsSummaryStatus"         := p.playerStatsSummaryStatus,
+        "playerStatsSummaryGender"         := p.playerStatsSummaryGender,
+        "playerStatsSummaryAppearance"     := p.playerStatsSummaryAppearance,
+        "playerStatsSummaryAppearanceText" := p.playerStatsSummaryAppearanceText,
+        "playerStatsSummaryPortraitKey"    := p.playerStatsSummaryPortraitKey,
+        "playerStatsSummaryStrength"       := p.playerStatsSummaryStrength,
+        "playerStatsSummaryAgility"        := p.playerStatsSummaryAgility,
+        "playerStatsSummaryVitality"       := p.playerStatsSummaryVitality,
+        "playerStatsSummaryPotential"      := p.playerStatsSummaryPotential,
+        "playerStatsSummaryCombatExp"      := p.playerStatsSummaryCombatExp,
+        "playerStatsSummaryInjuredSeconds" := p.playerStatsSummaryInjuredSeconds,
+        "playerStatsSummaryCombatInsight"  := p.playerStatsSummaryCombatInsight,
+        "playerStatsSummaryBusy"           := p.playerStatsSummaryBusy,
+    ])
+}
+
+// ============================================================================
+// Server -> Client Envelope (`ActionResp`, exact Aeson Generic format)
+// ============================================================================
+
+pub data ActionResp {
+    MoveMsg(String),
+    ViewMsg(String, String, List RoomCharacterSummary, List RoomExitSummary),
+    MapOverviewMsg(MapOverviewSummary),
+    AttackMsg(String, String),
+    CombatEventMsg(CombatEvent),
+    CombatSettlementMsg(String, String, Bool),
+    UseItemMsg(String, String),
+    SayMsg(String, String),
+    DialogueMsg(String, String),
+    PlayerStatsMsg(PlayerStatsSummary),
+    ActiveSkillFailureMsg(ActiveSkillFailureReason),
+    BattleStateMsg(BattleSnapshot),
+    StoryMsg(String, String),
+    StorySequenceMsg(Bool),
+    StoryDelayMsg(Int),
+    StoryTransitionMsg(String, Int),
+    QuestLogMsg(List QuestLogEntry),
+    InventoryMsg(Int, List InventoryItemSummary),
+    ArtsMsg(List ArtSummary),
+    RewardMsg(List RewardSummary),
+    CharacterCreationConfigMsg(CharacterCreationConfig),
+    SystemMsg(SystemMessage),
+    ErrorMsg(ErrorSummary),
+}
+
+def taggedEnvelope(tag: String, contents: Value): Value =
+    object([
+        "tag"      := tag,
+        "contents" := contents,
+    ])
+
+instance Encode ActionResp {
+    def encode(r) = match r {
+        MoveMsg(dst) ->
+            taggedEnvelope("MoveMsg", encode(dst)),
+        ViewMsg(rName, rDesc, chars, exits) ->
+            taggedEnvelope("ViewMsg", array([encode(rName), encode(rDesc), encode(chars), encode(exits)])),
+        MapOverviewMsg(ov) ->
+            taggedEnvelope("MapOverviewMsg", encode(ov)),
+        AttackMsg(atk, defName) ->
+            taggedEnvelope("AttackMsg", array([encode(atk), encode(defName)])),
+        CombatEventMsg(ev) ->
+            taggedEnvelope("CombatEventMsg", encode(ev)),
+        CombatSettlementMsg(atk, defName, win) ->
+            taggedEnvelope("CombatSettlementMsg", array([encode(atk), encode(defName), encode(win)])),
+        UseItemMsg(who, txt) ->
+            taggedEnvelope("UseItemMsg", array([encode(who), encode(txt)])),
+        SayMsg(who, txt) ->
+            taggedEnvelope("SayMsg", array([encode(who), encode(txt)])),
+        DialogueMsg(who, txt) ->
+            taggedEnvelope("DialogueMsg", array([encode(who), encode(txt)])),
+        PlayerStatsMsg(st) ->
+            taggedEnvelope("PlayerStatsMsg", encode(st)),
+        ActiveSkillFailureMsg(reason) ->
+            taggedEnvelope("ActiveSkillFailureMsg", encode(reason)),
+        BattleStateMsg(snap) ->
+            taggedEnvelope("BattleStateMsg", encode(snap)),
+        StoryMsg(speaker, txt) ->
+            taggedEnvelope("StoryMsg", array([encode(speaker), encode(txt)])),
+        StorySequenceMsg(active) ->
+            taggedEnvelope("StorySequenceMsg", encode(active)),
+        StoryDelayMsg(ms) ->
+            taggedEnvelope("StoryDelayMsg", encode(ms)),
+        StoryTransitionMsg(txt, ms) ->
+            taggedEnvelope("StoryTransitionMsg", array([encode(txt), encode(ms)])),
+        QuestLogMsg(entries) ->
+            taggedEnvelope("QuestLogMsg", encode(entries)),
+        InventoryMsg(money, items) ->
+            taggedEnvelope("InventoryMsg", array([encode(money), encode(items)])),
+        ArtsMsg(arts) ->
+            taggedEnvelope("ArtsMsg", encode(arts)),
+        RewardMsg(rewards) ->
+            taggedEnvelope("RewardMsg", encode(rewards)),
+        CharacterCreationConfigMsg(cfg) ->
+            taggedEnvelope("CharacterCreationConfigMsg", encode(cfg)),
+        SystemMsg(sys) ->
+            taggedEnvelope("SystemMsg", encode(sys)),
+        ErrorMsg(err) ->
+            taggedEnvelope("ErrorMsg", encode(err)),
+    }
+}
+
+pub type PlayerResp = (String, ActionResp)
+
+pub def formatResp(r: ActionResp): String = toJson(r)

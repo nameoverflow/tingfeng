@@ -1,0 +1,596 @@
+// `Actor`-Driven Concurrent Server Hub, Per-Client `Actor WsConn` Outbox with Zero-Poll
+// FIFO Idle Barrier, RFC 6455 WebSocket Session Lifecycle, and Dual Monotonic Tickers (`hub`).
+
+use std.option.{Option, Some, None}
+use std.result.{Result, Ok, Err}
+use std.list.listLen
+use std.str.{strJoin, intToStr}
+use std.map.{StrMap, strMapNew, strMapGet, strMapContains, strMapInsert, strMapRemove}
+use std.sync.{
+    AtomicInt, atomicNew, atomicLoad, atomicStore
+}
+use std.task.sleepMs
+use std.actor.{Actor, actorSpawn, actorAsk, actorSend, actorStop}
+use std.rand.{Rng, fromEntropy}
+use sys.env.getEnv
+use sys.time.monotonicMs
+use sys.net.{TcpListener, TcpStream, tcpListen, tcpAccept, tcpClose}
+use std.ws.{
+    WsConn, WsMessage, WsText, WsPing, WsPong, WsClose,
+    wsAccept, wsRecv, wsSendText, wsSendPing, wsSendPong, wsSendClose, wsClose
+}
+use std.codec.{formatErr, (|>)}
+use fp.{clampInt, setF, overF}
+use ordmap.{
+    mapDelete, mapUpdate, mapMap, mapFromList,
+    setEmpty, setIsEmpty, setDelete, setToAscList
+}
+use entity.{
+    PlayerNormal, playerStatusL, roomPlayerL, mapRoomsL
+}
+use creation.{
+    CharacterCreationChoice, loadCharacterCreationConfig
+}
+use world.worldMapsL
+use message.{
+    PlayerAction,
+    NetEvent, RequestCharacterCreationConfig, Login, Disconnect, NetPlayerAction, decodeNetEventJson,
+    SystemMessage, MkSystemMessage,
+    ErrorSummary, MkErrorSummary,
+    ActionResp, StoryDelayMsg, CharacterCreationConfigMsg, SystemMsg, ErrorMsg,
+    PlayerResp, formatResp
+}
+use state.{
+    GameState, gsWorldL, gsPlayersL, gsBattlesL, gsStoriesL, gsDirtyPlayersL,
+    GameException, gameExceptionText, gameExceptionToSummary,
+    Game, runGame, createDefaultPlayerWithCreation
+}
+use gameplay.{
+    playerInitialSync, processPlayerAction, onGameTick, onBattleTick, releasePlayerBattleLock
+}
+use database.{
+    loadPlayerSave, savePlayerState, saveAllPlayerSaves, deletePlayerSave, applyPlayerSaveToGameState
+}
+use logging.{logDebug, logInfo, logError}
+
+// ============================================================================
+// Dedicated OS Daemon Runner & Per-Client `Actor WsConn` Outbox
+// ============================================================================
+
+/// Spawns a long-lived blocking I/O or timer loop on its own dedicated OS thread
+/// (`std.actor`), keeping `std.task`'s bounded CPU work-stealing pool 100% free.
+pub def spawnDaemon(run: () -> Void): Actor Void = {
+    let d = actorSpawn(() -> ());
+    actorSend(d, (_) -> run());
+    d
+}
+
+pub data ClientHandle {
+    MkClientHandle {
+        uid: String,
+        writer: Actor WsConn,
+        connected: AtomicInt,
+    },
+}
+
+pub data PersistencePolicy {
+    SaveOnAnyResponse,
+    SaveDirtyPlayers,
+}
+
+pub def devResetPassword(): String = "__dev_reset"
+
+pub def isDevModeEnabled(): Bool =
+    match getEnv("MUD_DEV_MODE") {
+        Some(v) -> v == "1" || v == "true" || v == "TRUE",
+        None -> false,
+    }
+
+def sendImmediateResp(conn: WsConn, resp: ActionResp): Void = {
+    let _ = wsSendText(conn, formatResp(resp));
+    ()
+}
+
+def newClientHandle(uid: String, conn: WsConn): ClientHandle =
+    MkClientHandle {
+        uid: uid,
+        writer: actorSpawn(() -> conn),
+        connected: atomicNew(1),
+    }
+
+pub def enqueueResp(handle: ClientHandle, resp: ActionResp): Void =
+    if (atomicLoad(handle.connected) == 0) ()
+    else match resp {
+        StoryDelayMsg(ms) -> {
+            let d = clampInt(0, 8000, ms);
+            actorSend(handle.writer, (_) -> {
+                if (d > 0 && atomicLoad(handle.connected) != 0) sleepMs(d) else ()
+            })
+        },
+        _ -> {
+            let payload = formatResp(resp);
+            actorSend(handle.writer, (conn) -> {
+                if (atomicLoad(handle.connected) != 0) {
+                    match wsSendText(conn, payload) {
+                        Ok(_) -> (),
+                        Err(e) -> {
+                            logError("clientWriter: failed to send to " + handle.uid + ": " + e);
+                            atomicStore(handle.connected, 0)
+                        },
+                    }
+                } else ()
+            })
+        },
+    }
+
+/// Exact FIFO Actor barrier: waits with zero CPU polling until every prior message
+/// and `StoryDelayMsg` in this client's outbox mailbox has completed!
+pub def waitForClientIdle(handle: ClientHandle): Void =
+    if (atomicLoad(handle.connected) != 0) {
+        actorAsk(handle.writer, (_) -> ())
+    } else ()
+
+def pingClientHandle(handle: ClientHandle): Void =
+    if (atomicLoad(handle.connected) != 0) {
+        actorSend(handle.writer, (conn) -> {
+            if (atomicLoad(handle.connected) != 0) {
+                let _ = wsSendPing(conn, "");
+                ()
+            } else ()
+        })
+    } else ()
+
+def stopClientHandle(handle: ClientHandle): Void = {
+    atomicStore(handle.connected, 0);
+    actorStop(handle.writer)
+}
+
+// ============================================================================
+// Sequential `Actor HubState` (Zero-Deadlock Game + Session Coordinator)
+// ============================================================================
+
+pub data HubState {
+    MkHubState {
+        gsCell: Cell GameState,
+        rngCell: Cell Rng,
+        sessions: StrMap ClientHandle,
+        onlineUsers: Cell (List String),
+        saveDir: String,
+        scriptsDir: String,
+        devMode: Bool,
+    },
+}
+
+def removeOnlineUser(xs: List String, target: String): List String =
+    std.list.listFilter(xs, (u) -> u != target)
+
+def broadcastInHub(st: HubState, resp: ActionResp): Void = {
+    let cur = cellNew(cellGet(st.onlineUsers));
+    while (match cellGet(cur) { Nil -> false, _ -> true }) {
+        match cellGet(cur) {
+            Cons(uid, rest) -> {
+                match strMapGet(st.sessions, uid) {
+                    Some(h) -> enqueueResp(h, resp),
+                    None -> (),
+                };
+                cellSet(cur, rest)
+            },
+            Nil -> (),
+        }
+    }
+}
+
+def dispatchResponsesInHub(st: HubState, resps: List PlayerResp): Void = {
+    let cur = cellNew(resps);
+    while (match cellGet(cur) { Nil -> false, _ -> true }) {
+        match cellGet(cur) {
+            Cons((uid, resp), rest) -> {
+                match strMapGet(st.sessions, uid) {
+                    Some(h) -> enqueueResp(h, resp),
+                    None -> logDebug("dispatchResp: player " + uid + " not online"),
+                };
+                cellSet(cur, rest)
+            },
+            Nil -> (),
+        }
+    }
+}
+
+def persistAfterStep(policy: PersistencePolicy, saveDir: String, resps: List PlayerResp, gs: GameState): GameState = {
+    let dirty = gs.dirtyPlayers;
+    let cleared = gs |> setF(gsDirtyPlayersL(), setEmpty());
+    match policy {
+        SaveOnAnyResponse -> {
+            if (listLen(resps) > 0 || !setIsEmpty(dirty)) {
+                saveAllPlayerSaves(saveDir, gs)
+            } else ();
+            cleared
+        },
+        SaveDirtyPlayers -> {
+            let cur = cellNew(setToAscList(dirty));
+            while (match cellGet(cur) { Nil -> false, _ -> true }) {
+                match cellGet(cur) {
+                    Cons(pid, rest) -> {
+                        savePlayerState(saveDir, pid, gs);
+                        cellSet(cur, rest)
+                    },
+                    Nil -> (),
+                }
+            };
+            cleared
+        },
+    }
+}
+
+def runInHub(st: HubState, policy: PersistencePolicy, gameM: Game Void): Option GameException = {
+    let gs0 = cellGet(st.gsCell);
+    let rng0 = cellGet(st.rngCell);
+    match runGame(gs0, rng0, gameM) {
+        Err(err) -> Some(err),
+        Ok((resps, gs1, rng1)) -> {
+            cellSet(st.rngCell, rng1);
+            dispatchResponsesInHub(st, resps);
+            let gsSaved = persistAfterStep(policy, st.saveDir, resps, gs1);
+            cellSet(st.gsCell, gsSaved);
+            None
+        },
+    }
+}
+
+def clearPlayerRuntimeState(uid: String, gs: GameState): GameState = {
+    let unlocked = releasePlayerBattleLock(uid, gs);
+    let cleanedMaps = mapMap(unlocked.world.maps, (mp) ->
+        fp.over(mapRoomsL(), (rs) ->
+            mapMap(rs, overF(roomPlayerL(), (ps) -> setDelete(ps, uid))),
+            mp
+        )
+    );
+    unlocked
+        |> overF(gsPlayersL(), (m) -> mapDelete(m, uid))
+        |> overF(gsBattlesL(), (m) -> mapDelete(m, uid))
+        |> overF(gsStoriesL(), (m) -> mapDelete(m, uid))
+        |> overF(gsDirtyPlayersL(), (s) -> setDelete(s, uid))
+        |> overF(gsWorldL(), setF(worldMapsL(), cleanedMaps))
+}
+
+def loadOrCreatePlayerInHub(
+    st: HubState,
+    resetPlayer: Bool,
+    creationChoice: Option CharacterCreationChoice,
+    uid: String,
+    gs: GameState
+): GameState = {
+    if (resetPlayer) {
+        deletePlayerSave(st.saveDir, uid);
+        logInfo("Dev reset player save: " + uid)
+    } else ();
+
+    let saveRes: Result (Option database.PlayerSave) String =
+        if (resetPlayer) Ok(None)
+        else loadPlayerSave(st.saveDir, uid);
+
+    let templateCreation = match saveRes {
+        Ok(None) -> creationChoice,
+        _ -> None,
+    };
+
+    let baseState = if (resetPlayer) clearPlayerRuntimeState(uid, gs) else gs;
+    let defaultPlayerPath = std.path.pathJoin(st.scriptsDir, "default_player.yaml");
+
+    match runGame(baseState, cellGet(st.rngCell), createDefaultPlayerWithCreation(uid, defaultPlayerPath, templateCreation)) {
+        Err(err) -> {
+            logError("Error loading player " + uid + ": " + gameExceptionText(err));
+            baseState
+        },
+        Ok((_, gs1, rng1)) -> {
+            cellSet(st.rngCell, rng1);
+            match saveRes {
+                Err(se) -> {
+                    logError("Error loading player save for " + uid + ": " + se);
+                    gs1
+                },
+                Ok(None) -> gs1,
+                Ok(Some(save)) -> applyPlayerSaveToGameState(save, gs1),
+            }
+        },
+    }
+}
+
+pub def spawnServerHub(initialGs: GameState, scriptsDir: String, saveDir: String, devMode: Bool): Actor HubState =
+    actorSpawn(() -> MkHubState {
+        gsCell: cellNew(initialGs),
+        rngCell: cellNew(fromEntropy()),
+        sessions: strMapNew(),
+        onlineUsers: cellNew(Nil),
+        saveDir: saveDir,
+        scriptsDir: scriptsDir,
+        devMode: devMode,
+    })
+
+pub def hubTryLogin(
+    hub: Actor HubState,
+    user: String,
+    password: String,
+    creationChoice: Option CharacterCreationChoice,
+    conn: WsConn
+): Result ClientHandle ErrorSummary =
+    actorAsk(hub, (st) -> {
+        if (strMapContains(st.sessions, user)) {
+            Err(MkErrorSummary {
+                errorSummaryCode: "user_exists",
+                errorSummaryParams: mapFromList([("user", user)]),
+            })
+        } else if (password == devResetPassword() && !st.devMode) {
+            Err(MkErrorSummary {
+                errorSummaryCode: "dev_mode_required",
+                errorSummaryParams: mapFromList(Nil),
+            })
+        } else {
+            let handle = newClientHandle(user, conn);
+            let resetPlayer = password == devResetPassword();
+            let existingUsers = strJoin(cellGet(st.onlineUsers), ", ");
+            broadcastInHub(st, SystemMsg(MkSystemMessage {
+                systemMessageKey: "user_joined",
+                systemMessageParams: mapFromList([("user", user)]),
+            }));
+            enqueueResp(handle, SystemMsg(MkSystemMessage {
+                systemMessageKey: "welcome",
+                systemMessageParams: mapFromList([("users", existingUsers)]),
+            }));
+            strMapInsert(st.sessions, user, handle);
+            cellSet(st.onlineUsers, std.list.listAppend(cellGet(st.onlineUsers), [user]));
+
+            let gsLoaded = loadOrCreatePlayerInHub(st, resetPlayer, creationChoice, user, cellGet(st.gsCell));
+            cellSet(st.gsCell, gsLoaded);
+            logInfo("User logged in: " + user + (if (resetPlayer) " (dev reset)" else ""));
+
+            match runInHub(st, SaveOnAnyResponse, playerInitialSync(user)) {
+                Some(err) -> enqueueResp(handle, ErrorMsg(gameExceptionToSummary(err))),
+                None -> (),
+            };
+            Ok(handle)
+        }
+    })
+
+pub def hubProcessAction(hub: Actor HubState, user: String, handle: ClientHandle, action: PlayerAction): Void =
+    actorAsk(hub, (st) -> {
+        match runInHub(st, SaveOnAnyResponse, processPlayerAction(user, action)) {
+            Some(err) -> {
+                logError(user + " action failed: " + gameExceptionText(err));
+                enqueueResp(handle, ErrorMsg(gameExceptionToSummary(err)))
+            },
+            None -> (),
+        }
+    })
+
+pub def hubDisconnect(hub: Actor HubState, user: String): Void = {
+    let maybeHandle: Option ClientHandle = actorAsk(hub, (st) -> {
+        let found = strMapGet(st.sessions, user);
+        let _ = strMapRemove(st.sessions, user);
+        cellSet(st.onlineUsers, removeOnlineUser(cellGet(st.onlineUsers), user));
+
+        let gs0 = cellGet(st.gsCell);
+        let gs1 = releasePlayerBattleLock(user, gs0)
+            |> overF(gsBattlesL(), (m) -> mapDelete(m, user))
+            |> overF(gsPlayersL(), (m) -> mapUpdate(m, user, setF(playerStatusL(), PlayerNormal)));
+        savePlayerState(st.saveDir, user, gs1);
+        cellSet(st.gsCell, gs1);
+
+        logInfo(user + " disconnected");
+        broadcastInHub(st, SystemMsg(MkSystemMessage {
+            systemMessageKey: "user_disconnected",
+            systemMessageParams: mapFromList([("user", user)]),
+        }));
+        found
+    });
+    match maybeHandle {
+        Some(h) -> stopClientHandle(h),
+        None -> (),
+    }
+}
+
+pub def hubGameTick(hub: Actor HubState, dt: Float): Void =
+    actorAsk(hub, (st) -> {
+        match runInHub(st, SaveDirtyPlayers, onGameTick(dt)) {
+            Some(err) -> logError("Game tick failed: " + gameExceptionText(err)),
+            None -> (),
+        }
+    })
+
+pub def hubBattleTick(hub: Actor HubState, dt: Float): Void =
+    actorAsk(hub, (st) -> {
+        match runInHub(st, SaveDirtyPlayers, onBattleTick(dt)) {
+            Some(err) -> logError("Battle tick failed: " + gameExceptionText(err)),
+            None -> (),
+        }
+    })
+
+pub def hubPingOnlineClients(hub: Actor HubState): Void =
+    actorAsk(hub, (st) -> {
+        let cur = cellNew(cellGet(st.onlineUsers));
+        while (match cellGet(cur) { Nil -> false, _ -> true }) {
+            match cellGet(cur) {
+                Cons(uid, rest) -> {
+                    match strMapGet(st.sessions, uid) {
+                        Some(h) -> pingClientHandle(h),
+                        None -> (),
+                    };
+                    cellSet(cur, rest)
+                },
+                Nil -> (),
+            }
+        }
+    })
+
+// ============================================================================
+// WebSocket Connection Loop & Monotonic Dual Tickers
+// ============================================================================
+
+def sendCreationConfig(conn: WsConn, scriptsDir: String): Void = {
+    let cfgPath = std.path.pathJoin(scriptsDir, "character_creation.yaml");
+    match loadCharacterCreationConfig(cfgPath) {
+        Ok(cfg) -> sendImmediateResp(conn, CharacterCreationConfigMsg(cfg)),
+        Err(e) -> sendImmediateResp(conn, ErrorMsg(MkErrorSummary {
+            errorSummaryCode: "character_creation_config_load_failed",
+            errorSummaryParams: mapFromList([("error", e)]),
+        })),
+    }
+}
+
+def sendPongOnWriter(handle: ClientHandle, payload: String): Void =
+    if (atomicLoad(handle.connected) != 0) {
+        actorSend(handle.writer, (conn) -> {
+            if (atomicLoad(handle.connected) != 0) {
+                let _ = wsSendPong(conn, payload);
+                ()
+            } else ()
+        })
+    } else ()
+
+def runAuthenticatedLoop(hub: Actor HubState, user: String, conn: WsConn, handle: ClientHandle): Void = {
+    let active = cellNew(true);
+    while (cellGet(active) && atomicLoad(handle.connected) != 0) {
+        match wsRecv(conn) {
+            Err(_) -> cellSet(active, false),
+            Ok(WsClose(_, _)) -> cellSet(active, false),
+            Ok(WsPing(payload)) -> sendPongOnWriter(handle, payload),
+            Ok(WsPong(_)) -> (),
+            Ok(WsText(raw)) -> match decodeNetEventJson(raw) {
+                Ok(Disconnect) -> {
+                    logInfo(user + " disconnecting...");
+                    cellSet(active, false)
+                },
+                Ok(NetPlayerAction(action)) -> {
+                    waitForClientIdle(handle);
+                    hubProcessAction(hub, user, handle, action)
+                },
+                Ok(_) -> logError(user + " sent unexpected pre-login event while logged in"),
+                Err(de) -> logError(user + " invalid JSON message (" + formatErr(de) + "), continuing..."),
+            },
+        }
+    }
+}
+
+pub def handleClientStream(hub: Actor HubState, scriptsDir: String, stream: TcpStream): Void = {
+    match wsAccept(stream) {
+        Err(e) -> {
+            if (e != "connection closed during HTTP upgrade handshake") {
+                logError("WebSocket handshake failed: " + e)
+            } else ();
+            tcpClose(stream)
+        },
+        Ok(conn) -> {
+            logInfo("Accepted WebSocket connection");
+            let preLoginLoop = cellNew(true);
+            while (cellGet(preLoginLoop)) {
+                match wsRecv(conn) {
+                    Err(_) -> cellSet(preLoginLoop, false),
+                    Ok(WsClose(_, _)) -> cellSet(preLoginLoop, false),
+                    Ok(WsPing(payload)) -> {
+                        let _ = wsSendPong(conn, payload);
+                        ()
+                    },
+                    Ok(WsPong(_)) -> (),
+                    Ok(WsText(raw)) -> match decodeNetEventJson(raw) {
+                        Ok(RequestCharacterCreationConfig) -> {
+                            sendCreationConfig(conn, scriptsDir)
+                        },
+                        Ok(Login { username: loginUser, password: pw, creation: creationChoice }) -> {
+                            cellSet(preLoginLoop, false);
+                            match hubTryLogin(hub, loginUser, pw, creationChoice, conn) {
+                                Err(errSum) -> {
+                                    sendImmediateResp(conn, ErrorMsg(errSum));
+                                    let _ = wsSendClose(conn, 1000, "");
+                                    ()
+                                },
+                                Ok(handle) -> {
+                                    runAuthenticatedLoop(hub, loginUser, conn, handle);
+                                    hubDisconnect(hub, loginUser)
+                                },
+                            }
+                        },
+                        _ -> {
+                            cellSet(preLoginLoop, false);
+                            sendImmediateResp(conn, ErrorMsg(MkErrorSummary {
+                                errorSummaryCode: "not_logged_in",
+                                errorSummaryParams: mapFromList(Nil),
+                            }));
+                            let _ = wsSendClose(conn, 1000, "");
+                            ()
+                        },
+                    },
+                }
+            };
+            wsClose(conn)
+        },
+    }
+}
+
+pub def startTickLoops(hub: Actor HubState, runningFlag: AtomicInt): Void = {
+    let _ = spawnDaemon(() -> {
+        let lastMs = cellNew(monotonicMs());
+        let pingTicks = cellNew(0);
+        sleepMs(1000);
+        while (atomicLoad(runningFlag) != 0) {
+            let now = monotonicMs();
+            let dtMs = i64ToInt(now - cellGet(lastMs));
+            cellSet(lastMs, now);
+            let dt = if (dtMs <= 0) 1.0 else intToFloat(dtMs) / 1000.0;
+            hubGameTick(hub, dt);
+            let pt = cellGet(pingTicks) + 1;
+            if (pt >= 30) {
+                cellSet(pingTicks, 0);
+                hubPingOnlineClients(hub)
+            } else {
+                cellSet(pingTicks, pt)
+            };
+            sleepMs(1000)
+        }
+    });
+    let _ = spawnDaemon(() -> {
+        let lastMs = cellNew(monotonicMs());
+        sleepMs(50);
+        while (atomicLoad(runningFlag) != 0) {
+            let now = monotonicMs();
+            let dtMs = i64ToInt(now - cellGet(lastMs));
+            cellSet(lastMs, now);
+            let dt = if (dtMs <= 0) 0.05 else intToFloat(dtMs) / 1000.0;
+            hubBattleTick(hub, dt);
+            sleepMs(50)
+        }
+    });
+    ()
+}
+
+pub def serveOnListener(
+    listener: TcpListener,
+    hub: Actor HubState,
+    scriptsDir: String,
+    runningFlag: AtomicInt
+): Void = {
+    startTickLoops(hub, runningFlag);
+    while (atomicLoad(runningFlag) != 0) {
+        match tcpAccept(listener) {
+            Err(e) -> {
+                if (atomicLoad(runningFlag) != 0) logError("tcpAccept error: " + e) else ()
+            },
+            Ok(stream) -> {
+                let _ = spawnDaemon(() -> handleClientStream(hub, scriptsDir, stream));
+                ()
+            },
+        }
+    }
+}
+
+pub def runServer(host: String, port: Int, scriptsDir: String, saveDir: String): Result Void String = {
+    logInfo("Initializing game state from " + scriptsDir + "...");
+    let gs = state.loadGameState(scriptsDir)?;
+    let devMode = isDevModeEnabled();
+    let hub = spawnServerHub(gs, scriptsDir, saveDir, devMode);
+    let runningFlag = atomicNew(1);
+    let listener = tcpListen(host, port)?;
+    logInfo("Starting game tick (1000ms) and battle tick (50ms)...");
+    logInfo("Starting Geisha WebSocket server on " + host + ":" + intToStr(port) + (if (devMode) " [MUD_DEV_MODE=1]" else "") + "...");
+    serveOnListener(listener, hub, scriptsDir, runningFlag);
+    Ok(())
+}

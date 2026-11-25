@@ -2,8 +2,8 @@
 
 ## Project and task routing
 
-听风录（Tingfeng）— a Wuxia MUD with a Haskell/Stack WebSocket server, YAML game content, and a
-Svelte/TypeScript web client. Player persistence uses JSON saves.
+听风录（Tingfeng）— a Wuxia MUD with a pure-Geisha WebSocket server (`server/src/`), YAML game content (`resources/scripts/`), and a
+Haskell GHC Wasm Canvas2D web client (`client/hs/`). Player persistence uses JSON saves (`saves/`).
 
 Read the documentation relevant to the change; a full documentation pass is
 not required. [docs/README.md](docs/README.md) indexes the rest.
@@ -26,9 +26,9 @@ Run backend commands from the repository root; client commands use `npm --prefix
 
 | Change or task | Relevant command / evidence |
 | --- | --- |
-| Build / run backend | `stack build` / `stack exec tingfeng-exe` (127.0.0.1:9160) |
-| Backend gameplay, parsing, persistence | `stack test` |
-| Client types and Svelte components | `npm --prefix client run check` |
+| Build / run backend | `make build` / `make run` (`./server/build/tingfeng-server`, 127.0.0.1:9160) |
+| Backend gameplay, parsing, persistence, WS hub | `make test` (`./server/build/tingfeng-server --test`) |
+| Client Wasm check | `npm --prefix client run check` |
 | Client production bundle | `npm --prefix client run build` |
 | Animation catalog and asset references | `npm --prefix client run validate:animations` |
 | Timeline, clock, battle presentation logic | `npm --prefix client run test:battle` |
@@ -52,16 +52,10 @@ work without needing a gameplay save.
 
 ## Implementation constraints
 
-- Keep `allow-newer: true` in `stack.yaml` for the project's GHC compatibility.
-- Follow existing lens and monad-transformer patterns. Combat updates `Battle`;
-  it does not directly mutate `GameState`.
-- Use `GameException`, `CombatException`, or `WorldException` and `throwError`
-  in the corresponding layer rather than `error`.
-- Preserve exception-safe MVar updates; never acquire the same MVar recursively.
-- Use `Data.Aeson.KeyMap` and `Data.Aeson.Key` for Aeson objects, not `HashMap`.
-- Qualify ambiguous names such as `Prelude.show`; import `unless` from `Control.Monad`.
-- Use YAML for content supported by the existing schema; extend parsing and world
-  validation when adding new content semantics.
+- Keep `Combat` pure over `Battle` and read-only `World` (`combat.gsa`); it does not directly mutate `GameState`.
+- Use `GameException`, `CombatException`, or `WorldException` and `throwErr` in the corresponding MTL effect layer rather than aborting.
+- Keep shared concurrent server coordination inside the sequential `Actor HubState` (`hub.gsa`) and per-client `Chan OutboxCmd` rather than ad-hoc shared locks.
+- Use YAML/JSON for content supported by the existing schema (`yaml.gsa` + `std.codec.Decoder` pipelines); extend parsing and world validation (`world.gsa`) when adding new content semantics.
 
 ## Image Asset Generation Policy
 

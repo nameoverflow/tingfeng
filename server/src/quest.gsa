@@ -1,0 +1,342 @@
+// Quest Definitions, Story Trigger/Condition/Action Algebra (`tagged` Sum Decoders),
+// and Per-Player Story State (`quest`).
+
+use std.option.{Option, Some, None}
+use std.codec.{
+    Encode, encode, object, (:=),
+    Decoder, (|>), succeed, int, str, list, at, req, withDefault, tagged
+}
+use fp.{Lens, lens}
+use ordmap.{
+    OrdMap, OrdSet,
+    mapEmpty, mapFilter, mapKeys,
+    setEmpty, setFromList
+}
+use yaml.Configurable
+use entity.{
+    Character, mapD,
+    decodePos, decodeStrOrdMap, encodeStrOrdMap, decodeOrdSet, encodeOrdSet
+}
+
+pub data QuestObjective {
+    MkQuestObjective {
+        questObjectiveStage: String,
+        questObjectiveText: String,
+    },
+}
+
+pub def decodeQuestObjective(): Decoder QuestObjective =
+    succeed((st) -> (txt) -> MkQuestObjective { questObjectiveStage: st, questObjectiveText: txt })
+        |> req("stage", str)
+        |> req("text", str)
+
+pub data QuestRewardItem {
+    MkQuestRewardItem {
+        questRewardItemId: String,
+        questRewardItemAmount: Int,
+    },
+}
+
+pub def decodeQuestRewardItem(): Decoder QuestRewardItem =
+    succeed((id) -> (amt) -> MkQuestRewardItem { questRewardItemId: id, questRewardItemAmount: amt })
+        |> req("id", str)
+        |> withDefault("amount", int, 1)
+
+pub data QuestReward {
+    MkQuestReward {
+        questRewardMoney: Int,
+        questRewardItems: List QuestRewardItem,
+        questRewardCombatExp: Int,
+        questRewardPotential: Int,
+    },
+}
+
+pub def emptyQuestReward(): QuestReward =
+    MkQuestReward {
+        questRewardMoney: 0,
+        questRewardItems: Nil,
+        questRewardCombatExp: 0,
+        questRewardPotential: 0,
+    }
+
+pub def decodeQuestReward(): Decoder QuestReward =
+    succeed((m) -> (it) -> (ce) -> (pot) -> MkQuestReward {
+        questRewardMoney: m,
+        questRewardItems: it,
+        questRewardCombatExp: ce,
+        questRewardPotential: pot,
+    })
+        |> withDefault("money", int, 0)
+        |> withDefault("items", list(decodeQuestRewardItem()), Nil)
+        |> withDefault("combat_exp", int, 0)
+        |> withDefault("potential", int, 0)
+
+// ============================================================================
+// Story Triggers, Conditions & Actions (`tagged` Combinators)
+// ============================================================================
+
+pub data StoryTrigger {
+    TriggerTalk(String),
+    TriggerEnterRoom(String, (Int, Int)),
+    TriggerKill(String),
+}
+
+pub def storyTriggerEq(a: StoryTrigger, b: StoryTrigger): Bool = match (a, b) {
+    (TriggerTalk(x), TriggerTalk(y)) -> x == y,
+    (TriggerKill(x), TriggerKill(y)) -> x == y,
+    (TriggerEnterRoom(m1, (x1, y1)), TriggerEnterRoom(m2, (x2, y2))) ->
+        m1 == m2 && x1 == x2 && y1 == y2,
+    _ -> false,
+}
+
+pub def decodeStoryTrigger(): Decoder StoryTrigger =
+    tagged("type", [
+        ("talk", at("npc", str) |> mapD((n) -> TriggerTalk(n))),
+        (
+            "enter_room",
+            succeed((m) -> (p) -> TriggerEnterRoom(m, p))
+                |> req("map", str)
+                |> req("position", decodePos())
+        ),
+        ("kill", at("npc", str) |> mapD((n) -> TriggerKill(n))),
+    ])
+
+pub data StoryCondition {
+    QuestNotStarted(String),
+    QuestStageIs(String, String),
+    QuestCompleted(String),
+    FlagSet(String),
+    FlagUnset(String),
+    NpcDead(String),
+    NpcAlive(String),
+    HasItem(String),
+    LacksItem(String),
+    InMap(String),
+}
+
+pub def decodeStoryCondition(): Decoder StoryCondition =
+    tagged("type", [
+        ("quest_not_started", at("quest", str) |> mapD((q) -> QuestNotStarted(q))),
+        (
+            "quest_stage",
+            succeed((q) -> (s) -> QuestStageIs(q, s))
+                |> req("quest", str)
+                |> req("stage", str)
+        ),
+        ("quest_completed", at("quest", str) |> mapD((q) -> QuestCompleted(q))),
+        ("flag", at("flag", str) |> mapD((f) -> FlagSet(f))),
+        ("not_flag", at("flag", str) |> mapD((f) -> FlagUnset(f))),
+        ("npc_dead", at("npc", str) |> mapD((n) -> NpcDead(n))),
+        ("npc_alive", at("npc", str) |> mapD((n) -> NpcAlive(n))),
+        ("has_item", at("item", str) |> mapD((i) -> HasItem(i))),
+        ("not_has_item", at("item", str) |> mapD((i) -> LacksItem(i))),
+        ("in_map", at("map", str) |> mapD((m) -> InMap(m))),
+    ])
+
+pub data StoryAction {
+    StoryMessage(String, String),
+    StoryDelay(Int),
+    StoryTransition(String, Int),
+    SetQuestStage(String, String),
+    CompleteQuest(String),
+    CompleteRepeatableJob(String),
+    SetFlag(String),
+    ClearFlag(String),
+    HideNpc(String),
+    ShowNpc(String),
+    GiveItem(String, Int),
+    TakeItem(String, Int),
+    GiveMoney(Int),
+    LearnArt(String, Int),
+    StartBattle(String),
+    MovePlayer(String, (Int, Int)),
+}
+
+pub def decodeStoryAction(): Decoder StoryAction =
+    tagged("type", [
+        (
+            "message",
+            succeed((sp) -> (tx) -> StoryMessage(sp, tx))
+                |> req("speaker", str)
+                |> req("text", str)
+        ),
+        ("delay", at("ms", int) |> mapD((ms) -> StoryDelay(ms))),
+        (
+            "transition",
+            succeed((tx) -> (ms) -> StoryTransition(tx, ms))
+                |> req("text", str)
+                |> req("ms", int)
+        ),
+        (
+            "set_stage",
+            succeed((q) -> (s) -> SetQuestStage(q, s))
+                |> req("quest", str)
+                |> req("stage", str)
+        ),
+        ("complete_quest", at("quest", str) |> mapD((q) -> CompleteQuest(q))),
+        ("complete_job", at("quest", str) |> mapD((q) -> CompleteRepeatableJob(q))),
+        ("set_flag", at("flag", str) |> mapD((f) -> SetFlag(f))),
+        ("clear_flag", at("flag", str) |> mapD((f) -> ClearFlag(f))),
+        ("hide_npc", at("npc", str) |> mapD((n) -> HideNpc(n))),
+        ("show_npc", at("npc", str) |> mapD((n) -> ShowNpc(n))),
+        (
+            "give_item",
+            succeed((i) -> (amt) -> GiveItem(i, amt))
+                |> req("item", str)
+                |> withDefault("amount", int, 1)
+        ),
+        (
+            "take_item",
+            succeed((i) -> (amt) -> TakeItem(i, amt))
+                |> req("item", str)
+                |> withDefault("amount", int, 1)
+        ),
+        ("give_money", at("amount", int) |> mapD((m) -> GiveMoney(m))),
+        (
+            "learn_art",
+            succeed((a) -> (lvl) -> LearnArt(a, lvl))
+                |> req("art", str)
+                |> withDefault("level", int, 1)
+        ),
+        ("start_battle", at("target", str) |> mapD((t) -> StartBattle(t))),
+        (
+            "move_player",
+            succeed((m) -> (p) -> MovePlayer(m, p))
+                |> req("map", str)
+                |> req("position", decodePos())
+        ),
+    ])
+
+pub data QuestEvent {
+    MkQuestEvent {
+        questEventId: String,
+        questEventTrigger: StoryTrigger,
+        questEventConditions: List StoryCondition,
+        questEventActions: List StoryAction,
+    },
+}
+
+pub def decodeQuestEvent(): Decoder QuestEvent =
+    succeed((id) -> (tr) -> (cs) -> (acts) -> MkQuestEvent {
+        questEventId: id,
+        questEventTrigger: tr,
+        questEventConditions: cs,
+        questEventActions: acts,
+    })
+        |> req("id", str)
+        |> req("trigger", decodeStoryTrigger())
+        |> withDefault("conditions", list(decodeStoryCondition()), Nil)
+        |> req("actions", list(decodeStoryAction()))
+
+pub data Quest {
+    MkQuest {
+        questId: String,
+        questName: String,
+        questObjectives: List QuestObjective,
+        questReward: QuestReward,
+        questEvents: List QuestEvent,
+    },
+}
+
+pub def decodeQuest(): Decoder Quest =
+    succeed((id) -> (nm) -> (objs) -> (rew) -> (evs) -> MkQuest {
+        questId: id,
+        questName: nm,
+        questObjectives: objs,
+        questReward: rew,
+        questEvents: evs,
+    })
+        |> req("id", str)
+        |> req("name", str)
+        |> withDefault("objectives", list(decodeQuestObjective()), Nil)
+        |> withDefault("reward", decodeQuestReward(), emptyQuestReward())
+        |> req("events", list(decodeQuestEvent()))
+
+instance Configurable Quest {
+    def configId(q) = q.questId
+    def configDecoder() = decodeQuest()
+}
+
+// ============================================================================
+// Per-Player Story State (`PlayerStoryState`)
+// ============================================================================
+
+pub data PlayerStoryState {
+    MkPlayerStoryState {
+        storyQuestStages: OrdMap String String,
+        storyFlags: OrdSet String,
+        storyHiddenNpcs: OrdSet String,
+        storyJobStreaks: OrdMap String Int,
+    },
+}
+
+pub def newPlayerStoryState(): PlayerStoryState =
+    MkPlayerStoryState {
+        storyQuestStages: mapEmpty(),
+        storyFlags: setEmpty(),
+        storyHiddenNpcs: setEmpty(),
+        storyJobStreaks: mapEmpty(),
+    }
+
+pub def newPlayerStoryStateFor(chars: OrdMap String Character): PlayerStoryState = {
+    let hidden = setFromList(mapKeys(mapFilter(chars, (c) -> c.charInitiallyHidden)));
+    MkPlayerStoryState {
+        storyQuestStages: mapEmpty(),
+        storyFlags: setEmpty(),
+        storyHiddenNpcs: hidden,
+        storyJobStreaks: mapEmpty(),
+    }
+}
+
+pub def storyQuestStagesL(): Lens PlayerStoryState (OrdMap String String) =
+    lens((s) -> s.storyQuestStages, (s, v) -> MkPlayerStoryState {
+        storyQuestStages: v,
+        storyFlags: s.storyFlags,
+        storyHiddenNpcs: s.storyHiddenNpcs,
+        storyJobStreaks: s.storyJobStreaks,
+    })
+
+pub def storyFlagsL(): Lens PlayerStoryState (OrdSet String) =
+    lens((s) -> s.storyFlags, (s, v) -> MkPlayerStoryState {
+        storyQuestStages: s.storyQuestStages,
+        storyFlags: v,
+        storyHiddenNpcs: s.storyHiddenNpcs,
+        storyJobStreaks: s.storyJobStreaks,
+    })
+
+pub def storyHiddenNpcsL(): Lens PlayerStoryState (OrdSet String) =
+    lens((s) -> s.storyHiddenNpcs, (s, v) -> MkPlayerStoryState {
+        storyQuestStages: s.storyQuestStages,
+        storyFlags: s.storyFlags,
+        storyHiddenNpcs: v,
+        storyJobStreaks: s.storyJobStreaks,
+    })
+
+pub def storyJobStreaksL(): Lens PlayerStoryState (OrdMap String Int) =
+    lens((s) -> s.storyJobStreaks, (s, v) -> MkPlayerStoryState {
+        storyQuestStages: s.storyQuestStages,
+        storyFlags: s.storyFlags,
+        storyHiddenNpcs: s.storyHiddenNpcs,
+        storyJobStreaks: v,
+    })
+
+pub def decodePlayerStoryState(): Decoder PlayerStoryState =
+    succeed((qs) -> (fl) -> (hn) -> (js) -> MkPlayerStoryState {
+        storyQuestStages: qs,
+        storyFlags: fl,
+        storyHiddenNpcs: hn,
+        storyJobStreaks: js,
+    })
+        |> withDefault("quest_stages", decodeStrOrdMap(str), mapEmpty())
+        |> withDefault("flags", decodeOrdSet(str), setEmpty())
+        |> withDefault("hidden_npcs", decodeOrdSet(str), setEmpty())
+        |> withDefault("job_streaks", decodeStrOrdMap(int), mapEmpty())
+
+instance Encode PlayerStoryState {
+    def encode(s) = object([
+        "quest_stages" := encodeStrOrdMap(s.storyQuestStages),
+        "flags"        := encodeOrdSet(s.storyFlags),
+        "hidden_npcs"  := encodeOrdSet(s.storyHiddenNpcs),
+        "job_streaks"  := encodeStrOrdMap(s.storyJobStreaks),
+    ])
+}

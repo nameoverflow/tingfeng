@@ -1,0 +1,343 @@
+// World Asset Loading (`Configurable` Directory Pipeline) and Full Referential
+// & Progression Integrity Validation (`world`).
+
+use std.option.{Option, Some, None}
+use std.result.{Result, Ok, Err}
+use std.list.{listAll, listAny}
+use std.str.{intToStr, strJoin}
+use std.path.pathJoin
+use fp.{
+    Semigroup, (<+>), Monoid, empty, foldMapList,
+    Lens, lens
+}
+use ordmap.{
+    OrdMap,
+    mapLookup, mapMember, mapToAscList, mapKeys, mapElems
+}
+use yaml.loadConfigurableDir
+use entity.{
+    Item, ItemUse, LearnArtUse, MedicineUse, EquipUse,
+    Effect,
+    CombatActionTiming,
+    AnimationRef, ActiveSkill, AttackMove,
+    ArtType, Foundation, ArtTier, EntryTier, ArtRequirement, MartialArt, artTypeEq, artTierEq,
+    Character,
+    Direction, directionToText, RoomRef, Room, GameMap
+}
+use quest.{
+    Quest, QuestReward, QuestRewardItem, QuestEvent,
+    StoryTrigger, TriggerTalk, TriggerEnterRoom, TriggerKill,
+    StoryCondition, QuestNotStarted, QuestStageIs, QuestCompleted,
+    FlagSet, FlagUnset, NpcDead, NpcAlive, HasItem, LacksItem, InMap,
+    StoryAction, StoryMessage, StoryDelay, StoryTransition,
+    SetQuestStage, CompleteQuest, CompleteRepeatableJob,
+    SetFlag, ClearFlag, HideNpc, ShowNpc,
+    GiveItem, TakeItem, GiveMoney, LearnArt, StartBattle, MovePlayer
+}
+
+pub data World {
+    MkWorld {
+        items: OrdMap String Item,
+        maps: OrdMap String GameMap,
+        chars: OrdMap String Character,
+        effects: OrdMap String Effect,
+        quests: OrdMap String Quest,
+        combatActionTimings: OrdMap String CombatActionTiming,
+        martialArts: OrdMap String MartialArt,
+    },
+}
+
+pub def worldMapsL(): Lens World (OrdMap String GameMap) =
+    lens((w) -> w.maps, (w, v) -> MkWorld {
+        items: w.items, maps: v, chars: w.chars, effects: w.effects,
+        quests: w.quests, combatActionTimings: w.combatActionTimings, martialArts: w.martialArts,
+    })
+
+pub def worldCharsL(): Lens World (OrdMap String Character) =
+    lens((w) -> w.chars, (w, v) -> MkWorld {
+        items: w.items, maps: w.maps, chars: v, effects: w.effects,
+        quests: w.quests, combatActionTimings: w.combatActionTimings, martialArts: w.martialArts,
+    })
+
+pub data WorldException {
+    MapNotFound(String),
+    RoomNotFound(String, (Int, Int)),
+    ItemNotFound(String),
+    MartialArtNotFound(String),
+    QuestNotFound(String),
+    CharNotFound(String),
+}
+
+pub def formatPos(pos: (Int, Int)): String = match pos {
+    (x, y) -> "(" + intToStr(x) + "," + intToStr(y) + ")",
+}
+
+pub def worldExceptionText(err: WorldException): String = match err {
+    MapNotFound(mid) -> "Map not found: " + mid,
+    RoomNotFound(mid, pos) -> "Room not found: " + mid + " " + formatPos(pos),
+    ItemNotFound(iid) -> "Item not found: " + iid,
+    MartialArtNotFound(aid) -> "Martial art not found: " + aid,
+    QuestNotFound(qid) -> "Quest not found: " + qid,
+    CharNotFound(cid) -> "Character not found: " + cid,
+}
+
+pub def lookupWorldRoom(wrld: World, mid: String, pos: (Int, Int)): Option Room =
+    match mapLookup(wrld.maps, mid) {
+        None -> None,
+        Some(mp) -> mapLookup(mp.mapRooms, pos),
+    }
+
+// ============================================================================
+// World Validation (`Semigroup` `<+>` Error Monoid)
+// ============================================================================
+
+def checkWhen(cond: Bool, msg: String): List String =
+    if (cond) [msg] else Nil
+
+def validateLearnArtLevel(wrld: World, label: String, artId: String, level: Int): List String =
+    match mapLookup(wrld.martialArts, artId) {
+        None -> Nil,
+        Some(ma) -> checkWhen(level > ma.artMaxLevel, label + " level exceeds max_level for " + artId),
+    }
+
+def requireCombatActionTiming(wrld: World, label: String, actionId: String): List String =
+    checkWhen(
+        strLen(actionId) > 0 && !mapMember(wrld.combatActionTimings, actionId),
+        label + " references missing combat action timing " + actionId
+    )
+
+def validateAnimationRef(wrld: World, ownerArtId: String, label: String, anim: AnimationRef): List String = {
+    let actId = anim.animationRefAction;
+    checkWhen(strLen(actId) == 0, "martial art " + ownerArtId + " " + label + " has empty animation action")
+    <+> requireCombatActionTiming(wrld, "martial art " + ownerArtId + " " + label, actId)
+}
+
+def validateMapCharacters(wrld: World): List String =
+    foldMapList(mapToAscList(wrld.maps), (mpPair) -> match mpPair {
+        (mid, mp) -> foldMapList(mapElems(mp.mapRooms), (room) ->
+            foldMapList(room.roomChar, (cid) ->
+                checkWhen(
+                    !mapMember(wrld.chars, cid),
+                    "map " + mid + " room " + room.roomId + " references missing character " + cid
+                )
+            )
+        ),
+    })
+
+def validateMapExits(wrld: World): List String =
+    foldMapList(mapToAscList(wrld.maps), (mpPair) -> match mpPair {
+        (mid, mp) -> foldMapList(mapElems(mp.mapRooms), (room) ->
+            foldMapList(mapToAscList(room.roomExits), (exPair) -> match exPair {
+                (dir, target) -> checkWhen(
+                    match lookupWorldRoom(wrld, target.roomRefMapId, target.roomRefPos) {
+                        Some(_) -> false,
+                        None -> true,
+                    },
+                    "map " + mid + " room " + room.roomId + " exit " + directionToText(dir)
+                    + " references missing room " + target.roomRefMapId + " " + formatPos(target.roomRefPos)
+                ),
+            })
+        ),
+    })
+
+def validateItemUse(wrld: World, item: Item): List String = match item.itemUse {
+    None -> Nil,
+    Some(LearnArtUse { itemUseArt: artId, itemUseLevel: lvl, itemUseMinLevel: minL, itemUseMaxLevel: maybeMax, itemUseQuality: _, itemUseConsume: _, itemUseMessage: _, itemUseRepeatMessage: _ }) -> {
+        let bandErrs = match maybeMax {
+            None -> Nil,
+            Some(bandMax) ->
+                checkWhen(minL > bandMax, "item " + item.itemId + " study band has min_level above max_level")
+                <+> validateLearnArtLevel(wrld, "item " + item.itemId + " study max_level", artId, bandMax),
+        };
+        checkWhen(!mapMember(wrld.martialArts, artId), "item " + item.itemId + " use learn_art references missing martial art " + artId)
+        <+> checkWhen(lvl <= 0, "item " + item.itemId + " learns non-positive art level for " + artId)
+        <+> validateLearnArtLevel(wrld, "item " + item.itemId + " use learn_art", artId, lvl)
+        <+> bandErrs
+    },
+    Some(MedicineUse(med)) ->
+        checkWhen(
+            med.medicineHp <= 0 && med.medicineQi <= 0 && med.medicineJing <= 0 && med.medicineCureInjury <= 0,
+            "item " + item.itemId + " medicine has no positive restoration or cure effect"
+        ),
+    Some(EquipUse(_)) -> Nil,
+}
+
+def validateCharacter(wrld: World, ch: Character): List String =
+    foldMapList(mapToAscList(ch.charTeaches), (p) -> match p {
+        (artId, lvl) ->
+            checkWhen(!mapMember(wrld.martialArts, artId), "character " + ch.charId + " teaches missing martial art " + artId)
+            <+> checkWhen(lvl <= 0, "character " + ch.charId + " teaches non-positive max level for " + artId)
+            <+> validateLearnArtLevel(wrld, "character " + ch.charId + " teaches", artId, lvl),
+    })
+    <+> foldMapList(mapToAscList(ch.charShop), (p) -> match p {
+        (itemId, price) ->
+            checkWhen(!mapMember(wrld.items, itemId), "character " + ch.charId + " shop references missing item " + itemId)
+            <+> checkWhen(price <= 0, "character " + ch.charId + " shop has non-positive price for " + itemId),
+    })
+
+def validateCombatActionTiming(t: CombatActionTiming): List String =
+    checkWhen(t.combatActionTimingApproachMs < 0, "combat action " + t.combatActionTimingId + " has a negative approach duration")
+    <+> checkWhen(listAny(t.combatActionTimingHitShares, (s) -> s <= 0.0), "combat action " + t.combatActionTimingId + " has a non-positive hit share")
+    <+> checkWhen(t.combatActionTimingLockMs <= 0, "combat action " + t.combatActionTimingId + " has non-positive lock_ms")
+
+def validateMartialArt(wrld: World, ma: MartialArt): List String = {
+    let aid = ma.artId;
+    let fndErrs = match ma.artFoundation {
+        None -> Nil,
+        Some(fid) -> match mapLookup(wrld.martialArts, fid) {
+            None -> ["martial art " + aid + " references missing foundation " + fid],
+            Some(fArt) -> checkWhen(!artTypeEq(fArt.artType, Foundation), "martial art " + aid + " foundation " + fid + " is not type foundation"),
+        },
+    };
+    let reqErrs = foldMapList(ma.artRequires, (r) ->
+        checkWhen(!mapMember(wrld.martialArts, r.artRequirementArt), "martial art " + aid + " requires missing martial art " + r.artRequirementArt)
+        <+> checkWhen(r.artRequirementLevel <= 0, "martial art " + aid + " has non-positive requirement level for " + r.artRequirementArt)
+    );
+    let moveErrs = foldMapList(ma.artAttackMoves, (mv) ->
+        checkWhen(mv.attackMoveUnlockLevel <= 0, "martial art " + aid + " attack move " + mv.attackMoveId + " has non-positive unlock_level")
+        <+> checkWhen(mv.attackMoveUnlockLevel > ma.artMaxLevel, "martial art " + aid + " attack move " + mv.attackMoveId + " unlock_level exceeds max_level")
+        <+> validateAnimationRef(wrld, aid, "attack move " + mv.attackMoveId, mv.attackMoveAnimation)
+    );
+    let skillErrs = foldMapList(ma.artActiveSkills, (sk) ->
+        checkWhen(sk.activeSkillUnlockLevel <= 0, "martial art " + aid + " active skill " + sk.activeSkillId + " has non-positive unlock_level")
+        <+> checkWhen(sk.activeSkillUnlockLevel > ma.artMaxLevel, "martial art " + aid + " active skill " + sk.activeSkillId + " unlock_level exceeds max_level")
+        <+> foldMapList(sk.activeSkillReqArts, (ra) ->
+            checkWhen(!mapMember(wrld.martialArts, ra), "martial art " + aid + " active skill " + sk.activeSkillId + " requires missing martial art " + ra)
+        )
+        <+> validateAnimationRef(wrld, aid, "active skill " + sk.activeSkillId, sk.activeSkillAnimation)
+    );
+
+    checkWhen(ma.artMaxLevel <= 0, "martial art " + aid + " has non-positive max_level")
+    <+> checkWhen(
+        !artTierEq(ma.artTier, EntryTier) && listAll(ma.artRequires, (r) -> r.artRequirementLevel <= 1),
+        "martial art " + aid + " is above entry tier but requires no foundation beyond level 1"
+    )
+    <+> checkWhen(
+        ma.artResearchFrom < 1 || ma.artResearchFrom > ma.artMaxLevel,
+        "martial art " + aid + " research_from is outside 1..max_level"
+    )
+    <+> fndErrs
+    <+> reqErrs
+    <+> moveErrs
+    <+> skillErrs
+}
+
+def requireQuest(wrld: World, qid: String, eid: String, label: String, ref: String): List String =
+    checkWhen(!mapMember(wrld.quests, ref), "quest " + qid + " event " + eid + " " + label + " references missing quest " + ref)
+
+def requireChar(wrld: World, qid: String, eid: String, label: String, cid: String): List String =
+    checkWhen(!mapMember(wrld.chars, cid), "quest " + qid + " event " + eid + " " + label + " references missing character " + cid)
+
+def requireRoom(wrld: World, qid: String, eid: String, label: String, mid: String, pos: (Int, Int)): List String =
+    checkWhen(
+        match lookupWorldRoom(wrld, mid, pos) { Some(_) -> false, None -> true },
+        "quest " + qid + " event " + eid + " " + label + " references missing room " + mid + " " + formatPos(pos)
+    )
+
+def requireItem(wrld: World, qid: String, eid: String, label: String, iid: String): List String =
+    checkWhen(!mapMember(wrld.items, iid), "quest " + qid + " event " + eid + " " + label + " references missing item " + iid)
+
+def requireArt(wrld: World, qid: String, eid: String, label: String, aid: String): List String =
+    checkWhen(!mapMember(wrld.martialArts, aid), "quest " + qid + " event " + eid + " " + label + " references missing martial art " + aid)
+
+def validateQuestTrigger(wrld: World, qid: String, eid: String, tr: StoryTrigger): List String = match tr {
+    TriggerTalk(cid) -> requireChar(wrld, qid, eid, "talk trigger", cid),
+    TriggerKill(cid) -> requireChar(wrld, qid, eid, "kill trigger", cid),
+    TriggerEnterRoom(mid, pos) -> match lookupWorldRoom(wrld, mid, pos) {
+        Some(_) -> Nil,
+        None -> ["quest " + qid + " event " + eid + " references missing room " + mid + " " + formatPos(pos)],
+    },
+}
+
+def validateQuestCondition(wrld: World, qid: String, eid: String, cond: StoryCondition): List String = match cond {
+    QuestNotStarted(ref) -> requireQuest(wrld, qid, eid, "condition", ref),
+    QuestStageIs(ref, _) -> requireQuest(wrld, qid, eid, "condition", ref),
+    QuestCompleted(ref) -> requireQuest(wrld, qid, eid, "condition", ref),
+    FlagSet(_) -> Nil,
+    FlagUnset(_) -> Nil,
+    NpcDead(cid) -> requireChar(wrld, qid, eid, "condition", cid),
+    NpcAlive(cid) -> requireChar(wrld, qid, eid, "condition", cid),
+    HasItem(iid) -> requireItem(wrld, qid, eid, "condition", iid),
+    LacksItem(iid) -> requireItem(wrld, qid, eid, "condition", iid),
+    InMap(mid) -> checkWhen(!mapMember(wrld.maps, mid), "quest " + qid + " event " + eid + " condition references missing map " + mid),
+}
+
+def validateQuestAction(wrld: World, qid: String, eid: String, act: StoryAction): List String = match act {
+    StoryMessage(_, _) -> Nil,
+    StoryDelay(ms) -> checkWhen(ms < 0, "quest " + qid + " event " + eid + " has negative delay"),
+    StoryTransition(_, ms) -> checkWhen(ms < 0, "quest " + qid + " event " + eid + " has negative transition duration"),
+    SetQuestStage(ref, _) -> requireQuest(wrld, qid, eid, "set_stage action", ref),
+    CompleteQuest(ref) -> requireQuest(wrld, qid, eid, "complete_quest action", ref),
+    CompleteRepeatableJob(ref) -> requireQuest(wrld, qid, eid, "complete_job action", ref),
+    SetFlag(_) -> Nil,
+    ClearFlag(_) -> Nil,
+    HideNpc(cid) -> requireChar(wrld, qid, eid, "hide_npc action", cid),
+    ShowNpc(cid) -> requireChar(wrld, qid, eid, "show_npc action", cid),
+    GiveItem(iid, amt) ->
+        requireItem(wrld, qid, eid, "give_item action", iid)
+        <+> checkWhen(amt <= 0, "quest " + qid + " event " + eid + " gives non-positive item amount for " + iid),
+    TakeItem(iid, amt) ->
+        requireItem(wrld, qid, eid, "take_item action", iid)
+        <+> checkWhen(amt <= 0, "quest " + qid + " event " + eid + " takes non-positive item amount for " + iid),
+    GiveMoney(amt) -> checkWhen(amt < 0, "quest " + qid + " event " + eid + " gives negative money"),
+    LearnArt(aid, lvl) ->
+        requireArt(wrld, qid, eid, "learn_art action", aid)
+        <+> checkWhen(lvl <= 0, "quest " + qid + " event " + eid + " learns non-positive art level for " + aid)
+        <+> validateLearnArtLevel(wrld, "quest " + qid + " event " + eid + " learn_art action", aid, lvl),
+    StartBattle(cid) -> requireChar(wrld, qid, eid, "start_battle action", cid),
+    MovePlayer(mid, pos) -> requireRoom(wrld, qid, eid, "move_player action", mid, pos),
+}
+
+def validateQuestRefs(wrld: World, q: Quest): List String = {
+    let qid = q.questId;
+    foldMapList(q.questEvents, (ev) ->
+        validateQuestTrigger(wrld, qid, ev.questEventId, ev.questEventTrigger)
+        <+> foldMapList(ev.questEventConditions, (c) -> validateQuestCondition(wrld, qid, ev.questEventId, c))
+        <+> foldMapList(ev.questEventActions, (a) -> validateQuestAction(wrld, qid, ev.questEventId, a))
+    )
+    <+> foldMapList(q.questReward.questRewardItems, (ri) ->
+        requireItem(wrld, qid, "reward", "quest reward", ri.questRewardItemId)
+        <+> checkWhen(ri.questRewardItemAmount <= 0, "quest " + qid + " reward has non-positive item amount for " + ri.questRewardItemId)
+    )
+    <+> foldMapList(q.questObjectives, (obj) ->
+        checkWhen(strLen(obj.questObjectiveStage) == 0, "quest " + qid + " has an empty objective stage")
+    )
+}
+
+pub def validateWorld(wrld: World): Result World String = {
+    let errs =
+        validateMapCharacters(wrld)
+        <+> validateMapExits(wrld)
+        <+> foldMapList(mapElems(wrld.items), (i) -> validateItemUse(wrld, i))
+        <+> foldMapList(mapElems(wrld.chars), (c) -> validateCharacter(wrld, c))
+        <+> foldMapList(mapElems(wrld.combatActionTimings), (t) -> validateCombatActionTiming(t))
+        <+> requireCombatActionTiming(wrld, "built-in combat effect", "rig.effect.dot")
+        <+> requireCombatActionTiming(wrld, "built-in combat effect", "rig.effect.hot")
+        <+> foldMapList(mapElems(wrld.martialArts), (a) -> validateMartialArt(wrld, a))
+        <+> foldMapList(mapElems(wrld.quests), (q) -> validateQuestRefs(wrld, q));
+
+    match errs {
+        Nil -> Ok(wrld),
+        _ -> Err("World validation failed:\n" + strJoin(errs, "\n")),
+    }
+}
+
+pub def loadAllAssets(basePath: String): Result World String = {
+    let items: OrdMap String Item = loadConfigurableDir(pathJoin(basePath, "items"))?;
+    let martialArts: OrdMap String MartialArt = loadConfigurableDir(pathJoin(basePath, "martial_arts"))?;
+    let effects: OrdMap String Effect = loadConfigurableDir(pathJoin(basePath, "effects"))?;
+    let chars: OrdMap String Character = loadConfigurableDir(pathJoin(basePath, "characters"))?;
+    let quests: OrdMap String Quest = loadConfigurableDir(pathJoin(basePath, "quests"))?;
+    let timings: OrdMap String CombatActionTiming = loadConfigurableDir(pathJoin(basePath, "combat_actions"))?;
+    let maps: OrdMap String GameMap = loadConfigurableDir(pathJoin(basePath, "maps"))?;
+
+    validateWorld(MkWorld {
+        items: items,
+        maps: maps,
+        chars: chars,
+        effects: effects,
+        quests: quests,
+        combatActionTimings: timings,
+        martialArts: martialArts,
+    })
+}

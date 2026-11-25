@@ -1,0 +1,475 @@
+// Player Persistence (`PlayerSave` v6 JSON Codec, Legacy `prepared`/Profile Fallback,
+// Equipped Slot Resolution, and Room Occupancy Restoration) (`database`).
+
+use std.option.{Option, Some, None}
+use std.result.{Result, Ok, Err}
+use std.buf.{bufNew, bufPushByte, bufToString}
+use std.path.pathJoin
+use sys.fs.{fileExists, mkdirAll, isDir, readFile, writeFile, removeFile}
+use std.codec.{
+    Value, VNull, formatErr,
+    Encode, encode, object, (:=),
+    Decoder, (|>), succeed, int, str, list, opt, req, withDefault
+}
+use std.json.{toJson, decodeString}
+use fp.{
+    Semigroup, (<+>),
+    Functor, fmap,
+    (~>>), set, over, setF, overF, optOrElse
+}
+use ordmap.{
+    OrdMap,
+    mapEmpty, mapLookup, mapMember, mapInsert, mapUpdate, mapFilterWithKey, mapMap, mapMapMaybeWithKey, mapKeys
+}
+use entity.{
+    EquipSlot, equipSlotEq, equipSlotToText, equipSlotFromText,
+    EquippedItem, MkEquippedItem, ItemUse, EquipUse,
+    ArtType, artTypeToText, parseArtTypeKey, ArtEntity, decodeArtEntity,
+    Gender, decodeGender, InnateAttrs, decodeInnateAttrs, clampAppearanceScore,
+    Character, MkCharacter, Player, MkPlayer,
+    custom, decodePlayerPosPair, encodePos,
+    decodeTypedMap, decodeStrOrdMap, encodeTypedMap, encodeStrOrdMap, decodeEnabledArtMap,
+    playerPosL, roomPlayerL, mapRoomsL
+}
+use quest.{
+    PlayerStoryState, newPlayerStoryState, decodePlayerStoryState
+}
+use world.{lookupWorldRoom, worldMapsL}
+use state.{
+    GameState, gsWorldL, gsPlayersL, gsStoriesL, updateMapRoomInWorld
+}
+use ordmap.{setDelete, setInsert}
+
+pub def currentPlayerSaveVersion(): Int = 6
+
+pub data PlayerSave {
+    MkPlayerSave {
+        saveVersion: Int,
+        savePlayerId: String,
+        saveStory: PlayerStoryState,
+        savePosition: Option (String, (Int, Int)),
+        saveInventory: OrdMap String Int,
+        saveMoney: Int,
+        savePotential: Int,
+        saveCombatExp: Int,
+        saveDesc: Option String,
+        saveHp: Option Int,
+        saveMaxHp: Option Int,
+        saveQi: Option Int,
+        saveMaxQi: Option Int,
+        saveJing: Option Int,
+        saveGender: Option Gender,
+        saveAppearance: Option Int,
+        saveInnate: Option InnateAttrs,
+        saveArts: OrdMap ArtType (List ArtEntity),
+        saveEnabled: OrdMap ArtType ArtEntity,
+        saveEquipped: OrdMap EquipSlot String,
+    },
+}
+
+pub def saveWithVersion(s: PlayerSave, ver: Int): PlayerSave =
+    MkPlayerSave {
+        saveVersion: ver,
+        savePlayerId: s.savePlayerId,
+        saveStory: s.saveStory,
+        savePosition: s.savePosition,
+        saveInventory: s.saveInventory,
+        saveMoney: s.saveMoney,
+        savePotential: s.savePotential,
+        saveCombatExp: s.saveCombatExp,
+        saveDesc: s.saveDesc,
+        saveHp: s.saveHp,
+        saveMaxHp: s.saveMaxHp,
+        saveQi: s.saveQi,
+        saveMaxQi: s.saveMaxQi,
+        saveJing: s.saveJing,
+        saveGender: s.saveGender,
+        saveAppearance: s.saveAppearance,
+        saveInnate: s.saveInnate,
+        saveArts: s.saveArts,
+        saveEnabled: s.saveEnabled,
+        saveEquipped: s.saveEquipped,
+    }
+
+data SaveProfile {
+    MkSaveProfile {
+        spGender: Option Gender,
+        spAppearance: Option Int,
+    },
+}
+
+def emptySaveProfile(): SaveProfile =
+    MkSaveProfile { spGender: None, spAppearance: None }
+
+def decodeSaveProfile(): Decoder SaveProfile =
+    succeed((g) -> (a) -> MkSaveProfile {
+        spGender: g,
+        spAppearance: fmap(clampAppearanceScore, a),
+    })
+        |> opt("gender", decodeGender())
+        |> opt("appearance", int)
+
+data SaveCharacter {
+    MkSaveCharacter {
+        scDesc: Option String,
+        scHp: Option Int,
+        scMaxHp: Option Int,
+        scQi: Option Int,
+        scMaxQi: Option Int,
+        scJing: Option Int,
+        scInnate: Option InnateAttrs,
+    },
+}
+
+def emptySaveCharacter(): SaveCharacter =
+    MkSaveCharacter { scDesc: None, scHp: None, scMaxHp: None, scQi: None, scMaxQi: None, scJing: None, scInnate: None }
+
+def decodeSaveCharacter(): Decoder SaveCharacter =
+    succeed((d) -> (hp) -> (mhp) -> (qi) -> (mqi) -> (jg) -> (inn) -> MkSaveCharacter {
+        scDesc: d, scHp: hp, scMaxHp: mhp, scQi: qi, scMaxQi: mqi, scJing: jg, scInnate: inn,
+    })
+        |> opt("desc", str)
+        |> opt("hp", int)
+        |> opt("max_hp", int)
+        |> opt("qi", int)
+        |> opt("max_qi", int)
+        |> opt("jing", int)
+        |> opt("innate", decodeInnateAttrs())
+
+def parseEquipSlotKey(s: String): Result EquipSlot String =
+    match equipSlotFromText(s) {
+        Some(sl) -> Ok(sl),
+        None -> Err("Invalid EquipSlot key: " + s),
+    }
+
+def decodeSaveHead(): Decoder (Int, String, SaveProfile, SaveCharacter, PlayerStoryState, Option (String, (Int, Int))) =
+    succeed((ver) -> (pid) -> (prof) -> (ch) -> (st) -> (pos) -> (ver, pid, prof, ch, st, pos))
+        |> withDefault("version", int, 1)
+        |> req("player_id", str)
+        |> withDefault("profile", decodeSaveProfile(), emptySaveProfile())
+        |> withDefault("character", decodeSaveCharacter(), emptySaveCharacter())
+        |> withDefault("story", decodePlayerStoryState(), newPlayerStoryState())
+        |> opt("position", decodePlayerPosPair())
+
+def decodeSaveEconAndTop1(): Decoder (OrdMap String Int, Int, Int, Int, Option Int, Option Int) =
+    succeed((inv) -> (mon) -> (pot) -> (exp) -> (thp) -> (tmhp) -> (inv, mon, pot, exp, thp, tmhp))
+        |> withDefault("inventory", decodeStrOrdMap(int), mapEmpty())
+        |> withDefault("money", int, 0)
+        |> withDefault("potential", int, 0)
+        |> withDefault("combat_exp", int, 0)
+        |> opt("hp", int)
+        |> opt("max_hp", int)
+
+def decodeSaveTop2(): Decoder (Option Int, Option Int, Option Int, Option String, Option Gender, Option Int, Option InnateAttrs) =
+    succeed((tqi) -> (tmqi) -> (tjg) -> (tdesc) -> (tg) -> (tapp) -> (tinn) -> (tqi, tmqi, tjg, tdesc, tg, tapp, tinn))
+        |> opt("qi", int)
+        |> opt("max_qi", int)
+        |> opt("jing", int)
+        |> opt("desc", str)
+        |> opt("gender", decodeGender())
+        |> opt("appearance", int)
+        |> opt("innate", decodeInnateAttrs())
+
+def decodeSaveArtsAndEquip(): Decoder (OrdMap ArtType (List ArtEntity), OrdMap ArtType ArtEntity, OrdMap EquipSlot String) =
+    succeed((arts) -> (prep) -> (enab) -> (eq) -> (arts, enab <+> prep, eq))
+        |> withDefault("arts", decodeTypedMap(parseArtTypeKey, list(decodeArtEntity())), mapEmpty())
+        |> withDefault("prepared", decodeEnabledArtMap(), mapEmpty())
+        |> withDefault("enabled", decodeEnabledArtMap(), mapEmpty())
+        |> withDefault("equipped", decodeTypedMap(parseEquipSlotKey, str), mapEmpty())
+
+pub def decodePlayerSave(): Decoder PlayerSave =
+    succeed((h) -> (e1) -> (t2) -> (ae) -> match (h, e1, t2, ae) {
+        (
+            (ver, pid, prof, ch, st, pos),
+            (inv, mon, pot, exp, thp, tmhp),
+            (tqi, tmqi, tjg, tdesc, tg, tapp, tinn),
+            (arts, enabled, eq)
+        ) ->
+            MkPlayerSave {
+                saveVersion: ver,
+                savePlayerId: pid,
+                saveStory: st,
+                savePosition: pos,
+                saveInventory: inv,
+                saveMoney: mon,
+                savePotential: pot,
+                saveCombatExp: exp,
+                saveDesc: optOrElse(tdesc, ch.scDesc),
+                saveHp: optOrElse(thp, ch.scHp),
+                saveMaxHp: optOrElse(tmhp, ch.scMaxHp),
+                saveQi: optOrElse(tqi, ch.scQi),
+                saveMaxQi: optOrElse(tmqi, ch.scMaxQi),
+                saveJing: optOrElse(tjg, ch.scJing),
+                saveGender: optOrElse(tg, prof.spGender),
+                saveAppearance: optOrElse(fmap(clampAppearanceScore, tapp), prof.spAppearance),
+                saveInnate: optOrElse(tinn, ch.scInnate),
+                saveArts: arts,
+                saveEnabled: enabled,
+                saveEquipped: eq,
+            },
+    })
+        |> custom(decodeSaveHead())
+        |> custom(decodeSaveEconAndTop1())
+        |> custom(decodeSaveTop2())
+        |> custom(decodeSaveArtsAndEquip())
+
+pub def decodePlayerSaveJson(raw: String): Result PlayerSave String =
+    match decodeString(decodePlayerSave(), raw) {
+        Ok(s) -> Ok(s),
+        Err(e) -> Err(formatErr(e)),
+    }
+
+def encodeSavePos(optPos: Option (String, (Int, Int))): Value = match optPos {
+    None -> VNull,
+    Some((mid, pos)) -> std.codec.array([encode(mid), encodePos(pos)]),
+}
+
+instance Encode PlayerSave {
+    def encode(s) = object([
+        "version"    := s.saveVersion,
+        "player_id"  := s.savePlayerId,
+        "story"      := s.saveStory,
+        "position"   := encodeSavePos(s.savePosition),
+        "inventory"  := encodeStrOrdMap(s.saveInventory),
+        "money"      := s.saveMoney,
+        "potential"  := s.savePotential,
+        "combat_exp" := s.saveCombatExp,
+        "profile"    := object([
+            "gender"     := s.saveGender,
+            "appearance" := s.saveAppearance,
+        ]),
+        "character"  := object([
+            "desc"   := s.saveDesc,
+            "innate" := s.saveInnate,
+            "hp"     := s.saveHp,
+            "max_hp" := s.saveMaxHp,
+            "qi"     := s.saveQi,
+            "max_qi" := s.saveMaxQi,
+            "jing"   := s.saveJing,
+        ]),
+        "hp"         := s.saveHp,
+        "max_hp"     := s.saveMaxHp,
+        "qi"         := s.saveQi,
+        "max_qi"     := s.saveMaxQi,
+        "jing"       := s.saveJing,
+        "desc"       := s.saveDesc,
+        "innate"     := s.saveInnate,
+        "arts"       := encodeTypedMap(artTypeToText, (xs) -> encode(xs), s.saveArts),
+        "enabled"    := encodeTypedMap(artTypeToText, (e) -> encode(e), s.saveEnabled),
+        "equipped"   := encodeTypedMap(equipSlotToText, (iid) -> encode(iid), s.saveEquipped),
+    ])
+}
+
+// Preserve ASCII alphanumeric, `-`, `_`, `.`, AND valid non-ASCII UTF-8 bytes (CJK player names!)
+pub def sanitizePlayerId(pid: String): String = {
+    let n = strLen(pid);
+    let b = bufNew();
+    let i = cellNew(0);
+    while (cellGet(i) < n) {
+        let c = strByteAt(pid, cellGet(i)) & 255;
+        let ok =
+            (c >= 48 && c <= 57)
+            || (c >= 65 && c <= 90)
+            || (c >= 97 && c <= 122)
+            || c == 45
+            || c == 95
+            || c == 46
+            || c >= 128;
+        bufPushByte(b, if (ok) c else 95);
+        cellSet(i, cellGet(i) + 1)
+    };
+    bufToString(b)
+}
+
+pub def playerSavePath(saveDir: String, pid: String): String =
+    pathJoin(saveDir, sanitizePlayerId(pid) + ".json")
+
+pub def loadPlayerSave(saveDir: String, pid: String): Result (Option PlayerSave) String = {
+    let path = playerSavePath(saveDir, pid);
+    if (!fileExists(path)) Ok(None)
+    else {
+        let content = readFile(path)?;
+        let save = decodePlayerSaveJson(content)?;
+        Ok(Some(save))
+    }
+}
+
+pub def savePlayerSave(saveDir: String, save: PlayerSave): Result Void String = {
+    if (!isDir(saveDir)) {
+        let _ = mkdirAll(saveDir);
+        ()
+    } else ();
+    writeFile(playerSavePath(saveDir, save.savePlayerId), toJson(save))
+}
+
+pub def playerSaveFromGameState(pid: String, gs: GameState): Option PlayerSave =
+    match mapLookup(gs.players, pid) {
+        None -> None,
+        Some(player) -> {
+            let story = match mapLookup(gs.stories, pid) {
+                Some(st) -> st,
+                None -> newPlayerStoryState(),
+            };
+            let ch = player.playerCharacter;
+            Some(MkPlayerSave {
+                saveVersion: currentPlayerSaveVersion(),
+                savePlayerId: pid,
+                saveStory: story,
+                savePosition: Some(player.playerPosition),
+                saveInventory: player.playerInventory,
+                saveMoney: player.playerMoney,
+                savePotential: player.playerPotential,
+                saveCombatExp: player.playerCombatExp,
+                saveDesc: Some(ch.charDesc),
+                saveHp: Some(ch.charHP),
+                saveMaxHp: Some(ch.charMaxHP),
+                saveQi: Some(ch.charQi),
+                saveMaxQi: Some(ch.charMaxQi),
+                saveJing: Some(ch.charJing),
+                saveGender: Some(ch.charGender),
+                saveAppearance: Some(ch.charAppearance),
+                saveInnate: Some(ch.charInnate),
+                saveArts: ch.charArt,
+                saveEnabled: ch.charEnabled,
+                saveEquipped: mapMap(ch.charEquipped, (eq) -> eq.equippedItemId),
+            })
+        },
+    }
+
+pub def savePlayerState(saveDir: String, pid: String, gs: GameState): Void =
+    match playerSaveFromGameState(pid, gs) {
+        None -> (),
+        Some(save) -> {
+            let _ = savePlayerSave(saveDir, save);
+            ()
+        },
+    }
+
+pub def saveAllPlayerSaves(saveDir: String, gs: GameState): Void = {
+    let cur = cellNew(mapKeys(gs.players));
+    while (match cellGet(cur) { Nil -> false, _ -> true }) {
+        match cellGet(cur) {
+            Cons(pid, rest) -> {
+                savePlayerState(saveDir, pid, gs);
+                cellSet(cur, rest)
+            },
+            Nil -> (),
+        }
+    }
+}
+
+pub def deletePlayerSave(saveDir: String, pid: String): Void = {
+    let path = playerSavePath(saveDir, pid);
+    if (fileExists(path)) {
+        let _ = removeFile(path);
+        ()
+    } else ()
+}
+
+def removePlayerFromAllRooms(pid: String, gs: GameState): GameState = {
+    let newMaps = mapMap(gs.world.maps, (mp) ->
+        over(mapRoomsL(), (rs) ->
+            mapMap(rs, overF(roomPlayerL(), (ps) -> setDelete(ps, pid))),
+            mp
+        )
+    );
+    gs |> overF(gsWorldL(), setF(worldMapsL(), newMaps))
+}
+
+def restoreSavedPosition(pid: String, optPos: Option (String, (Int, Int)), gs: GameState): GameState =
+    match optPos {
+        None -> gs,
+        Some((mid, pos)) -> match lookupWorldRoom(gs.world, mid, pos) {
+            None -> gs,
+            Some(_) -> {
+                let cleared = removePlayerFromAllRooms(pid, gs);
+                cleared
+                    |> overF(gsWorldL(), (w) ->
+                        updateMapRoomInWorld(w, mid, pos, overF(roomPlayerL(), (ps) -> setInsert(ps, pid)))
+                    )
+                    |> overF(gsPlayersL(), (m) -> mapUpdate(m, pid, setF(playerPosL(), (mid, pos))))
+            },
+        },
+    }
+
+pub def applyPlayerSaveToGameState(save: PlayerSave, gs: GameState): GameState = {
+    let pid = save.savePlayerId;
+    let isCurrent = save.saveVersion >= currentPlayerSaveVersion();
+    let restoredStory = if (isCurrent) save.saveStory else newPlayerStoryState();
+    let restoredPos = if (isCurrent) save.savePosition else None;
+    let restoredInv =
+        if (isCurrent) save.saveInventory
+        else mapFilterWithKey(save.saveInventory, (iid, _) -> mapMember(gs.world.items, iid));
+
+    let restoredEquipped = mapMapMaybeWithKey(save.saveEquipped, (slot, savedItemId) ->
+        match mapLookup(restoredInv, savedItemId) {
+            None -> None,
+            Some(cnt) ->
+                if (cnt <= 0) None
+                else match mapLookup(gs.world.items, savedItemId) {
+                    None -> None,
+                    Some(item) -> match item.itemUse {
+                        Some(EquipUse(eq)) if (equipSlotEq(eq.equipSlot, slot)) ->
+                            Some(MkEquippedItem {
+                                equippedItemId: savedItemId,
+                                equippedSlot: slot,
+                                equippedWeaponKind: eq.equipWeaponKind,
+                                equippedModifiers: eq.equipModifiers,
+                            }),
+                        _ -> None,
+                    },
+                },
+        }
+    );
+
+    let gsWithFields = gs
+        |> overF(gsPlayersL(), (m) -> mapUpdate(m, pid, (pl) -> {
+            let ch0 = pl.playerCharacter;
+            let nextCh = MkCharacter {
+                charId: ch0.charId,
+                charName: ch0.charName,
+                charDesc: match save.saveDesc { Some(v) -> v, None -> ch0.charDesc },
+                charGender: match save.saveGender { Some(v) -> v, None -> ch0.charGender },
+                charAppearance: match save.saveAppearance { Some(v) -> clampAppearanceScore(v), None -> ch0.charAppearance },
+                charDialogue: ch0.charDialogue,
+                charActions: ch0.charActions,
+                charInitiallyHidden: ch0.charInitiallyHidden,
+                charRespawn: ch0.charRespawn,
+                charHP: match save.saveHp { Some(v) -> v, None -> ch0.charHP },
+                charMaxHP: match save.saveMaxHp { Some(v) -> v, None -> ch0.charMaxHP },
+                charQi: match save.saveQi { Some(v) -> v, None -> ch0.charQi },
+                charMaxQi: match save.saveMaxQi { Some(v) -> v, None -> ch0.charMaxQi },
+                charJing: match save.saveJing { Some(v) -> v, None -> ch0.charJing },
+                charQiRegen: ch0.charQiRegen,
+                charInnate: match save.saveInnate { Some(v) -> v, None -> ch0.charInnate },
+                charStrength: ch0.charStrength,
+                charAgility: ch0.charAgility,
+                charVitality: ch0.charVitality,
+                charEquipped: restoredEquipped,
+                charEnabled: save.saveEnabled,
+                charTeaches: ch0.charTeaches,
+                charTeachBonus: ch0.charTeachBonus,
+                charTeachRequires: ch0.charTeachRequires,
+                charShop: ch0.charShop,
+                charRank: ch0.charRank,
+                charRewardExpCeiling: ch0.charRewardExpCeiling,
+                charFixedReward: ch0.charFixedReward,
+                charArt: save.saveArts,
+                charStatus: ch0.charStatus,
+            };
+            MkPlayer {
+                playerId: pl.playerId,
+                playerPosition: pl.playerPosition,
+                playerConcurrency: pl.playerConcurrency,
+                playerStatus: pl.playerStatus,
+                playerInventory: restoredInv,
+                playerMoney: save.saveMoney,
+                playerPotential: save.savePotential,
+                playerCombatExp: save.saveCombatExp,
+                playerCharacter: nextCh,
+            }
+        }))
+        |> overF(gsStoriesL(), (m) -> mapInsert(m, pid, restoredStory));
+
+    restoreSavedPosition(pid, restoredPos, gsWithFields)
+}

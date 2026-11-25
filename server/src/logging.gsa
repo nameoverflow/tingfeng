@@ -1,0 +1,51 @@
+// Structured Server Logger (`logging`), controlled by `$MUD_LOG_LEVEL` (`DEBUG`/`INFO`/`ERROR`).
+
+use std.option.{Some, None}
+use std.str.i64ToStr
+use sys.env.getEnv
+use sys.io.eprintLn
+use sys.time.nowMs
+use fp.strToUpperAscii
+
+pub data LogLevel {
+    LevelDebug,
+    LevelInfo,
+    LevelError,
+}
+
+def levelPriority(lvl: LogLevel): Int = match lvl {
+    LevelDebug -> 0,
+    LevelInfo -> 1,
+    LevelError -> 2,
+}
+
+def levelLabel(lvl: LogLevel): String = match lvl {
+    LevelDebug -> "DEBUG",
+    LevelInfo -> "INFO",
+    LevelError -> "ERROR",
+}
+
+def configuredLogLevel(): LogLevel =
+    match getEnv("MUD_LOG_LEVEL") {
+        Some(raw) -> {
+            let s = strToUpperAscii(raw);
+            if (s == "DEBUG") LevelDebug
+            else if (s == "ERROR") LevelError
+            else LevelInfo
+        },
+        None -> LevelInfo,
+    }
+
+pub def logWithLevel(lvl: LogLevel, msg: String): Void =
+    if (levelPriority(lvl) >= levelPriority(configuredLogLevel())) {
+        let ts = i64ToStr(nowMs());
+        let line = ts + " [" + levelLabel(lvl) + "] " + msg;
+        match lvl {
+            LevelError -> eprintLn(line),
+            _ -> printLn(line),
+        }
+    } else ()
+
+pub def logDebug(msg: String): Void = logWithLevel(LevelDebug, msg)
+pub def logInfo(msg: String): Void = logWithLevel(LevelInfo, msg)
+pub def logError(msg: String): Void = logWithLevel(LevelError, msg)
