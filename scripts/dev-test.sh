@@ -3,8 +3,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-SERVER_HOST="127.0.0.1"
-SERVER_PORT="9160"
+SERVER_HOST="${SERVER_HOST:-127.0.0.1}"
+SERVER_PORT="${SERVER_PORT:-9160}"
 CLIENT_HOST="${CLIENT_HOST:-127.0.0.1}"
 CLIENT_PORT="${CLIENT_PORT:-8080}"
 TEST_USER="${TEST_USER:-tester}"
@@ -12,6 +12,7 @@ TEST_RESET="${TEST_RESET:-1}"
 OPEN_BROWSER="${OPEN_BROWSER:-1}"
 SKIP_BUILD="${SKIP_BUILD:-0}"
 SKIP_CLIENT_INSTALL="${SKIP_CLIENT_INSTALL:-0}"
+SERVER_BIN="${SERVER_BIN:-$ROOT_DIR/server/build/tingfeng-server}"
 
 SERVER_PID=""
 CLIENT_PID=""
@@ -20,17 +21,19 @@ usage() {
   cat <<EOF
 Usage: scripts/dev-test.sh [options]
 
-Starts the Haskell dev server with MUD_DEV_MODE=1 and the Svelte client dev
-server, then opens the auto-login test URL.
+Starts the Geisha dev server with MUD_DEV_MODE=1 and the client dev server,
+then opens the auto-login test URL.
 
 Options:
   --no-open       Print the test URL without opening a browser.
   --no-reset      Auto-login without resetting the test save.
-  --skip-build    Skip stack build before starting the server.
+  --skip-build    Skip building server/build/tingfeng-server before starting.
   --user NAME     Use a test username other than "tester".
   -h, --help      Show this help.
 
 Environment:
+  SERVER_HOST=127.0.0.1
+  SERVER_PORT=9160
   CLIENT_HOST=127.0.0.1
   CLIENT_PORT=8080
   TEST_USER=tester
@@ -38,6 +41,8 @@ Environment:
   OPEN_BROWSER=1
   SKIP_BUILD=0
   SKIP_CLIENT_INSTALL=0
+  GEISHA=/path/to/geisha3
+  GEISHA_RUNTIME=/path/to/libgeisha_runtime.a
 EOF
 }
 
@@ -168,14 +173,14 @@ open_test_url() {
   fi
 }
 
-require_cmd stack
+require_cmd make
 require_cmd npm
 
 cd "$ROOT_DIR"
 
 if [ "$SKIP_BUILD" != "1" ]; then
-  echo "[dev-test] Building server executable..."
-  stack build tingfeng:exe:tingfeng-exe
+  echo "[dev-test] Building Geisha server executable..."
+  make -C "$ROOT_DIR/server" build
 fi
 
 if [ "$SKIP_CLIENT_INSTALL" != "1" ] && [ ! -d "$ROOT_DIR/client/node_modules" ]; then
@@ -190,13 +195,13 @@ fi
 
 trap cleanup EXIT INT TERM
 
-echo "[dev-test] Starting server on ${SERVER_HOST}:${SERVER_PORT} with MUD_DEV_MODE=1..."
-MUD_DEV_MODE=1 stack exec tingfeng-exe &
+echo "[dev-test] Starting Geisha server on ${SERVER_HOST}:${SERVER_PORT} with MUD_DEV_MODE=1..."
+MUD_DEV_MODE=1 "$SERVER_BIN" --host "$SERVER_HOST" --port "$SERVER_PORT" &
 SERVER_PID=$!
 wait_for_tcp "Server" "$SERVER_HOST" "$SERVER_PORT" "$SERVER_PID"
 
 echo "[dev-test] Starting client on http://${CLIENT_HOST}:${CLIENT_PORT}..."
-npm --prefix "$ROOT_DIR/client" run dev -- --host "$CLIENT_HOST" --port "$CLIENT_PORT" --strictPort &
+GAME_WS_PORT="$SERVER_PORT" PORT="$CLIENT_PORT" npm --prefix "$ROOT_DIR/client" run dev -- --port "$CLIENT_PORT" &
 CLIENT_PID=$!
 wait_for_http "Client" "http://${CLIENT_HOST}:${CLIENT_PORT}/" "$CLIENT_PID"
 

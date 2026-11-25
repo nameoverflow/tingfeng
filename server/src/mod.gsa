@@ -1,0 +1,103 @@
+// Tingfeng (《听风录》) Pure-Geisha Backend Entry Point (`server/src/mod.gsa`).
+//
+// Usage:
+//   tingfeng-server [--host 127.0.0.1] [--port 9160] [--scripts resources/scripts] [--saves saves]
+//   tingfeng-server --test
+
+mod fp
+mod ordmap
+mod yaml
+mod entity
+mod creation
+mod progression
+mod quest
+mod world
+mod message
+mod combat
+mod state
+mod gameplay
+mod database
+mod logging
+mod hub
+mod spec
+
+use std.option.{Some, None}
+use std.result.{Ok, Err}
+use std.str.parseInt
+use sys.env.{argCount, argAt, getEnv}
+use sys.io.eprintLn
+use hub.runServer
+use spec.runAllTests
+
+extern "exit" def c_exit(code: Int): Void
+
+def defaultHost(): String = match getEnv("MUD_HOST") {
+    Some(h) if (strLen(h) > 0) -> h,
+    _ -> "127.0.0.1",
+}
+
+def defaultPort(): Int = match getEnv("MUD_PORT") {
+    Some(raw) -> match parseInt(raw) {
+        Ok(p) if (p > 0) -> p,
+        _ -> 9160,
+    },
+    None -> 9160,
+}
+
+def main(): Void = {
+    let argc = argCount();
+    let testMode = cellNew(false);
+    let host = cellNew(defaultHost());
+    let port = cellNew(defaultPort());
+    let scriptsDir = cellNew("resources/scripts");
+    let saveDir = cellNew("saves");
+
+    let i = cellNew(1);
+    while (cellGet(i) < argc) {
+        let idx = cellGet(i);
+        let arg = argAt(idx);
+        if (arg == "--test" || arg == "-t") {
+            cellSet(testMode, true);
+            cellSet(i, idx + 1)
+        } else if (arg == "--host" && idx + 1 < argc) {
+            cellSet(host, argAt(idx + 1));
+            cellSet(i, idx + 2)
+        } else if (arg == "--port" && idx + 1 < argc) {
+            match parseInt(argAt(idx + 1)) {
+                Ok(p) -> cellSet(port, p),
+                Err(_) -> {
+                    eprintLn("Invalid --port value: " + argAt(idx + 1));
+                    c_exit(1)
+                },
+            };
+            cellSet(i, idx + 2)
+        } else if (arg == "--scripts" && idx + 1 < argc) {
+            cellSet(scriptsDir, argAt(idx + 1));
+            cellSet(i, idx + 2)
+        } else if (arg == "--saves" && idx + 1 < argc) {
+            cellSet(saveDir, argAt(idx + 1));
+            cellSet(i, idx + 2)
+        } else if (arg == "--help" || arg == "-h") {
+            printLn("Usage: tingfeng-server [--test] [--host HOST] [--port PORT] [--scripts DIR] [--saves DIR]");
+            c_exit(0);
+            cellSet(i, idx + 1)
+        } else {
+            eprintLn("Unknown CLI argument: " + arg);
+            c_exit(1);
+            cellSet(i, idx + 1)
+        }
+    };
+
+    if (cellGet(testMode)) {
+        if (runAllTests()) ()
+        else c_exit(1)
+    } else {
+        match runServer(cellGet(host), cellGet(port), cellGet(scriptsDir), cellGet(saveDir)) {
+            Ok(_) -> (),
+            Err(e) -> {
+                eprintLn("FATAL: Server failed to start:\n" + e);
+                c_exit(1)
+            },
+        }
+    }
+}

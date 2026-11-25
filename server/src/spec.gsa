@@ -1,0 +1,1311 @@
+// Comprehensive Backend Test Suite (`spec`), porting all 50+ behavioral tests
+// from Haskell `test/Spec.hs` plus a live WebSocket + `Actor` Hub E2E loopback test.
+
+use std.option.{Option, Some, None}
+use std.result.{Result, Ok, Err}
+use std.list.{listLen, listAppend, listMap, listFilter, listAll, listAny}
+use std.str.intToStr
+use std.codec.{(|>)}
+use std.rand.fromIntSeed
+use std.sync.{atomicNew, atomicStore}
+use std.task.{spawn, sleepMs}
+use sys.net.{tcpListen, tcpLocalPort, tcpCloseListener}
+use std.ws.{WsText, wsConnect, wsSendText, wsRecv, wsClose}
+use fp.{
+    Ord, ordEq,
+    Functor, fmap, Applicative, pure, Monad, (>>=), (*>>),
+    MonadError, throwErr,
+    (~>>), set, over, setF, overF,
+    optOr, listMaxInt, listContainsStr
+}
+use ordmap.{
+    OrdMap, OrdSet,
+    mapEmpty, mapLookup, mapMember, mapInsert, mapDelete, mapUpdate, mapMap, mapFromList, mapToAscList, mapElems,
+    setEmpty, setMember, setInsert
+}
+use entity.{
+    EquipSlot, WeaponSlot, ArmorSlot,
+    ActiveEffect, MkActiveEffect,
+    AnimationRef, MkAnimationRef, AttackMove, MkAttackMove,
+    ArtType, Foundation, Internal, Sword, Fist, artTypeEq,
+    ArtRequirement, MkArtRequirement, MartialArt, MkMartialArt,
+    ArtEntity, MkArtEntity,
+    CharAction, Attacking, CharStatus, CharAlive, CharDead, CharBattle, charStatusEq,
+    Gender, Male, Female, UnknownGender, genderEq,
+    InnateAttrs, MkInnateAttrs, innateAttrsEq,
+    TeachRequirement, MkTeachRequirement,
+    Character, MkCharacter,
+    PlayerStatus, PlayerNormal, playerStatusEq,
+    Player, MkPlayer,
+    emptyDerivedStatSources, characterDerivedStatSources, deriveCharacterStats, deriveStats,
+    Direction, North, South, East, West,
+    RoomRef, MkRoomRef, Room, MkRoom,
+    charHpL, charQiL, charMaxQiL, charJingL, charEnabledL, charArtL,
+    playerPosL, playerInventoryL, playerMoneyL, playerPotentialL, playerCombatExpL, playerCharL,
+    mapRoomsL
+}
+use creation.{
+    CharacterCreationChoice, MkCharacterCreationChoice
+}
+use progression.{
+    artProgressRequired, combatExpRequiredForLevel,
+    LevelBlock, BlockedBySourceCap, canGainProgress, addArtProgress,
+    learnBusySeconds, practiceBusySeconds,
+    combatInsightResearchBonus, jobStreakScale,
+    battleCombatExpGain, potentialCap
+}
+use quest.{
+    Quest, MkQuest, QuestEvent, MkQuestEvent,
+    StoryCondition, HasItem, LacksItem, InMap,
+    StoryAction, StartBattle,
+    storyQuestStagesL, storyFlagsL
+}
+use world.{
+    World, MkWorld, validateWorld, lookupWorldRoom, worldCharsL
+}
+use message.{
+    PlayerAction, Go, Talk, Practice, Study, Research, Meditate, Equip, Buy, Use,
+    decodePlayerActionJson,
+    NetEvent, Login, decodeNetEventJson,
+    CombatEventKind, CombatEventActiveSkill, combatEventKindEq,
+    CombatResult, CombatHit, combatResultEq,
+    ActiveSkillFailureReason, ActiveSkillNeedQi,
+    ActionResp,
+    MoveMsg, ViewMsg, MapOverviewMsg, AttackMsg, CombatEventMsg, CombatSettlementMsg,
+    ActiveSkillFailureMsg, BattleStateMsg,
+    StoryMsg, StorySequenceMsg, StoryDelayMsg, StoryTransitionMsg,
+    ArtsMsg, RewardMsg, SystemMsg,
+    PlayerResp
+}
+use combat.{
+    Battle, playerSideL, enemySideL, battleActionLockL, battlePendingSkillL,
+    bsApL, bsQiL, bsCharL, bsEffectsL,
+    unlockedPreparedAttacks, computeDamage, splitByShares
+}
+use state.{
+    newPlayerRuntime, runtimeInjuredL, runtimeBusyL, runtimeInsightL,
+    GameState, loadGameState,
+    gsWorldL, gsPlayersL, gsBattlesL, gsStoriesL, gsPlayerRuntimeL, updateMapRoomInWorld,
+    GameException, UnableToInteract, StructuredException, OtherException, gameExceptionText,
+    Game, runGameWithRng, updatePlayer,
+    createDefaultPlayer, createDefaultPlayerWithCreation
+}
+use gameplay.{
+    playerKnownArtLevel, combatStyleForCharacter,
+    playerArts, playerView, playerMapOverview, movePlayerToRoom,
+    addInventoryItem, grantArt, grantQuestReward, storyConditionMet,
+    playerMove, playerTalk, playerAttack, playerUseItem,
+    practiceStep, playerLearnArt, playerStudyItem, playerResearchArt, playerMeditate, tickTraining,
+    playerEnableArt, playerPerformActiveSkill,
+    updateBattle, tickBattleMaintenance, tickRespawns, tickPlayerRecovery,
+    onGameTick, onBattleTick,
+    processNormalAction, processPlayerAction
+}
+use database.{
+    saveWithVersion, decodePlayerSaveJson,
+    loadPlayerSave, savePlayerState, deletePlayerSave, applyPlayerSaveToGameState
+}
+use hub.{
+    spawnDaemon, spawnServerHub, serveOnListener
+}
+
+// ============================================================================
+// Test Runner Harness & Fixture Helpers
+// ============================================================================
+
+extern "exit" def c_spec_exit(code: Int): Void
+
+def abortSpec(msg: String): a = {
+    printLn("FATAL SPEC ABORT: " + msg);
+    c_spec_exit(1);
+    abortSpec(msg)
+}
+
+def strContains(haystack: String, needle: String): Bool = {
+    let hl = strLen(haystack);
+    let nl = strLen(needle);
+    if (nl == 0) true
+    else if (nl > hl) false
+    else {
+        let i = cellNew(0);
+        let found = cellNew(false);
+        while (cellGet(i) <= hl - nl && !cellGet(found)) {
+            let off = cellGet(i);
+            if (strSlice(haystack, off, off + nl) == needle) {
+                cellSet(found, true)
+            } else {
+                cellSet(i, off + 1)
+            }
+        };
+        cellGet(found)
+    }
+}
+
+data TestRunner {
+    MkTestRunner {
+        passedCount: Cell Int,
+        failures: Cell (List String),
+    },
+}
+
+def assertThat(tr: TestRunner, cond: Bool, msg: String): Void =
+    if (cond) ()
+    else {
+        cellSet(tr.failures, listAppend(cellGet(tr.failures), [msg]));
+        printLn("  [FAIL] " + msg)
+    }
+
+def runTest(tr: TestRunner, name: String, fn: TestRunner -> Void): Void = {
+    let before = listLen(cellGet(tr.failures));
+    fn(tr);
+    let after = listLen(cellGet(tr.failures));
+    if (after == before) {
+        cellSet(tr.passedCount, cellGet(tr.passedCount) + 1);
+        printLn("  [PASS] " + name)
+    } else ()
+}
+
+def loadFreshState(tr: TestRunner, cached: GameState): GameState = cached
+
+def runOkWithSeed(tr: TestRunner, seed: Int, label: String, gs: GameState, action: Game a): (List PlayerResp, GameState) =
+    match runGameWithRng(gs, fromIntSeed(seed), action) {
+        Ok((_, gs2, _, resps)) -> (resps, gs2),
+        Err(err) -> {
+            assertThat(tr, false, label + " failed: " + gameExceptionText(err));
+            (Nil, gs)
+        },
+    }
+
+def runOk(tr: TestRunner, label: String, gs: GameState, action: Game a): (List PlayerResp, GameState) =
+    runOkWithSeed(tr, 42, label, gs, action)
+
+def findRespIndex(resps: List PlayerResp, pred: ActionResp -> Bool): Option Int = {
+    let idx = cellNew(0);
+    let cur = cellNew(resps);
+    let found: Cell (Option Int) = cellNew(None);
+    while (match (cellGet(found), cellGet(cur)) { (None, Cons(_, _)) -> true, _ -> false }) {
+        match cellGet(cur) {
+            Cons((_, r), rest) -> {
+                if (pred(r)) cellSet(found, Some(cellGet(idx))) else ();
+                cellSet(idx, cellGet(idx) + 1);
+                cellSet(cur, rest)
+            },
+            Nil -> (),
+        }
+    };
+    cellGet(found)
+}
+
+def requireRespIndex(tr: TestRunner, label: String, resps: List PlayerResp, pred: ActionResp -> Bool): Int =
+    match findRespIndex(resps, pred) {
+        Some(i) -> i,
+        None -> {
+            assertThat(tr, false, "missing response: " + label);
+            -1
+        },
+    }
+
+def newTestPlayerState(tr: TestRunner, baseGs: GameState): GameState = {
+    let (_, gs) = runOk(tr, "create default player", baseGs, createDefaultPlayer("tester", "resources/scripts/default_player.yaml"));
+    gs
+}
+
+def requirePlayer(tr: TestRunner, gs: GameState): Player =
+    match mapLookup(gs.players, "tester") {
+        Some(p) -> p,
+        None -> {
+            assertThat(tr, false, "tester missing");
+            abortSpec("tester missing")
+        },
+    }
+
+def getNpc(tr: TestRunner, gs: GameState, cid: String): Character =
+    match mapLookup(gs.world.chars, cid) {
+        Some(npc) -> npc,
+        None -> {
+            assertThat(tr, false, "missing NPC: " + cid);
+            abortSpec("missing NPC in test fixture: " + cid)
+        },
+    }
+
+def getBattle(tr: TestRunner, gs: GameState, bid: String): Battle =
+    match mapLookup(gs.battles, bid) {
+        Some(b) -> b,
+        None -> {
+            assertThat(tr, false, "missing battle: " + bid);
+            abortSpec("missing battle in test: " + bid)
+        },
+    }
+
+def testCombatNpcId(): String = "weiyuan_training_dummy"
+
+def roomPlayersAtMap(mid: String, gs: GameState, pos: (Int, Int)): OrdSet String =
+    match lookupWorldRoom(gs.world, mid, pos) {
+        Some(r) -> r.roomPlayer,
+        None -> setEmpty(),
+    }
+
+def withRoomUpdated(mid: String, pos: (Int, Int), fn: Room -> Room, gs: GameState): GameState =
+    gs |> overF(gsWorldL(), (w) -> updateMapRoomInWorld(w, mid, pos, fn))
+
+def withCombatNpcInStarterRoom(gs: GameState): GameState =
+    withRoomUpdated("weiyuan_road", (3, 3), (r) -> {
+        let cid = testCombatNpcId();
+        let nextChars = if (listContainsStr(r.roomChar, cid)) r.roomChar else Cons(cid, r.roomChar);
+        MkRoom {
+            roomId: r.roomId, roomPos: r.roomPos, roomName: r.roomName, roomDesc: r.roomDesc,
+            roomDescVariants: r.roomDescVariants, roomKind: r.roomKind, roomRest: r.roomRest,
+            roomInsight: r.roomInsight, roomScript: r.roomScript, roomExits: r.roomExits,
+            roomChar: nextChars, roomPlayer: r.roomPlayer,
+        }
+    }, gs)
+
+def withRoomExit(mid: String, pos: (Int, Int), dir: Direction, ref: RoomRef, gs: GameState): GameState =
+    withRoomUpdated(mid, pos, (r) -> MkRoom {
+        roomId: r.roomId, roomPos: r.roomPos, roomName: r.roomName, roomDesc: r.roomDesc,
+        roomDescVariants: r.roomDescVariants, roomKind: r.roomKind, roomRest: r.roomRest,
+        roomInsight: r.roomInsight, roomScript: r.roomScript,
+        roomExits: mapInsert(r.roomExits, dir, ref),
+        roomChar: r.roomChar, roomPlayer: r.roomPlayer,
+    }, gs)
+
+def withStarterExit(dir: Direction, ref: RoomRef, gs: GameState): GameState =
+    withRoomExit("weiyuan_road", (3, 3), dir, ref, gs)
+
+def withStarterRoadRoundTrip(gs: GameState): GameState =
+    gs
+        |> (g) -> withRoomExit("weiyuan_road", (3, 3), East, MkRoomRef { roomRefMapId: "bianshui_road", roomRefPos: (0, 0) }, g)
+        |> (g) -> withRoomExit("bianshui_road", (0, 0), West, MkRoomRef { roomRefMapId: "weiyuan_road", roomRefPos: (3, 3) }, g)
+
+def enableStarterFistForTester(gs: GameState): GameState =
+    gs |> overF(gsPlayersL(), (m) -> mapUpdate(m, "tester", overF(playerCharL() ~>> charEnabledL(), (en) ->
+        mapInsert(en, Fist, MkArtEntity { artDef: "nameless_trial_fist", artLevel: 1, artProgress: 0 })
+    )))
+
+def startTrainingBattle(tr: TestRunner, gs: GameState): (List PlayerResp, GameState) =
+    runOk(tr, "start training battle", withCombatNpcInStarterRoom(gs), playerAttack("tester", testCombatNpcId()))
+
+def questStageOf(qid: String, gs: GameState): Option String =
+    match mapLookup(gs.stories, "tester") {
+        Some(st) -> mapLookup(st.storyQuestStages, qid),
+        None -> None,
+    }
+
+def hasStoryFlag(flag: String, gs: GameState): Bool =
+    match mapLookup(gs.stories, "tester") {
+        Some(st) -> setMember(st.storyFlags, flag),
+        None -> false,
+    }
+
+def itemCountOf(iid: String, gs: GameState): Option Int =
+    match mapLookup(gs.players, "tester") {
+        Some(p) -> mapLookup(p.playerInventory, iid),
+        None -> None,
+    }
+
+def knowsArtAt(aid: String, expectedLvl: Int, player: Player): Bool =
+    match playerKnownArtLevel(player, aid) {
+        Some(lvl) -> lvl == expectedLvl,
+        None -> false,
+    }
+
+def enabledArtIn(ty: ArtType, expectedId: String, player: Player): Bool =
+    match mapLookup(player.playerCharacter.charEnabled, ty) {
+        Some(ent) -> ent.artDef == expectedId,
+        None -> false,
+    }
+
+def artProgressOf(aid: String, player: Player): Option Int = {
+    let progs = fp.listConcatMap(mapElems(player.playerCharacter.charArt), (xs) ->
+        fp.listFilterMap(xs, (k) -> if (k.artDef == aid) Some(k.artProgress) else None)
+    );
+    match progs {
+        Nil -> None,
+        _ -> Some(listMaxInt(progs, 0)),
+    }
+}
+
+def setArtListLevel(aid: String, lvl: Int, prog: Int, xs: List ArtEntity): List ArtEntity =
+    listMap(xs, (k) -> if (k.artDef == aid) MkArtEntity { artDef: k.artDef, artLevel: lvl, artProgress: prog } else k)
+
+def setTesterArt(ty: ArtType, aid: String, lvl: Int, prog: Int, gs: GameState): GameState =
+    gs |> overF(gsPlayersL(), (m) -> mapUpdate(m, "tester", overF(playerCharL() ~>> charArtL(), (am) ->
+        mapUpdate(am, ty, (xs) -> setArtListLevel(aid, lvl, prog, xs))
+    )))
+
+def updateTester(fn: Player -> Player, gs: GameState): GameState =
+    gs |> overF(gsPlayersL(), (m) -> mapUpdate(m, "tester", fn))
+
+def updateTesterBattle(bid: String, fn: Battle -> Battle, gs: GameState): GameState =
+    gs |> overF(gsBattlesL(), (m) -> mapUpdate(m, bid, fn))
+
+def idleTester(gs: GameState): GameState =
+    gs |> overF(gsPlayerRuntimeL(), (m) -> mapUpdate(m, "tester", setF(runtimeBusyL(), None)))
+
+def expectStructuredError(tr: TestRunner, label: String, expectedCode: String, gs: GameState, action: Game a): Void =
+    match runGameWithRng(gs, fromIntSeed(42), action) {
+        Err(StructuredException(sum)) ->
+            assertThat(tr, sum.errorSummaryCode == expectedCode, label + ": expected " + expectedCode + ", got " + sum.errorSummaryCode),
+        Err(other) ->
+            assertThat(tr, false, label + ": expected " + expectedCode + ", got " + gameExceptionText(other)),
+        Ok(_) ->
+            assertThat(tr, false, label + ": expected " + expectedCode + ", but succeeded"),
+    }
+
+def repeatGameM(n: Int, step: () -> Game Void): Game Void =
+    if (n <= 0) pure(())
+    else step() *>> repeatGameM(n - 1, step)
+
+// ============================================================================
+// World Validation, Character Creation & Protocol Decoding Tests
+// ============================================================================
+
+def testWorldValidation(tr: TestRunner, baseGs: GameState): Void = {
+    let w = baseGs.world;
+    // 1. Broken quest NPC reference
+    match listFilter(mapToAscList(w.quests), (pair) -> match pair { (_, q) -> listLen(q.questEvents) > 0 }) {
+        Cons((qid, q), _) -> match q.questEvents {
+            Cons(ev0, evRest) -> {
+                let badEv = MkQuestEvent {
+                    questEventId: ev0.questEventId,
+                    questEventTrigger: ev0.questEventTrigger,
+                    questEventConditions: ev0.questEventConditions,
+                    questEventActions: listAppend(ev0.questEventActions, [StartBattle("missing_npc")]),
+                };
+                let badQ = MkQuest {
+                    questId: q.questId, questName: q.questName, questObjectives: q.questObjectives,
+                    questReward: q.questReward, questEvents: Cons(badEv, evRest),
+                };
+                let brokenW = MkWorld {
+                    items: w.items, maps: w.maps, chars: w.chars, effects: w.effects,
+                    quests: mapInsert(w.quests, qid, badQ),
+                    combatActionTimings: w.combatActionTimings, martialArts: w.martialArts,
+                };
+                match validateWorld(brokenW) {
+                    Err(err) -> assertThat(tr, strContains(err, "missing_npc"), "world validation did not report missing_npc"),
+                    Ok(_) -> assertThat(tr, false, "world validation accepted missing_npc"),
+                }
+            },
+            Nil -> assertThat(tr, false, "quest had no events"),
+        },
+        Nil -> assertThat(tr, false, "no quest with events"),
+    };
+
+    // 2. Broken room exit
+    let brokenExitGs = withStarterExit(North, MkRoomRef { roomRefMapId: "missing_map", roomRefPos: (0, 0) }, baseGs);
+    match validateWorld(brokenExitGs.world) {
+        Err(err) -> assertThat(tr, strContains(err, "missing_map"), "world validation did not report missing_map"),
+        Ok(_) -> assertThat(tr, false, "world validation accepted missing_map"),
+    };
+
+    // 3. Ungated regional art (`luoyang_sword` gated at foundation level 1)
+    match mapLookup(w.martialArts, "luoyang_sword") {
+        Some(ma) -> {
+            let badMa = MkMartialArt {
+                artId: ma.artId, artType: ma.artType, artTier: ma.artTier, artName: ma.artName,
+                artDesc: ma.artDesc, artFoundation: ma.artFoundation,
+                artRequires: [MkArtRequirement { artRequirementArt: "basic_sword", artRequirementLevel: 1 }],
+                artMaxLevel: ma.artMaxLevel, artResearchFrom: ma.artResearchFrom,
+                artAttackMoves: ma.artAttackMoves, artActiveSkills: ma.artActiveSkills,
+            };
+            let brokenArtsW = MkWorld {
+                items: w.items, maps: w.maps, chars: w.chars, effects: w.effects, quests: w.quests,
+                combatActionTimings: w.combatActionTimings,
+                martialArts: mapInsert(w.martialArts, "luoyang_sword", badMa),
+            };
+            match validateWorld(brokenArtsW) {
+                Err(err) -> assertThat(tr, strContains(err, "luoyang_sword"), "world validation did not report ungated luoyang_sword"),
+                Ok(_) -> assertThat(tr, false, "world validation accepted ungated regional art"),
+            }
+        },
+        None -> assertThat(tr, false, "luoyang_sword missing"),
+    }
+}
+
+def testFoundationCreationAndStats(tr: TestRunner, baseGs: GameState): Void = {
+    // Empty `pickRandom` returns `None`
+    let emptyList: List Int = Nil;
+    let emptyPickAction: Game (Option Int) = fp.pickRandom(emptyList);
+    match runGameWithRng(baseGs, fromIntSeed(1), emptyPickAction) {
+        Ok((None, _, _, _)) -> (),
+        _ -> assertThat(tr, false, "pickRandom should return None for empty list"),
+    };
+
+    // Default foundation arts & attributes
+    let gs = newTestPlayerState(tr, baseGs);
+    let p = requirePlayer(tr, gs);
+    assertThat(tr, knowsArtAt("basic_internal", 1, p), "missing basic_internal");
+    assertThat(tr, knowsArtAt("basic_lightness", 1, p), "missing basic_lightness");
+    assertThat(tr, knowsArtAt("basic_sword", 1, p), "missing basic_sword");
+    assertThat(tr, knowsArtAt("basic_fist", 1, p), "missing basic_fist");
+    assertThat(tr, knowsArtAt("nameless_trial_fist", 1, p), "missing nameless_trial_fist");
+    assertThat(tr, knowsArtAt("nameless_trial_sword", 1, p), "missing nameless_trial_sword");
+    assertThat(tr, enabledArtIn(Sword, "nameless_trial_sword", p), "starter sword not enabled");
+    assertThat(tr, !mapMember(p.playerCharacter.charEnabled, Foundation), "foundation should not be enabled");
+    assertThat(tr, p.playerPotential == 20, "default potential != 20");
+    assertThat(tr, p.playerCombatExp == 0, "default combatExp != 0");
+    assertThat(tr, genderEq(p.playerCharacter.charGender, UnknownGender), "default gender != UnknownGender");
+    assertThat(tr, p.playerCharacter.charAppearance == 5, "default appearance != 5");
+    assertThat(tr, p.playerCharacter.charJing == 120, "default jing != 120");
+    assertThat(tr, innateAttrsEq(p.playerCharacter.charInnate, MkInnateAttrs { innateStrength: 18, innateAgility: 18, innateVitality: 18 }), "default innate != 18/18/18");
+
+    // Character creation choice bonuses + origin flag
+    let choice = MkCharacterCreationChoice {
+        creationGender: Male,
+        creationOrigin: "martial_family",
+        creationChildhoodOne: "river_chase",
+        creationChildhoodTwo: "breath_lessons",
+    };
+    let (_, gsCreated) = runOk(tr, "creation", baseGs, createDefaultPlayerWithCreation("tester", "resources/scripts/default_player.yaml", Some(choice)));
+    let pc = requirePlayer(tr, gsCreated);
+    let dpc = deriveStats(pc);
+    assertThat(tr, innateAttrsEq(pc.playerCharacter.charInnate, MkInnateAttrs { innateStrength: 21, innateAgility: 22, innateVitality: 20 }), "creation innate mismatch");
+    assertThat(tr, pc.playerCharacter.charMaxQi == 124, "creation maxQi != 124");
+    assertThat(tr, pc.playerCharacter.charAppearance == 7, "creation appearance != 7");
+    assertThat(tr, genderEq(pc.playerCharacter.charGender, Male), "creation gender != Male");
+    assertThat(tr, pc.playerCharacter.charMaxHP == dpc.dsMaxHp, "creation maxHP != derived");
+    assertThat(tr, pc.playerCharacter.charQi == dpc.dsMaxQi, "creation qi != derived");
+    assertThat(tr, strContains(pc.playerCharacter.charDesc, "武学世家"), "creation desc missing origin");
+    assertThat(tr, hasStoryFlag("creation.origin.martial_family", gsCreated), "creation origin flag missing");
+
+    // Login JSON decoding (missing creation, gendered creation, legacy genderless creation)
+    match decodeNetEventJson("{\"tag\":\"Login\",\"username\":\"tester\",\"password\":\"\"}") {
+        Ok(Login { username: u, password: pw, creation: None }) ->
+            assertThat(tr, u == "tester" && pw == "", "Login missing creation fields mismatch"),
+        _ -> assertThat(tr, false, "Login without creation failed to decode"),
+    };
+    match decodeNetEventJson("{\"tag\":\"Login\",\"username\":\"tester\",\"password\":\"\",\"creation\":{\"gender\":\"female\",\"origin\":\"scholar_house\",\"childhood1\":\"night_reading\",\"childhood2\":\"breath_lessons\"}}") {
+        Ok(Login { creation: Some(ch) }) ->
+            assertThat(tr, genderEq(ch.creationGender, Female) && ch.creationOrigin == "scholar_house", "Login gendered creation mismatch"),
+        _ -> assertThat(tr, false, "Login with gendered creation failed to decode"),
+    };
+    match decodeNetEventJson("{\"tag\":\"Login\",\"username\":\"tester\",\"password\":\"\",\"creation\":{\"origin\":\"scholar_house\",\"childhood1\":\"night_reading\",\"childhood2\":\"breath_lessons\"}}") {
+        Ok(Login { creation: Some(ch) }) ->
+            assertThat(tr, genderEq(ch.creationGender, UnknownGender), "legacy Login creation gender mismatch"),
+        _ -> assertThat(tr, false, "legacy Login creation failed to decode"),
+    };
+
+    // Trial sword animation bindings & combat style
+    assertThat(tr, combatStyleForCharacter(p.playerCharacter) == "sword", "player combat style != sword");
+    match mapLookup(gs.world.martialArts, "nameless_trial_sword") {
+        Some(ma) -> {
+            let acts = listMap(ma.artAttackMoves, (mv) -> mv.attackMoveAnimation.animationRefAction);
+            assertThat(
+                tr,
+                listLen(acts) == 3
+                && match acts {
+                    Cons(a1, Cons(a2, Cons(a3, Nil))) ->
+                        a1 == "rig.sword.thrust_a" && a2 == "rig.sword.chop_a" && a3 == "rig.sword.rising_cut_a",
+                    _ -> false,
+                },
+                "nameless_trial_sword rig actions mismatch"
+            )
+        },
+        None -> assertThat(tr, false, "nameless_trial_sword missing"),
+    };
+    assertThat(tr, combatStyleForCharacter(getNpc(tr, gs, testCombatNpcId())) == "sword", "dummy combat style != sword");
+
+    // Derived stats & status modifiers
+    let derived = deriveStats(p);
+    assertThat(tr, derived.dsMaxHp == 170, "derived maxHp != 170");
+    assertThat(tr, derived.dsMaxQi == 136, "derived maxQi != 136");
+    assertThat(tr, derived.dsMaxJing == 152, "derived maxJing != 152");
+    assertThat(tr, derived.dsLoadLimit == 47100, "derived loadLimit != 47100");
+    let ironBody = MkActiveEffect { activeEffectDef: "iron_body_buff", activeEffectRemaining: 10.0, activeEffectValue: 5 };
+    let withStatus = deriveCharacterStats(
+        p.playerCharacter,
+        p.playerCombatExp,
+        characterDerivedStatSources(gs.world.effects, mapFromList([("iron_body_buff", ironBody)]), p.playerCharacter)
+    );
+    assertThat(tr, withStatus.dsStrength == 23, "iron_body_buff strength != 23");
+    assertThat(tr, withStatus.dsDamageReduction > derived.dsDamageReduction, "iron_body_buff did not raise mitigation")
+}
+
+// ============================================================================
+// Movement, Cross-Map Exits & Map Overview Graph Tests
+// ============================================================================
+
+def testMovementAndMapOverview(tr: TestRunner, baseGs: GameState): Void = {
+    let gs0 = newTestPlayerState(tr, baseGs);
+
+    // Room occupancy updates
+    let gsExit = withStarterExit(North, MkRoomRef { roomRefMapId: "kaifeng_city", roomRefPos: (0, -3) }, gs0);
+    let (_, atKfEntry) = runOk(tr, "move north to Kaifeng", gsExit, playerMove("tester", North));
+    let (_, moved) = runOk(tr, "move north inside Kaifeng", atKfEntry, playerMove("tester", North));
+    assertThat(tr, !setMember(roomPlayersAtMap("kaifeng_city", moved, (0, -3)), "tester"), "remained in old room");
+    assertThat(tr, setMember(roomPlayersAtMap("kaifeng_city", moved, (0, -2)), "tester"), "missing in new room");
+
+    // Cross-map round-trip
+    let gsRound = withStarterRoadRoundTrip(gs0);
+    let (respsEast, inRoad) = runOk(tr, "move east cross-map", gsRound, playerMove("tester", East));
+    let pRoad = requirePlayer(tr, inRoad);
+    let (roadMid, roadPos) = pRoad.playerPosition;
+    assertThat(tr, roadMid == "bianshui_road" && ordEq(roadPos, (0, 0)), "did not switch to bianshui_road (0, 0)");
+    assertThat(tr, !setMember(roomPlayersAtMap("weiyuan_road", inRoad, (3, 3)), "tester"), "remained in source map room");
+    assertThat(tr, setMember(roomPlayersAtMap("bianshui_road", inRoad, (0, 0)), "tester"), "missing in target map room");
+    let hasReturnExit = listAny(respsEast, (pr) -> match pr {
+        (_, ViewMsg(_, _, _, exits)) ->
+            listAny(exits, (ex) -> ex.roomExitSummaryMapId == "weiyuan_road" && ordEq(ex.roomExitSummaryPosition, (3, 3))),
+        _ -> false,
+    });
+    assertThat(tr, hasReturnExit, "target room view missing return cross-map exit");
+    let (_, returned) = runOk(tr, "return west", inRoad, playerMove("tester", West));
+    assertThat(tr, ordEq(requirePlayer(tr, returned).playerPosition, ("weiyuan_road", (3, 3))), "failed cross-map return");
+
+    // MapOverviewMsg graph
+    let (ovResps, _) = runOk(tr, "map overview", gs0, playerMapOverview("tester"));
+    match listFilter(ovResps, (pr) -> match pr { (_, MapOverviewMsg(_)) -> true, _ -> false }) {
+        Cons((_, MapOverviewMsg(ov)), Nil) -> {
+            assertThat(tr, ov.mapOverviewSummaryMapId == "weiyuan_road", "overview mapId != weiyuan_road");
+            assertThat(tr, ordEq(ov.mapOverviewSummaryCurrentPosition, (3, 3)), "overview pos != (3, 3)");
+            match mapLookup(gs0.world.maps, "weiyuan_road") {
+                Some(mp) -> {
+                    let expectedIds = listMap(mapToAscList(mp.mapRooms), (pair) -> match pair { (_, r) -> r.roomId });
+                    let gotIds = listMap(ov.mapOverviewSummaryRooms, (rs) -> rs.mapRoomSummaryRoomId);
+                    assertThat(tr, listLen(gotIds) == listLen(expectedIds), "overview room count mismatch");
+                    let localEdgeCount = listLen(fp.listConcatMap(mapToAscList(mp.mapRooms), (pair) -> match pair {
+                        (_, r) -> listFilter(mapToAscList(r.roomExits), (ep) -> match ep {
+                            (_, ref) -> ref.roomRefMapId == "weiyuan_road" && mapMember(mp.mapRooms, ref.roomRefPos),
+                        }),
+                    }));
+                    assertThat(tr, listLen(ov.mapOverviewSummaryEdges) == localEdgeCount, "overview local edges mismatch")
+                },
+                None -> assertThat(tr, false, "weiyuan_road missing"),
+            }
+        },
+        _ -> assertThat(tr, false, "expected single MapOverviewMsg"),
+    }
+}
+
+// ============================================================================
+// Deterministic Combat Pipeline, Active Skills, Action Lock & DoT Tests
+// ============================================================================
+
+def testCombatLocksSettlementAndRespawn(tr: TestRunner, baseGs: GameState): Void = {
+    let gs0 = newTestPlayerState(tr, baseGs);
+
+    // Cannot attack across rooms
+    let gsMovedSrc = withStarterExit(East, MkRoomRef { roomRefMapId: "bianshui_road", roomRefPos: (0, 0) }, withCombatNpcInStarterRoom(gs0));
+    let (_, gsMoved) = runOk(tr, "move east", gsMovedSrc, playerMove("tester", East));
+    match runGameWithRng(gsMoved, fromIntSeed(42), playerAttack("tester", testCombatNpcId())) {
+        Err(UnableToInteract(_, Attacking)) -> (),
+        _ -> assertThat(tr, false, "expected cross-room attack to fail with UnableToInteract Attacking"),
+    };
+
+    // Concurrent NPC battle lock + defeat release + kill + respawn
+    let (_, withRival0) = runOk(tr, "create rival", gs0, createDefaultPlayer("rival", "resources/scripts/default_player.yaml"));
+    let withRival = withCombatNpcInStarterRoom(withRival0);
+    let (_, locked) = runOk(tr, "tester locks npc", withRival, playerAttack("tester", testCombatNpcId()));
+    assertThat(tr, charStatusEq(getNpc(tr, locked, testCombatNpcId()).charStatus, CharBattle), "NPC not CharBattle");
+    match runGameWithRng(locked, fromIntSeed(42), playerAttack("rival", testCombatNpcId())) {
+        Err(UnableToInteract(_, Attacking)) -> (),
+        _ -> assertThat(tr, false, "concurrent attack on locked NPC did not fail"),
+    };
+
+    let defeatedTester = updateTesterBattle("tester", setF(playerSideL() ~>> bsCharL() ~>> charHpL(), 0), locked);
+    let (_, released) = runOk(tr, "tester defeated", defeatedTester, updateBattle(0.0, "tester"));
+    assertThat(tr, charStatusEq(getNpc(tr, released, testCombatNpcId()).charStatus, CharAlive), "NPC lock not released on defeat");
+    assertThat(tr, !mapMember(released.battles, "tester"), "defeated battle not removed");
+    assertThat(tr, !mapMember(released.respawn, testCombatNpcId()), "defeat must not schedule NPC respawn");
+    let pAfterDefeat = requirePlayer(tr, released);
+    assertThat(tr, playerStatusEq(pAfterDefeat.playerStatus, PlayerNormal) && pAfterDefeat.playerCharacter.charHP == 1, "defeat should leave player Normal at 1 HP");
+
+    let (_, rivalBattle) = runOk(tr, "rival attacks", released, playerAttack("rival", testCombatNpcId()));
+    let killedEnemy = updateTesterBattle("rival", setF(enemySideL() ~>> bsCharL() ~>> charHpL(), 0), rivalBattle);
+    let (_, deadState) = runOk(tr, "rival kills npc", killedEnemy, updateBattle(0.0, "rival"));
+    assertThat(tr, charStatusEq(getNpc(tr, deadState, testCombatNpcId()).charStatus, CharDead), "killed NPC not CharDead");
+    assertThat(tr, setMember(deadState.dirtyPlayers, "rival"), "battle settlement must mark winner dirty");
+
+    let (_, respawned) = runOk(tr, "respawn tick", deadState, tickRespawns(5.0));
+    let npcResp = getNpc(tr, respawned, testCombatNpcId());
+    let npcStats = deriveCharacterStats(npcResp, 0, emptyDerivedStatSources());
+    assertThat(tr, charStatusEq(npcResp.charStatus, CharAlive) && npcResp.charHP == npcStats.dsMaxHp && npcResp.charQi == npcStats.dsMaxQi, "NPC did not respawn at full vitals")
+}
+
+def testCombatSkillsTicksAndEffects(tr: TestRunner, baseGs: GameState): Void = {
+    let gs0 = newTestPlayerState(tr, baseGs);
+    let gsFist = enableStarterFistForTester(gs0);
+    let (_, inBattleFist) = startTrainingBattle(tr, gsFist);
+
+    // 1. Specific ActiveSkillNeedQi(30, 0)
+    let drained = updateTesterBattle("tester", setF(playerSideL() ~>> bsQiL(), 0), inBattleFist);
+    let (failResps, _) = runOk(tr, "skill without qi", drained, playerPerformActiveSkill("tester", "power_strike"));
+    let gotNeedQi = listAny(failResps, (pr) -> match pr {
+        (_, ActiveSkillFailureMsg(ActiveSkillNeedQi(30, 0))) -> true,
+        _ -> false,
+    });
+    assertThat(tr, gotNeedQi, "missing ActiveSkillNeedQi(30, 0)");
+
+    // 2. Active skill ignores AP, consumes Qi (30 -> 70), deals 37 damage (114 -> 77), emits snapshot
+    let readySkill = updateTesterBattle("tester", setF(playerSideL() ~>> bsApL(), 0), inBattleFist);
+    let (skResps, afterSkill) = runOk(tr, "power_strike", readySkill, playerPerformActiveSkill("tester", "power_strike"));
+    let bSk = getBattle(tr, afterSkill, "tester");
+    assertThat(tr, bSk.battleState.battleAp == 0, "active skill changed AP");
+    assertThat(tr, bSk.battleState.battleQi == 70, "active skill Qi != 70");
+    assertThat(tr, bSk.battleEnemyState.battleChar.charHP == 77, "active skill enemy HP != 77");
+    let gotSkEv = listAny(skResps, (pr) -> match pr {
+        (_, CombatEventMsg(ev)) ->
+            combatEventKindEq(ev.combatEventKind, CombatEventActiveSkill)
+            && match ev.combatEventDamage { Some(37) -> true, _ -> false }
+            && strLen(ev.combatEventVisual.combatVisualActionId) > 0,
+        _ -> false,
+    });
+    let gotSnap = listAny(skResps, (pr) -> match pr { (_, BattleStateMsg(_)) -> true, _ -> false });
+    assertThat(tr, gotSkEv && gotSnap, "active skill missing CombatEventMsg(37) or BattleStateMsg");
+
+    // 3. Active skill queues during action lock and fires when lock expires
+    let lockedSkill = inBattleFist
+        |> (g) -> updateTesterBattle("tester", setF(playerSideL() ~>> bsApL(), 0), g)
+        |> (g) -> updateTesterBattle("tester", setF(battleActionLockL(), 0.5), g);
+    let (qResps, queued) = runOk(tr, "queue power_strike", lockedSkill, playerPerformActiveSkill("tester", "power_strike"));
+    let bQueued = getBattle(tr, queued, "tester");
+    assertThat(tr, !listAny(qResps, (pr) -> match pr { (_, CombatEventMsg(_)) -> true, _ -> false }), "queued skill fired early");
+    assertThat(tr, match bQueued.battlePendingActiveSkill { Some(_) -> true, None -> false }, "skill not queued");
+    assertThat(tr, bQueued.battleState.battleQi == 100, "queued skill consumed Qi before firing");
+
+    let (midResps, stillQueued) = runOk(tr, "half lock tick", queued, onBattleTick(0.25));
+    assertThat(tr, listLen(midResps) == 0, "mid-lock tick emitted responses");
+    let (fireResps, fired) = runOk(tr, "expire lock tick", stillQueued, onBattleTick(0.5));
+    let bFired = getBattle(tr, fired, "tester");
+    assertThat(tr, match bFired.battlePendingActiveSkill { None -> true, Some(_) -> false }, "queued skill not cleared");
+    assertThat(tr, bFired.battleState.battleQi == 70 && bFired.battleEnemyState.battleChar.charHP == 77 && bFired.battleActionLockRemaining > 0.0, "queued skill execution state mismatch");
+    assertThat(tr, listAny(fireResps, (pr) -> match pr { (_, CombatEventMsg(_)) -> true, _ -> false }), "queued skill emitted no event");
+
+    // 4. Normal attack pipeline & multi-hit splitByShares
+    let s18 = splitByShares(18, [1.0, 1.0, 2.0]);
+    assertThat(tr, match s18 { Cons(5, Cons(4, Cons(9, Nil))) -> true, _ -> false }, "splitByShares(18, [1,1,2]) != [5,4,9]");
+    let s7 = splitByShares(7, [1.0, 1.0, 1.0]);
+    let sum7 = match s7 { Cons(a, Cons(b, Cons(c, Nil))) -> a + b + c, _ -> 0 };
+    assertThat(tr, sum7 == 7, "splitByShares(7, [1,1,1]) sum != 7");
+    match mapLookup(gs0.world.combatActionTimings, "rig.fist.combo_a") {
+        Some(tm) -> assertThat(tr, tm.combatActionTimingApproachMs == 280 && listLen(tm.combatActionTimingHitShares) == 3, "combo_a timing mismatch"),
+        None -> assertThat(tr, false, "rig.fist.combo_a missing"),
+    };
+
+    let comboArts = mapMap(gs0.world.martialArts, (ma) -> MkMartialArt {
+        artId: ma.artId, artType: ma.artType, artTier: ma.artTier, artName: ma.artName,
+        artDesc: ma.artDesc, artFoundation: ma.artFoundation, artRequires: ma.artRequires,
+        artMaxLevel: ma.artMaxLevel, artResearchFrom: ma.artResearchFrom,
+        artAttackMoves: listMap(ma.artAttackMoves, (mv) -> MkAttackMove {
+            attackMoveId: mv.attackMoveId, attackMoveName: mv.attackMoveName,
+            attackMoveDesc: mv.attackMoveDesc, attackMoveMsg: mv.attackMoveMsg,
+            attackMoveUnlockLevel: mv.attackMoveUnlockLevel, attackMoveDamage: mv.attackMoveDamage,
+            attackMoveAnimation: MkAnimationRef {
+                animationRefAction: "rig.fist.combo_a",
+                animationRefTags: mv.attackMoveAnimation.animationRefTags,
+                animationRefParams: mv.attackMoveAnimation.animationRefParams,
+            },
+        }),
+        artActiveSkills: ma.artActiveSkills,
+    });
+    let comboGs = gs0 |> overF(gsWorldL(), (w) -> MkWorld {
+        items: w.items, maps: w.maps, chars: w.chars, effects: w.effects,
+        quests: w.quests, combatActionTimings: w.combatActionTimings, martialArts: comboArts,
+    });
+    let (_, inComboBattle) = startTrainingBattle(tr, comboGs);
+    let comboReady = inComboBattle
+        |> (g) -> updateTesterBattle("tester", setF(playerSideL() ~>> bsApL(), 100), g)
+        |> (g) -> updateTesterBattle("tester", setF(enemySideL() ~>> bsApL(), 0), g);
+    let hpBefore = getBattle(tr, comboReady, "tester").battleEnemyState.battleChar.charHP;
+    let (comboResps, afterCombo) = runOk(tr, "combo attack", comboReady, updateBattle(0.0, "tester"));
+    let comboChecked = listAny(comboResps, (pr) -> match pr {
+        (_, CombatEventMsg(ev)) if (listLen(ev.combatEventHits) == 3) -> {
+            let hitSum = cellNew(0);
+            let cur = cellNew(ev.combatEventHits);
+            while (match cellGet(cur) { Nil -> false, _ -> true }) {
+                match cellGet(cur) {
+                    Cons(h, rest) -> {
+                        if (combatResultEq(h.combatHitResult, CombatHit)) {
+                            cellSet(hitSum, cellGet(hitSum) + optOr(h.combatHitDamage, 0))
+                        } else ();
+                        cellSet(cur, rest)
+                    },
+                    Nil -> (),
+                }
+            };
+            let bAfter = getBattle(tr, afterCombo, "tester");
+            optOr(ev.combatEventDamage, -1) == cellGet(hitSum)
+            && bAfter.battleEnemyState.battleChar.charHP == hpBefore - cellGet(hitSum)
+            && bAfter.battleActionLockRemaining >= 1.0
+        },
+        _ -> false,
+    });
+    assertThat(tr, comboChecked, "3-hit combo damage split / action lock check failed");
+
+    // 5. Fast AP-only tick silence, no natural HP/Qi regen in battle, action lock blocks AP, DoT ticks
+    let (_, inPlainBattle) = startTrainingBattle(tr, gs0);
+    let (apResps, afterFast) = runOk(tr, "ap fast tick", inPlainBattle, onBattleTick(0.05));
+    let bFast = getBattle(tr, afterFast, "tester");
+    assertThat(tr, listLen(apResps) == 0 && bFast.battleState.battleAp > 0 && bFast.battleEnemyState.battleAp > 0, "AP fast tick behavior wrong");
+
+    let wounded = inPlainBattle
+        |> (g) -> updateTesterBattle("tester", setF(playerSideL() ~>> bsCharL() ~>> charHpL(), 40), g)
+        |> (g) -> updateTesterBattle("tester", setF(playerSideL() ~>> bsQiL(), 10), g)
+        |> (g) -> updateTesterBattle("tester", setF(enemySideL() ~>> bsCharL() ~>> charHpL(), 50), g)
+        |> (g) -> updateTesterBattle("tester", setF(enemySideL() ~>> bsQiL(), 12), g);
+    let (_, afterMaint) = runOk(tr, "battle maintenance", wounded, tickBattleMaintenance(1.0));
+    let bMaint = getBattle(tr, afterMaint, "tester");
+    assertThat(
+        tr,
+        bMaint.battleState.battleChar.charHP == 40 && bMaint.battleState.battleQi == 10
+        && bMaint.battleEnemyState.battleChar.charHP == 50 && bMaint.battleEnemyState.battleQi == 12,
+        "natural HP/Qi recovered during battle maintenance"
+    );
+
+    let readyLock = inPlainBattle
+        |> (g) -> updateTesterBattle("tester", setF(playerSideL() ~>> bsApL(), 100), g)
+        |> (g) -> updateTesterBattle("tester", setF(enemySideL() ~>> bsApL(), 20), g);
+    let (_, lockedBState) = runOk(tr, "trigger attack lock", readyLock, onBattleTick(0.0));
+    let bLocked = getBattle(tr, lockedBState, "tester");
+    let pApLocked = bLocked.battleState.battleAp;
+    let eApLocked = bLocked.battleEnemyState.battleAp;
+    let remLock = bLocked.battleActionLockRemaining;
+    let (blkResps, blockedBState) = runOk(tr, "during lock", lockedBState, onBattleTick(0.05));
+    let bBlocked = getBattle(tr, blockedBState, "tester");
+    assertThat(
+        tr,
+        listLen(blkResps) == 0 && bBlocked.battleState.battleAp == pApLocked
+        && bBlocked.battleEnemyState.battleAp == eApLocked && bBlocked.battleActionLockRemaining < remLock,
+        "AP grew or lock did not decay during action lock"
+    );
+
+    let bleeding = MkActiveEffect { activeEffectDef: "bleeding", activeEffectRemaining: 2.0, activeEffectValue: 5 };
+    let withBleed = updateTesterBattle(
+        "tester",
+        overF(enemySideL() ~>> bsEffectsL(), (em) -> mapInsert(em, "bleeding", bleeding)),
+        inPlainBattle
+    );
+    let (_, afterBleed) = runOk(tr, "bleeding tick", withBleed, updateBattle(1.0, "tester"));
+    let bBleed = getBattle(tr, afterBleed, "tester");
+    assertThat(tr, bBleed.battleEnemyState.battleChar.charHP == 109, "bleeding DoT did not deal 5 damage");
+    match mapLookup(bBleed.battleEnemyState.battleEffects, "bleeding") {
+        Some(ef) -> assertThat(tr, ef.activeEffectRemaining == 1.0, "bleeding duration != 1.0"),
+        None -> assertThat(tr, false, "bleeding expired too early"),
+    }
+}
+
+// ============================================================================
+// Progression Curves, Training Queue, Recovery & Insight Differentiation Tests
+// ============================================================================
+
+def testProgressionAndTraining(tr: TestRunner, baseGs: GameState): Void = {
+    // 1. Pure progression curves
+    assertThat(
+        tr,
+        combatExpRequiredForLevel(1) == 0 && combatExpRequiredForLevel(2) == 0
+        && combatExpRequiredForLevel(10) == 100 && combatExpRequiredForLevel(30) == 2700
+        && combatExpRequiredForLevel(100) == 100000,
+        "combatExpRequiredForLevel curve mismatch"
+    );
+    assertThat(
+        tr,
+        artProgressRequired(2) == 40 && artProgressRequired(10) == 120 && artProgressRequired(30) == 320,
+        "artProgressRequired curve mismatch"
+    );
+    assertThat(tr, ordEq(addArtProgress(20, 1000, None, 100, 1, 0), (3, 10)), "overflow carry mismatch");
+    assertThat(tr, ordEq(addArtProgress(20, 1000, Some(2), 100, 1, 0), (2, 49)), "source cap hold mismatch");
+    assertThat(tr, ordEq(addArtProgress(20, 0, None, 100, 2, 0), (2, 49)), "combat exp gate hold mismatch");
+    assertThat(tr, ordEq(addArtProgress(3, 1000, None, 500, 2, 0), (3, 0)), "max level cap mismatch");
+    assertThat(tr, match canGainProgress(20, 0, None, 2, 10) { None -> true, _ -> false }, "gated art should fill bar");
+    assertThat(tr, match canGainProgress(20, 1000, Some(2), 2, 10) { Some(BlockedBySourceCap(2)) -> true, _ -> false }, "source cap block mismatch");
+    assertThat(tr, battleCombatExpGain(10, 10) == 10 && battleCombatExpGain(30, 10) == 1 && battleCombatExpGain(10, 15) == 16, "battleCombatExpGain scaling mismatch");
+    assertThat(tr, potentialCap(1000) == 300, "potentialCap(1000) != 300");
+
+    // 2. Practicing weiyuan_sword shares proficiency to basic_sword & unlocks eight_direction_thrusts at lv 5
+    let gs0 = newTestPlayerState(tr, baseGs);
+    let (_, learnedWy) = runOk(tr, "grant & enable weiyuan_sword", gs0, grantArt("tester", "weiyuan_sword", 1) *>> playerEnableArt("tester", Sword, "weiyuan_sword"));
+    let seasoned = learnedWy
+        |> (g) -> updateTester(setF(playerCombatExpL(), 1000), g)
+        |> (g) -> setTesterArt(Foundation, "basic_sword", 10, 0, g);
+    let (lowMsgs, _) = startTrainingBattle(tr, seasoned);
+    let hasSkillInMsgs = (sid: String, msgs: List PlayerResp) -> listAny(msgs, (pr) -> match pr {
+        (_, BattleStateMsg(snap)) -> listAny(snap.battleSnapshotActiveSkills, (s) -> s.activeSkillSummaryId == sid),
+        _ -> false,
+    });
+    assertThat(tr, hasSkillInMsgs("steady_cut", lowMsgs) && !hasSkillInMsgs("eight_direction_thrusts", lowMsgs), "lv1 weiyuan_sword skills wrong");
+
+    let restStep = () -> updatePlayer("tester", overF(playerCharL(), (c) ->
+        c |> setF(charJingL(), 999) |> setF(charHpL(), 999) |> setF(charQiL(), 999)
+    ));
+    let (_, trained5) = runOk(tr, "practice 44 steps", seasoned, repeatGameM(44, () -> restStep() *>> practiceStep("tester", "weiyuan_sword")));
+    let pTrained = requirePlayer(tr, trained5);
+    assertThat(tr, knowsArtAt("weiyuan_sword", 5, pTrained), "weiyuan_sword != lv 5");
+    assertThat(tr, knowsArtAt("basic_sword", 10, pTrained) && match artProgressOf("basic_sword", pTrained) { Some(88) -> true, _ -> false }, "basic_sword shared progress != 88");
+    let (highMsgs, _) = startTrainingBattle(tr, trained5);
+    assertThat(tr, hasSkillInMsgs("eight_direction_thrusts", highMsgs), "eight_direction_thrusts not unlocked at lv 5");
+
+    // 3. Learn, research, study, meditate & caps
+    let gsTeach = withCombatNpcInStarterRoom(gs0);
+    let (_, l1) = runOk(tr, "learn 2 lessons", gsTeach, playerLearnArt("tester", testCombatNpcId(), "weiyuan_sword", 2));
+    let (_, l2) = runOk(tr, "tick 2nd lesson", l1, tickTraining(learnBusySeconds()));
+    let learned = idleTester(l2);
+    let pl = requirePlayer(tr, learned);
+    assertThat(tr, knowsArtAt("weiyuan_sword", 1, pl) && match artProgressOf("weiyuan_sword", pl) { Some(12) -> true, _ -> false }, "2nd lesson progress != 12");
+    assertThat(tr, pl.playerPotential == 18 && pl.playerCharacter.charJing == 96, "learn potential/jing cost mismatch");
+
+    expectStructuredError(tr, "research early", "research_too_early", learned, playerResearchArt("tester", "weiyuan_sword"));
+    let atTeachCap = learned |> (g) -> setTesterArt(Sword, "weiyuan_sword", 5, 0, g) |> (g) -> updateTester(setF(playerCombatExpL(), 1000), g);
+    expectStructuredError(tr, "teacher cap", "teacher_art_level_cap", atTeachCap, playerLearnArt("tester", testCombatNpcId(), "weiyuan_sword", 1));
+
+    let researchable = learned |> (g) -> setTesterArt(Sword, "weiyuan_sword", 10, 0, g) |> (g) -> updateTester(setF(playerCombatExpL(), 2000), g);
+    let (_, researched) = runOk(tr, "research", researchable, playerResearchArt("tester", "weiyuan_sword"));
+    let pRes = requirePlayer(tr, researched);
+    assertThat(tr, match artProgressOf("weiyuan_sword", pRes) { Some(20) -> true, _ -> false } && pRes.playerPotential == 17 && pRes.playerCharacter.charJing == 66, "research result mismatch");
+
+    let withManual = updateTester(overF(playerInventoryL(), (inv) -> mapInsert(inv, "weiyuan_sword_manual", 1)), researchable);
+    expectStructuredError(tr, "book exhausted", "book_exhausted", withManual, playerStudyItem("tester", "weiyuan_sword_manual"));
+    let (_, studied) = runOk(tr, "study in band", setTesterArt(Sword, "weiyuan_sword", 4, 0, withManual), playerStudyItem("tester", "weiyuan_sword_manual"));
+    assertThat(tr, match artProgressOf("weiyuan_sword", requirePlayer(tr, studied)) { Some(14) -> true, _ -> false }, "study progress != 14");
+
+    let (_, meditated) = runOk(tr, "meditate", learned, playerMeditate("tester", 40));
+    let pMed = requirePlayer(tr, meditated);
+    assertThat(tr, pMed.playerCharacter.charQi == 60 && pMed.playerCharacter.charMaxQi == 102 && pMed.playerCharacter.charJing == 91, "meditate result mismatch");
+
+    // 4. Queued training, player_busy, atomic Jing exhaustion & walk-away halt
+    assertThat(tr, match decodePlayerActionJson("{\"practice\":\"weiyuan_sword\"}") { Ok(Practice("weiyuan_sword", 1)) -> true, _ -> false }, "bare practice decode failed");
+    assertThat(tr, match decodePlayerActionJson("{\"practice\":{\"art\":\"weiyuan_sword\",\"times\":10}}") { Ok(Practice("weiyuan_sword", 10)) -> true, _ -> false }, "timed practice decode failed");
+    assertThat(tr, match decodePlayerActionJson("{\"meditate\":40}") { Ok(Meditate(40, 1)) -> true, _ -> false }, "bare meditate decode failed");
+    assertThat(tr, match decodePlayerActionJson("{\"study\":{\"item\":\"weiyuan_sword_manual\",\"times\":3}}") { Ok(Study("weiyuan_sword_manual", 3)) -> true, _ -> false }, "timed study decode failed");
+
+    let qReady = gs0
+        |> (g) -> updateTester(setF(playerCombatExpL(), 1000), g)
+        |> (g) -> setTesterArt(Foundation, "basic_sword", 10, 0, g);
+    let (_, qStarted) = runOk(tr, "queue 5 practice", qReady, processPlayerAction("tester", Practice("nameless_trial_sword", 5)));
+    expectStructuredError(tr, "busy guard", "player_busy", qStarted, processPlayerAction("tester", Practice("nameless_trial_sword", 1)));
+    let (qFinResps, qFinished) = runOk(tr, "tick 5 steps", qStarted, repeatGameM(5, () -> tickTraining(practiceBusySeconds())));
+    assertThat(tr, match artProgressOf("nameless_trial_sword", requirePlayer(tr, qFinished)) { Some(25) -> true, _ -> false }, "queued 5 steps progress != 25");
+    assertThat(tr, listAny(qFinResps, (pr) -> match pr {
+        (_, SystemMsg(sys)) -> sys.systemMessageKey == "training_finished" && optOr(mapLookup(sys.systemMessageParams, "completed"), "") == "5",
+        _ -> false,
+    }), "training_finished completed=5 missing");
+
+    let qTired = updateTester(setF(playerCharL() ~>> charJingL(), 12), qReady);
+    let (_, qTiredStart) = runOk(tr, "queue tired", qTired, processPlayerAction("tester", Practice("nameless_trial_sword", 5)));
+    let (qStopResps, qStopped) = runOk(tr, "exhaust jing", qTiredStart, repeatGameM(3, () -> tickTraining(practiceBusySeconds())));
+    assertThat(tr, match artProgressOf("nameless_trial_sword", requirePlayer(tr, qStopped)) { Some(10) -> true, _ -> false }, "failed step undid completed steps");
+    assertThat(tr, listAny(qStopResps, (pr) -> match pr {
+        (_, SystemMsg(sys)) -> sys.systemMessageKey == "training_finished" && optOr(mapLookup(sys.systemMessageParams, "reason"), "") == "not_enough_jing",
+        _ -> false,
+    }), "stop reason not_enough_jing missing");
+
+    let (_, walkedOff) = runOk(tr, "walk away halts training", withStarterExit(East, MkRoomRef { roomRefMapId: "bianshui_road", roomRefPos: (0, 0) }, qStarted), processPlayerAction("tester", Go(East)));
+    let busyAfterWalk = match mapLookup(walkedOff.playerRuntime, "tester") { Some(rt) -> rt.runtimeBusy, None -> None };
+    assertThat(tr, match busyAfterWalk { None -> true, Some(_) -> false }, "moving did not halt training");
+
+    // 5. Growth rewards, soft potentialCap, recovery, injury, room/combat insight & internal art differentiation
+    let (_, questCapped) = runOk(tr, "quest at potential cap", updateTester(setF(playerPotentialL(), 195), gs0), grantQuestReward("tester", "journey_luoyang"));
+    assertThat(tr, requirePlayer(tr, questCapped).playerPotential == 204, "quest potential soft cap != 204");
+
+    let hurt = gs0
+        |> (g) -> updateTester(setF(playerCharL() ~>> charHpL(), 1), g)
+        |> (g) -> updateTester(setF(playerCharL() ~>> charQiL(), 0), g);
+    let (_, rec10) = runOk(tr, "recover 10s", hurt, onGameTick(10.0));
+    let (_, recCarry) = runOk(tr, "recover 10x1s", hurt, repeatGameM(10, () -> onGameTick(1.0)));
+    let hp10 = requirePlayer(tr, rec10).playerCharacter.charHP;
+    assertThat(tr, hp10 > 1 && requirePlayer(tr, recCarry).playerCharacter.charHP == hp10, "fractional recovery carry mismatch");
+    let (_, atInn) = runOk(tr, "move to inn", hurt, movePlayerToRoom("tester", "kaifeng_city", (-1, 1)));
+    let (_, recInn) = runOk(tr, "recover at inn", atInn, onGameTick(10.0));
+    assertThat(tr, requirePlayer(tr, recInn).playerCharacter.charHP > hp10, "inn 3x rest bonus did not speed recovery");
+
+    // Room + Combat Insight bonuses
+    let makeInsightSetup = (pos: (String, (Int, Int)), stacks: Int) ->
+        gs0
+            |> (g) -> updateTester((p) -> p
+                |> setF(playerPosL(), pos)
+                |> setF(playerPotentialL(), 10)
+                |> setF(playerCombatExpL(), 100000)
+                |> overF(playerCharL(), (c) -> c
+                    |> setF(charJingL(), 120)
+                    |> overF(charArtL(), (am) -> mapInsert(am, Sword, [MkArtEntity { artDef: "luoyang_sword", artLevel: 20, artProgress: 0 }]))
+                ), g)
+            |> overF(gsPlayerRuntimeL(), (rm) -> mapInsert(rm, "tester", set(runtimeInsightL(), stacks, newPlayerRuntime())));
+    let (_, insPlain1) = runOk(tr, "res plain", makeInsightSetup(("kaifeng_city", (0, 0)), 0), processNormalAction("tester", Research("luoyang_sword", 1)));
+    let (_, insPlainDone) = runOk(tr, "tick plain", insPlain1, tickTraining(5.0));
+    let (_, insStele1) = runOk(tr, "res stele", makeInsightSetup(("luoyang_city", (-1, 7)), 2), processNormalAction("tester", Research("luoyang_sword", 1)));
+    let (_, insSteleDone) = runOk(tr, "tick stele", insStele1, tickTraining(5.0));
+    let plainProg = optOr(artProgressOf("luoyang_sword", requirePlayer(tr, insPlainDone)), 0);
+    let steleProg = optOr(artProgressOf("luoyang_sword", requirePlayer(tr, insSteleDone)), 0);
+    assertThat(tr, steleProg == plainProg + 8 + combatInsightResearchBonus(), "room + combat insight progress bonus mismatch");
+    assertThat(tr, requirePlayer(tr, insSteleDone).playerCharacter.charJing == requirePlayer(tr, insPlainDone).playerCharacter.charJing + 4, "room insight jing_discount != 4");
+
+    // Internal art differentiation (`taihu_breath` injury decay vs `duan_zen_breath` mitigation & meditate bonus)
+    let gsTaihu = gs0
+        |> (g) -> updateTester(overF(playerCharL() ~>> charEnabledL(), (en) -> mapInsert(en, Internal, MkArtEntity { artDef: "taihu_breath", artLevel: 15, artProgress: 0 })), g)
+        |> overF(gsPlayerRuntimeL(), (rm) -> mapInsert(rm, "tester", set(runtimeInjuredL(), 60.0, newPlayerRuntime())));
+    let gsNoInt = gs0
+        |> (g) -> updateTester(overF(playerCharL() ~>> charEnabledL(), (en) -> mapDelete(en, Internal)), g)
+        |> overF(gsPlayerRuntimeL(), (rm) -> mapInsert(rm, "tester", set(runtimeInjuredL(), 60.0, newPlayerRuntime())));
+    let (_, taihuTick) = runOk(tr, "tick taihu", gsTaihu, tickPlayerRecovery(10.0));
+    let (_, noIntTick) = runOk(tr, "tick noInt", gsNoInt, tickPlayerRecovery(10.0));
+    let injTaihu = match mapLookup(taihuTick.playerRuntime, "tester") { Some(r) -> r.runtimeInjuredRemaining, None -> 60.0 };
+    let injPlain = match mapLookup(noIntTick.playerRuntime, "tester") { Some(r) -> r.runtimeInjuredRemaining, None -> 60.0 };
+    assertThat(tr, injTaihu < injPlain, "taihu_breath did not accelerate injury recovery");
+
+    let setupInternal20 = (aid: String) -> gs0 |> (g) -> updateTester(overF(playerCharL(), (c) ->
+        c
+            |> overF(charEnabledL(), (en) -> mapInsert(en, Internal, MkArtEntity { artDef: aid, artLevel: 20, artProgress: 0 }))
+            |> overF(charArtL(), (am) -> mapInsert(am, Foundation, [MkArtEntity { artDef: "basic_internal", artLevel: 20, artProgress: 0 }]))
+            |> setF(charQiL(), 100)
+            |> setF(charMaxQiL(), 100)
+    ), g);
+    let gsZen = setupInternal20("duan_zen_breath");
+    let gsTaihu20 = setupInternal20("taihu_breath");
+    assertThat(tr, deriveStats(requirePlayer(tr, gsZen)).dsDamageReduction > deriveStats(requirePlayer(tr, gsTaihu20)).dsDamageReduction, "duan_zen_breath mitigation missing");
+    let (_, zenM1) = runOk(tr, "med zen", gsZen, processNormalAction("tester", Meditate(20, 1)));
+    let (_, zenMDone) = runOk(tr, "tick zen", zenM1, tickTraining(5.0));
+    let (_, thM1) = runOk(tr, "med taihu", gsTaihu20, processNormalAction("tester", Meditate(20, 1)));
+    let (_, thMDone) = runOk(tr, "tick taihu", thM1, tickTraining(5.0));
+    assertThat(tr, requirePlayer(tr, zenMDone).playerCharacter.charMaxQi > requirePlayer(tr, thMDone).playerCharacter.charMaxQi, "duan_zen_breath meditation bonus missing")
+}
+
+// ============================================================================
+// Multi-Chapter Story Flows, Repeatable Jobs, Shop/Equipment & Save Persistence
+// ============================================================================
+
+def testWeiyuanAndStoryIsolation(tr: TestRunner, baseGs: GameState): Void = {
+    let gs0 = newTestPlayerState(tr, baseGs);
+
+    // Full Weiyuan opening chapter narrative order & isolated story battle
+    let (warnResps, warned) = runOk(tr, "talk wounded_escort", gs0, playerTalk("tester", "wounded_escort"));
+    assertThat(tr, optOr(questStageOf("weiyuan_bloody_case", warned), "") == "intruder", "weiyuan stage != intruder");
+    match warnResps {
+        Cons((_, StorySequenceMsg(true)), _) -> (),
+        _ -> assertThat(tr, false, "StorySequenceMsg(true) not first"),
+    };
+    let kickIdx = requireRespIndex(tr, "door kick", warnResps, (r) -> match r {
+        StoryMsg("旁白", txt) -> strContains(txt, "踹开"),
+        _ -> false,
+    });
+    let revealIdx = requireRespIndex(tr, "black-clad reveal", warnResps, (r) -> match r {
+        ViewMsg(_, _, chars, _) -> listAny(chars, (c) -> c.roomCharacterSummaryId == "temple_black_clad"),
+        _ -> false,
+    });
+    let threatIdx = requireRespIndex(tr, "black-clad threat", warnResps, (r) -> match r {
+        StoryMsg("黑衣人", _) -> true,
+        _ -> false,
+    });
+    assertThat(tr, kickIdx < revealIdx && revealIdx < threatIdx, "Weiyuan reveal ordering wrong");
+
+    let (bStartResps, inStoryBattle) = runOk(tr, "talk temple_black_clad", warned, playerTalk("tester", "temple_black_clad"));
+    assertThat(tr, setMember(inStoryBattle.isolatedBattles, "tester"), "story battle not marked isolated");
+    assertThat(tr, charStatusEq(getNpc(tr, inStoryBattle, "temple_black_clad").charStatus, CharAlive), "story battle locked global NPC");
+    let atkIdx = requireRespIndex(tr, "AttackMsg", bStartResps, (r) -> match r { AttackMsg(_, _) -> true, _ -> false });
+    let snapIdx = requireRespIndex(tr, "BattleStateMsg", bStartResps, (r) -> match r { BattleStateMsg(_) -> true, _ -> false });
+    assertThat(tr, atkIdx < snapIdx, "AttackMsg should precede BattleStateMsg");
+
+    let beaten = updateTesterBattle("tester", setF(enemySideL() ~>> bsCharL() ~>> charHpL(), 0), inStoryBattle);
+    let (settleResps, afterFight) = runOk(tr, "settle temple fight", beaten, updateBattle(0.0, "tester"));
+    assertThat(tr, optOr(questStageOf("weiyuan_bloody_case", afterFight), "") == "escort_dying", "stage != escort_dying");
+    assertThat(tr, !setMember(afterFight.isolatedBattles, "tester"), "isolated marker not cleared");
+    let stIdx = requireRespIndex(tr, "settlement", settleResps, (r) -> match r { CombatSettlementMsg(_, _, _) -> true, _ -> false });
+    let dlIdx = requireRespIndex(tr, "delay 1800", settleResps, (r) -> match r { StoryDelayMsg(1800) -> true, _ -> false });
+    let colIdx = requireRespIndex(tr, "collapse", settleResps, (r) -> match r { StoryMsg("旁白", txt) -> strContains(txt, "老镖师"), _ -> false });
+    let rwIdx = requireRespIndex(tr, "growth reward", settleResps, (r) -> match r { RewardMsg(_) -> true, _ -> false });
+    assertThat(tr, stIdx < dlIdx && dlIdx < colIdx && colIdx < rwIdx, "aftermath pacing order wrong");
+
+    let (roadResps, onRoad) = runOk(tr, "escort request", afterFight, playerTalk("tester", "wounded_escort"));
+    let trIdx = requireRespIndex(tr, "transition", roadResps, (r) -> match r { StoryTransitionMsg(_, 1800) -> true, _ -> false });
+    let mvIdx = requireRespIndex(tr, "move", roadResps, (r) -> match r { MoveMsg("官道口") -> true, _ -> false });
+    assertThat(tr, trIdx < mvIdx && ordEq(requirePlayer(tr, onRoad).playerPosition, ("bianshui_road", (0, 0))), "escort road transition/move wrong");
+
+    let (_, atFerry) = runOk(tr, "north to ferry", onRoad, playerMove("tester", North));
+    let (_, atGate) = runOk(tr, "east to gate", atFerry, playerMove("tester", East));
+    let (_, inHall) = runOk(tr, "east to hall", atGate, playerMove("tester", East));
+    let (_, inCourt) = runOk(tr, "east to inner court", inHall, playerMove("tester", East));
+    assertThat(tr, optOr(questStageOf("weiyuan_bloody_case", inCourt), "") == "completed", "weiyuan quest did not complete");
+    assertThat(tr, optOr(questStageOf("first_steps_kaifeng", inCourt), "") == "guide", "first_steps_kaifeng != guide");
+    assertThat(tr, ordEq(requirePlayer(tr, inCourt).playerPosition, ("kaifeng_city", (-1, -3))), "final Weiyuan position != willow bank");
+
+    // Concurrent story battles are player-isolated
+    let (_, twoP) = runOk(tr, "create tester2", gs0, createDefaultPlayer("tester2", "resources/scripts/default_player.yaml"));
+    let (_, w1) = runOk(tr, "warn p1", twoP, playerTalk("tester", "wounded_escort"));
+    let (_, w2) = runOk(tr, "warn p2", w1, playerTalk("tester2", "wounded_escort"));
+    let (_, b1) = runOk(tr, "battle p1", w2, playerTalk("tester", "temple_black_clad"));
+    let (_, b2) = runOk(tr, "battle p2", b1, playerTalk("tester2", "temple_black_clad"));
+    assertThat(tr, mapMember(b2.battles, "tester") && mapMember(b2.battles, "tester2"), "concurrent isolated story battles failed")
+}
+
+def testKaifengRegionalAndEconomy(tr: TestRunner, baseGs: GameState): Void = {
+    let gs0 = newTestPlayerState(tr, baseGs);
+
+    // 1. Teacher story flag gating & room desc variants & ArtsMsg query
+    let gatedTeacher = withCombatNpcInStarterRoom(gs0)
+        |> overF(gsWorldL() ~>> worldCharsL(), (cm) -> mapUpdate(cm, testCombatNpcId(), (c) -> MkCharacter {
+            charId: c.charId, charName: c.charName, charDesc: c.charDesc, charGender: c.charGender,
+            charAppearance: c.charAppearance, charDialogue: c.charDialogue, charActions: c.charActions,
+            charInitiallyHidden: c.charInitiallyHidden, charRespawn: c.charRespawn,
+            charHP: c.charHP, charMaxHP: c.charMaxHP, charQi: c.charQi, charMaxQi: c.charMaxQi,
+            charJing: c.charJing, charQiRegen: c.charQiRegen, charInnate: c.charInnate,
+            charStrength: c.charStrength, charAgility: c.charAgility, charVitality: c.charVitality,
+            charEquipped: c.charEquipped, charEnabled: c.charEnabled, charTeaches: c.charTeaches,
+            charTeachBonus: c.charTeachBonus,
+            charTeachRequires: Some(MkTeachRequirement { teachRequiresFlag: "test.trusted", teachRefusal: "门外人不教。" }),
+            charShop: c.charShop, charRank: c.charRank, charRewardExpCeiling: c.charRewardExpCeiling,
+            charFixedReward: c.charFixedReward, charArt: c.charArt, charStatus: c.charStatus,
+        }));
+    expectStructuredError(tr, "gated teacher", "teacher_refuses", gatedTeacher, playerLearnArt("tester", testCombatNpcId(), "weiyuan_sword", 1));
+    let trusted = gatedTeacher |> overF(gsStoriesL(), (sm) -> mapUpdate(sm, "tester", overF(storyFlagsL(), (fs) -> setInsert(fs, "test.trusted"))));
+    let (_, learnedFromGate) = runOk(tr, "trusted learn", trusted, playerLearnArt("tester", testCombatNpcId(), "weiyuan_sword", 1));
+    assertThat(tr, knowsArtAt("weiyuan_sword", 1, requirePlayer(tr, learnedFromGate)), "trusted learn failed");
+
+    // Story conditions & room variants
+    let (_, condChecked) = runOk(tr, "story conditions", gs0,
+        storyConditionMet("tester", LacksItem("soaked_route_note")) >>= (c1) ->
+        storyConditionMet("tester", InMap("weiyuan_road")) >>= (c2) ->
+        storyConditionMet("tester", InMap("kaifeng_city")) >>= (c3) ->
+        if (c1 && c2 && !c3) addInventoryItem("tester", "soaked_route_note", 1) *>> storyConditionMet("tester", HasItem("soaked_route_note")) >>= (c4) ->
+            if (c4) pure(()) else throwErr(OtherException("HasItem failed"))
+        else throwErr(OtherException("fresh conditions failed"))
+    );
+    let varGs = withRoomUpdated("weiyuan_road", (3, 3), (r) -> MkRoom {
+        roomId: r.roomId, roomPos: r.roomPos, roomName: r.roomName, roomDesc: r.roomDesc,
+        roomDescVariants: [("test.later", "庙里只剩冷灰。")],
+        roomKind: r.roomKind, roomRest: r.roomRest, roomInsight: r.roomInsight, roomScript: r.roomScript,
+        roomExits: r.roomExits, roomChar: r.roomChar, roomPlayer: r.roomPlayer,
+    }, condChecked);
+    let (vPlain, _) = runOk(tr, "view plain", varGs, playerView("tester"));
+    assertThat(tr, listAny(vPlain, (pr) -> match pr { (_, ViewMsg(_, d, _, _)) -> d != "庙里只剩冷灰。", _ -> false }), "variant shown early");
+    let varFlagged = varGs |> overF(gsStoriesL(), (sm) -> mapUpdate(sm, "tester", overF(storyFlagsL(), (fs) -> setInsert(fs, "test.later"))));
+    let (vFlagged, _) = runOk(tr, "view flagged", varFlagged, playerView("tester"));
+    assertThat(tr, listAny(vFlagged, (pr) -> match pr { (_, ViewMsg(_, d, _, _)) -> d == "庙里只剩冷灰。", _ -> false }), "variant not shown with flag");
+
+    let (artsResps, _) = runOk(tr, "arts query", gs0, playerArts("tester"));
+    assertThat(tr, listAny(artsResps, (pr) -> match pr {
+        (_, ArtsMsg(arts)) ->
+            listAny(arts, (a) -> a.artSummaryId == "basic_sword" && a.artSummaryIsFoundation)
+            && listAny(arts, (a) -> a.artSummaryId == "nameless_trial_fist" && a.artSummaryType == "fist"),
+        _ -> false,
+    }), "ArtsMsg missing expected starter/foundation arts");
+
+    // 2. Repeatable jobs & streak scaling (100% -> 115%)
+    let gsJob0 = gs0
+        |> overF(gsStoriesL(), (sm) -> mapUpdate(sm, "tester", overF(storyQuestStagesL(), (qm) -> mapInsert(qm, "first_steps_kaifeng", "completed"))))
+        |> (g) -> updateTester((p) -> p |> setF(playerPosL(), ("kaifeng_city", (2, 3))) |> setF(playerMoneyL(), 0) |> setF(playerCombatExpL(), 0) |> setF(playerPotentialL(), 0), g);
+    let (_, j1) = runOk(tr, "start job 1", gsJob0, processNormalAction("tester", Talk("post_runner")));
+    let (_, j2) = runOk(tr, "deliver job 1", updateTester(setF(playerPosL(), ("north_post_road", (0, 1))), j1), processNormalAction("tester", Go(North)));
+    let (_, j3) = runOk(tr, "finish job 1", updateTester(setF(playerPosL(), ("kaifeng_city", (2, 3))), j2), processNormalAction("tester", Talk("post_runner")));
+    let pJ1 = requirePlayer(tr, j3);
+    assertThat(tr, pJ1.playerMoney == 28 && pJ1.playerCombatExp == 35, "streak 1 reward != 28/35");
+    let (_, j4) = runOk(tr, "start job 2", j3, processNormalAction("tester", Talk("post_runner")));
+    let (_, j5) = runOk(tr, "deliver job 2", updateTester(setF(playerPosL(), ("north_post_road", (0, 1))), j4), processNormalAction("tester", Go(North)));
+    let (_, j6) = runOk(tr, "finish job 2", updateTester(setF(playerPosL(), ("kaifeng_city", (2, 3))), j5), processNormalAction("tester", Talk("post_runner")));
+    let pJ2 = requirePlayer(tr, j6);
+    assertThat(tr, pJ2.playerMoney - 28 == jobStreakScale(2, 28) && pJ2.playerCombatExp - 35 == jobStreakScale(2, 35), "streak 2 reward scaling != 115%");
+
+    // 3. Shop, Equipment weapon style filtering, Medicine & Persistence round-trip
+    let gsShop0 = gs0 |> (g) -> updateTester((p) -> p
+        |> setF(playerPosL(), ("kaifeng_city", (3, 1)))
+        |> setF(playerMoneyL(), 200)
+        |> overF(playerCharL() ~>> charEnabledL(), (en) ->
+            en
+                |> (m) -> mapInsert(m, Sword, MkArtEntity { artDef: "nameless_trial_sword", artLevel: 5, artProgress: 0 })
+                |> (m) -> mapInsert(m, Fist, MkArtEntity { artDef: "nameless_trial_fist", artLevel: 5, artProgress: 0 })
+        ), g);
+    let baseD = deriveStats(requirePlayer(tr, gsShop0));
+    let (_, sh1) = runOk(tr, "buy sword", gsShop0, processNormalAction("tester", Buy(Some("kaifeng_blacksmith"), "qinggang_sword")));
+    let (_, sh2) = runOk(tr, "buy armor", sh1, processNormalAction("tester", Buy(Some("kaifeng_blacksmith"), "patrol_leather_armor")));
+    assertThat(tr, requirePlayer(tr, sh2).playerMoney == 200 - 45 - 48, "shop copper deduction mismatch");
+    let (_, sh3) = runOk(tr, "equip sword", sh2, processNormalAction("tester", Equip("qinggang_sword")));
+    let (_, sh4) = runOk(tr, "equip armor", sh3, processNormalAction("tester", Equip("patrol_leather_armor")));
+    let pEq = requirePlayer(tr, sh4);
+    let eqD = deriveStats(pEq);
+    assertThat(tr, eqD.dsDamageBonus > baseD.dsDamageBonus && eqD.dsMaxHp == baseD.dsMaxHp + 25, "equipped sword/armor stats mismatch");
+    let swordAtks = unlockedPreparedAttacks(sh4.world.martialArts, pEq.playerCharacter);
+    assertThat(tr, listLen(swordAtks) > 0 && listAll(swordAtks, (pa) -> artTypeEq(pa.preparedAttackMartialArt.artType, Sword)), "sword weapon should filter to Sword moves only");
+
+    let (_, sh5) = runOk(tr, "buy bracers", sh4, processNormalAction("tester", Buy(Some("kaifeng_blacksmith"), "iron_fist_bracers")));
+    let (_, sh6) = runOk(tr, "use bracers", sh5, processNormalAction("tester", Use("iron_fist_bracers")));
+    let fistAtks = unlockedPreparedAttacks(sh6.world.martialArts, requirePlayer(tr, sh6).playerCharacter);
+    assertThat(tr, listLen(fistAtks) > 0 && listAll(fistAtks, (pa) -> artTypeEq(pa.preparedAttackMartialArt.artType, Fist)), "fist weapon should filter to Fist moves only");
+
+    // Medicine heals HP (+45) and reduces injury (-60s)
+    let gsMed0 = sh6
+        |> (g) -> updateTester((p) -> p |> setF(playerPosL(), ("kaifeng_city", (2, -1))) |> setF(playerCharL() ~>> charHpL(), 20), g)
+        |> overF(gsPlayerRuntimeL(), (rm) -> mapInsert(rm, "tester", set(runtimeInjuredL(), 120.0, newPlayerRuntime())));
+    let (_, gsMed1) = runOk(tr, "buy wound_powder", gsMed0, processNormalAction("tester", Buy(Some("kaifeng_physician"), "wound_powder")));
+    let (_, gsMed2) = runOk(tr, "use wound_powder", gsMed1, processNormalAction("tester", Use("wound_powder")));
+    assertThat(tr, requirePlayer(tr, gsMed2).playerCharacter.charHP == 65, "wound_powder HP != 65");
+    assertThat(tr, match mapLookup(gsMed2.playerRuntime, "tester") { Some(r) -> r.runtimeInjuredRemaining == 60.0, None -> false }, "wound_powder injury != 60s");
+
+    // 4. Regional convergence (`weiyuan_first_echo`) quick flow check
+    let reg0 = gs0
+        |> overF(gsStoriesL(), (sm) -> mapUpdate(sm, "tester", (st) ->
+            st
+                |> overF(storyQuestStagesL(), (qm) -> qm |> (m) -> mapInsert(m, "weiyuan_bloody_case", "completed") |> (m) -> mapInsert(m, "first_steps_kaifeng", "completed"))
+                |> overF(storyFlagsL(), (fs) ->
+                    fs
+                        |> (s) -> setInsert(s, "weiyuan.met_envoy")
+                        |> (s) -> setInsert(s, "weiyuan.saw_ink_mark")
+                        |> (s) -> setInsert(s, "weiyuan.clue_luoyang")
+                        |> (s) -> setInsert(s, "weiyuan.clue_dali")
+                        |> (s) -> setInsert(s, "weiyuan.clue_taihu")
+                )
+        ));
+    let (_, atFork) = runOk(tr, "move to fork", reg0, movePlayerToRoom("tester", "north_post_road", (0, 3)));
+    let (_, atShrine) = runOk(tr, "enter shrine", atFork, playerMove("tester", North));
+    assertThat(tr, optOr(questStageOf("weiyuan_first_echo", atShrine), "") == "ambush", "weiyuan_first_echo did not trigger ambush");
+    let (_, stalkerB) = runOk(tr, "fight stalker", atShrine, playerTalk("tester", "ink_mark_stalker"));
+    let (_, afterStalker) = runOk(tr, "win stalker", updateTesterBattle("tester", setF(enemySideL() ~>> bsCharL() ~>> charHpL(), 0), stalkerB), updateBattle(0.0, "tester"));
+    let (_, atEnvoy) = runOk(tr, "move to envoy", afterStalker, movePlayerToRoom("tester", "kaifeng_city", (1, -3)));
+    let (_, repEnvoy) = runOk(tr, "report envoy", atEnvoy, playerTalk("tester", "weiyuan_envoy"));
+    assertThat(tr, optOr(questStageOf("weiyuan_first_echo", repEnvoy), "") == "completed" && hasStoryFlag("weiyuan.echo_resolved", repEnvoy), "weiyuan_first_echo convergence failed");
+
+    // 5. Legacy `prepared` folding + PlayerSave v6 round-trip & v5 migration reset
+    let legacyJson = "{\"player_id\":\"tester\",\"version\":6,\"prepared\":{\"sword\":{\"id\":\"weiyuan_sword\",\"level\":3},\"fist\":{\"id\":\"nameless_trial_fist\",\"level\":1}},\"enabled\":{\"sword\":{\"id\":\"nameless_trial_sword\",\"level\":1}}}";
+    match decodePlayerSaveJson(legacyJson) {
+        Ok(sv) -> {
+            let swOk = match mapLookup(sv.saveEnabled, Sword) { Some(e) -> e.artDef == "nameless_trial_sword", None -> false };
+            let fsOk = match mapLookup(sv.saveEnabled, Fist) { Some(e) -> e.artDef == "nameless_trial_fist", None -> false };
+            assertThat(tr, swOk && fsOk, "legacy prepared -> enabled fold failed")
+        },
+        Err(e) -> assertThat(tr, false, "legacy save decode failed: " + e),
+    };
+
+    let testSaveDir = "server/build/test-saves";
+    let gsToSave = sh6
+        |> overF(gsStoriesL(), (sm) -> mapUpdate(sm, "tester", overF(storyQuestStagesL(), (qm) -> mapInsert(qm, "fixture_quest", "accepted"))))
+        |> (g) -> updateTester(setF(playerPosL(), ("kaifeng_city", (0, 1))), g);
+    savePlayerState(testSaveDir, "tester", gsToSave);
+    match loadPlayerSave(testSaveDir, "tester") {
+        Ok(Some(loadedSave)) -> {
+            assertThat(tr, loadedSave.saveVersion == 6, "saveVersion != 6");
+            assertThat(tr, optOr(mapLookup(loadedSave.saveEquipped, WeaponSlot), "") == "iron_fist_bracers", "WeaponSlot not saved");
+            assertThat(tr, optOr(mapLookup(loadedSave.saveEquipped, ArmorSlot), "") == "patrol_leather_armor", "ArmorSlot not saved");
+            let fresh = newTestPlayerState(tr, baseGs);
+            let restored = applyPlayerSaveToGameState(loadedSave, fresh);
+            assertThat(tr, optOr(questStageOf("fixture_quest", restored), "") == "accepted", "saved quest stage not restored");
+            assertThat(tr, ordEq(requirePlayer(tr, restored).playerPosition, ("kaifeng_city", (0, 1))), "saved position not restored");
+            assertThat(tr, setMember(roomPlayersAtMap("kaifeng_city", restored, (0, 1)), "tester") && !setMember(roomPlayersAtMap("weiyuan_road", restored, (3, 3)), "tester"), "restored room occupancy mismatch");
+
+            let legacyRestored = applyPlayerSaveToGameState(saveWithVersion(loadedSave, 5), fresh);
+            assertThat(tr, match questStageOf("fixture_quest", legacyRestored) { None -> true, _ -> false }, "v5 save should reset story");
+            assertThat(tr, ordEq(requirePlayer(tr, legacyRestored).playerPosition, ("weiyuan_road", (3, 3))), "v5 save should keep starter pos")
+        },
+        _ -> assertThat(tr, false, "failed to load saved player JSON"),
+    };
+    deletePlayerSave(testSaveDir, "tester")
+}
+
+// ============================================================================
+// Live End-to-End WebSocket + `Actor` Hub Loopback Integration Test
+// ============================================================================
+
+def recvWsTextContaining(conn: std.ws.WsConn, maxMsgs: Int, needle: String): Option String = {
+    let i = cellNew(0);
+    let found: Cell (Option String) = cellNew(None);
+    while (cellGet(i) < maxMsgs && match cellGet(found) { None -> true, _ -> false }) {
+        match wsRecv(conn) {
+            Ok(WsText(txt)) -> {
+                if (strContains(txt, needle)) cellSet(found, Some(txt)) else ();
+                cellSet(i, cellGet(i) + 1)
+            },
+            _ -> cellSet(i, maxMsgs),
+        }
+    };
+    cellGet(found)
+}
+
+def testWebSocketActorHubLoopback(tr: TestRunner, baseGs: GameState): Void = {
+    let wsSaveDir = "server/build/test-ws-saves";
+    deletePlayerSave(wsSaveDir, "ws_hero");
+    match tcpListen("127.0.0.1", 0) {
+        Err(e) -> assertThat(tr, false, "tcpListen(0) failed: " + e),
+        Ok(listener) -> {
+            let port = tcpLocalPort(listener);
+            let running = atomicNew(1);
+            let hub = spawnServerHub(baseGs, "resources/scripts", wsSaveDir, false);
+            let _ = spawnDaemon(() -> serveOnListener(listener, hub, "resources/scripts", running));
+            sleepMs(20);
+
+            // 1. Pre-login RequestCharacterCreationConfig + __dev_reset guard when devMode=false + Login
+            match wsConnect("127.0.0.1", port, "/") {
+                Err(ce) -> assertThat(tr, false, "wsConnect failed: " + ce),
+                Ok(c1) -> {
+                    let _ = wsSendText(c1, "{\"tag\":\"RequestCharacterCreationConfig\"}");
+                    let gotCfg = recvWsTextContaining(c1, 2, "\"CharacterCreationConfigMsg\"");
+                    assertThat(tr, match gotCfg { Some(_) -> true, None -> false }, "WS missing CharacterCreationConfigMsg");
+
+                    let _ = wsSendText(c1, "{\"tag\":\"Login\",\"username\":\"ws_hero\",\"password\":\"\"}");
+                    // Initial sync emits welcome + ViewMsg + PlayerStatsMsg + InventoryMsg + QuestLogMsg + ArtsMsg + MapOverviewMsg
+                    let gotMap = recvWsTextContaining(c1, 10, "\"MapOverviewMsg\"");
+                    assertThat(tr, match gotMap { Some(m) -> strContains(m, "weiyuan_road"), None -> false }, "WS initial sync missing MapOverviewMsg");
+
+                    // Duplicate login while online should be rejected with `user_exists`
+                    match wsConnect("127.0.0.1", port, "/") {
+                        Ok(cDup) -> {
+                            let _ = wsSendText(cDup, "{\"tag\":\"Login\",\"username\":\"ws_hero\",\"password\":\"\"}");
+                            let gotDup = recvWsTextContaining(cDup, 3, "user_exists");
+                            assertThat(tr, match gotDup { Some(_) -> true, None -> false }, "duplicate WS login not rejected with user_exists");
+                            wsClose(cDup)
+                        },
+                        Err(e2) -> assertThat(tr, false, "second wsConnect failed: " + e2),
+                    };
+
+                    // `__dev_reset` without devMode should be rejected with `dev_mode_required`
+                    match wsConnect("127.0.0.1", port, "/") {
+                        Ok(cDev) -> {
+                            let _ = wsSendText(cDev, "{\"tag\":\"Login\",\"username\":\"other_hero\",\"password\":\"__dev_reset\"}");
+                            let gotDevErr = recvWsTextContaining(cDev, 3, "dev_mode_required");
+                            assertThat(tr, match gotDevErr { Some(_) -> true, None -> false }, "__dev_reset without devMode not rejected");
+                            wsClose(cDev)
+                        },
+                        Err(e3) -> assertThat(tr, false, "third wsConnect failed: " + e3),
+                    };
+
+                    // Send a real `NetPlayerAction` (`{"other":"quests"}`) and receive `QuestLogMsg`
+                    let _ = wsSendText(c1, "{\"tag\":\"NetPlayerAction\",\"contents\":{\"other\":\"quests\"}}");
+                    let gotQuests = recvWsTextContaining(c1, 5, "\"QuestLogMsg\"");
+                    assertThat(tr, match gotQuests { Some(_) -> true, None -> false }, "WS NetPlayerAction quests did not return QuestLogMsg");
+
+                    // Clean disconnect saves player JSON
+                    let _ = wsSendText(c1, "{\"tag\":\"Disconnect\"}");
+                    sleepMs(50);
+                    wsClose(c1)
+                },
+            };
+
+            match loadPlayerSave(wsSaveDir, "ws_hero") {
+                Ok(Some(sv)) -> assertThat(tr, sv.savePlayerId == "ws_hero" && sv.saveVersion == 6, "WS disconnect save mismatch"),
+                _ -> assertThat(tr, false, "WS disconnect did not persist player save"),
+            };
+            deletePlayerSave(wsSaveDir, "ws_hero");
+            atomicStore(running, 0);
+            tcpCloseListener(listener)
+        },
+    }
+}
+
+pub def runAllTests(): Bool = {
+    printLn("Running Tingfeng Geisha backend test suite...");
+    match loadGameState("resources/scripts") {
+        Err(e) -> {
+            printLn("FATAL: loadGameState failed:\n" + e);
+            false
+        },
+        Ok(baseGs) -> {
+            let tr = MkTestRunner {
+                passedCount: cellNew(0),
+                failures: cellNew(Nil),
+            };
+            let _ = loadFreshState(tr, baseGs);
+            runTest(tr, "World referential & progression validation", (r) -> testWorldValidation(r, baseGs));
+            runTest(tr, "Foundation arts, character creation, Login JSON & derived stats", (r) -> testFoundationCreationAndStats(r, baseGs));
+            runTest(tr, "Room occupancy, cross-map movement & MapOverviewMsg graph", (r) -> testMovementAndMapOverview(r, baseGs));
+            runTest(tr, "NPC battle locks, defeat recovery, settlement dirty flag & respawns", (r) -> testCombatLocksSettlementAndRespawn(r, baseGs));
+            runTest(tr, "Active skills, action-lock queueing, multi-hit splits, AP ticks & DoT", (r) -> testCombatSkillsTicksAndEffects(r, baseGs));
+            runTest(tr, "Progression formulas, training queue, insight & internal art differentiation", (r) -> testProgressionAndTraining(r, baseGs));
+            runTest(tr, "Weiyuan chapter narrative pacing & player-isolated story battles", (r) -> testWeiyuanAndStoryIsolation(r, baseGs));
+            runTest(tr, "Teacher flags, room variants, repeatable jobs, shop/equipment & v6 saves", (r) -> testKaifengRegionalAndEconomy(r, baseGs));
+            runTest(tr, "Live WebSocket + Actor Hub loopback protocol & persistence", (r) -> testWebSocketActorHubLoopback(r, baseGs));
+
+            let failCount = listLen(cellGet(tr.failures));
+            if (failCount == 0) {
+                printLn("All tests passed (" + intToStr(cellGet(tr.passedCount)) + " suites, 0 failures)");
+                true
+            } else {
+                printLn("FAILED: " + intToStr(failCount) + " assertion(s) failed");
+                false
+            }
+        },
+    }
+}

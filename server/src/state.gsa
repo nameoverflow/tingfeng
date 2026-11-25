@@ -1,0 +1,503 @@
+// Transactional MTL `Game a` Monad (`MonadState GameState`, `MonadError GameException`,
+// `MonadWriter (List PlayerResp)`, `MonadRng`), Persistent `GameState`, and Lenses (`state`).
+
+use std.option.{Option, Some, None}
+use std.result.{Result, Ok, Err}
+use std.codec.{(|>)}
+use std.list.listAppend
+use std.rand.{Rng, nextRange}
+use fp.{
+    Semigroup, (<+>),
+    Functor, fmap, (<$>),
+    Applicative, pure, ap,
+    Monad, (>>=), (*>>),
+    MonadState, get, put, modify,
+    MonadError, throwErr,
+    MonadWriter, tell,
+    MonadRng, rollRange,
+    Lens, lens, (~>>), view, set, over, setF, overF, useL, assignL, overL, optOr
+}
+use ordmap.{
+    OrdMap, OrdSet,
+    mapEmpty, mapLookup, mapInsert, mapUpdate, mapFromList,
+    setEmpty, setInsert, setFromList
+}
+use yaml.loadConfigurableFrom
+use entity.{
+    CharAction, Attacking, Dialogue, Sparring,
+    Character, MkCharacter, Player, MkPlayer,
+    Direction, directionToText, Room, GameMap, Item,
+    genderToText,
+    roomPlayerL, mapRoomsL
+}
+use creation.{
+    CharacterCreationChoice, characterCreationConfigPath,
+    loadCharacterCreationConfig, applyCharacterCreationChoice
+}
+use quest.{
+    PlayerStoryState, newPlayerStoryStateFor, storyFlagsL
+}
+use world.{
+    World, WorldException, MapNotFound, RoomNotFound, ItemNotFound, CharNotFound,
+    worldExceptionText, loadAllAssets, worldMapsL
+}
+use message.{
+    ErrorSummary, MkErrorSummary, ActionResp, PlayerResp
+}
+use combat.{
+    Battle, Combat, CombatException, combatExceptionText, runCombatPure
+}
+
+// ============================================================================
+// Queued Training & Per-Player Ephemeral Runtime State
+// ============================================================================
+
+pub data TrainingAction {
+    TrainPractice(String),
+    TrainLearn(String, String),
+    TrainStudy(String),
+    TrainResearch(String),
+    TrainMeditate(Int),
+}
+
+pub data BusyTask {
+    MkBusyTask {
+        busyAction: TrainingAction,
+        busyRemaining: Int,
+        busyTimer: Float,
+        busyCompleted: Int,
+    },
+}
+
+pub data PlayerRuntime {
+    MkPlayerRuntime {
+        runtimeRecoveryCarry: (Float, Float, Float),
+        runtimeInjuredRemaining: Float,
+        runtimeBusy: Option BusyTask,
+        runtimeCombatInsight: Int,
+    },
+}
+
+pub def newPlayerRuntime(): PlayerRuntime =
+    MkPlayerRuntime {
+        runtimeRecoveryCarry: (0.0, 0.0, 0.0),
+        runtimeInjuredRemaining: 0.0,
+        runtimeBusy: None,
+        runtimeCombatInsight: 0,
+    }
+
+pub def runtimeInjuredL(): Lens PlayerRuntime Float =
+    lens((r) -> r.runtimeInjuredRemaining, (r, v) -> MkPlayerRuntime {
+        runtimeRecoveryCarry: r.runtimeRecoveryCarry,
+        runtimeInjuredRemaining: v,
+        runtimeBusy: r.runtimeBusy,
+        runtimeCombatInsight: r.runtimeCombatInsight,
+    })
+
+pub def runtimeBusyL(): Lens PlayerRuntime (Option BusyTask) =
+    lens((r) -> r.runtimeBusy, (r, v) -> MkPlayerRuntime {
+        runtimeRecoveryCarry: r.runtimeRecoveryCarry,
+        runtimeInjuredRemaining: r.runtimeInjuredRemaining,
+        runtimeBusy: v,
+        runtimeCombatInsight: r.runtimeCombatInsight,
+    })
+
+pub def runtimeInsightL(): Lens PlayerRuntime Int =
+    lens((r) -> r.runtimeCombatInsight, (r, v) -> MkPlayerRuntime {
+        runtimeRecoveryCarry: r.runtimeRecoveryCarry,
+        runtimeInjuredRemaining: r.runtimeInjuredRemaining,
+        runtimeBusy: r.runtimeBusy,
+        runtimeCombatInsight: v,
+    })
+
+// ============================================================================
+// Persistent `GameState` & Composable Lenses
+// ============================================================================
+
+pub data GameState {
+    MkGameState {
+        world: World,
+        players: OrdMap String Player,
+        battles: OrdMap String Battle,
+        respawn: OrdMap String Float,
+        stories: OrdMap String PlayerStoryState,
+        isolatedBattles: OrdSet String,
+        dirtyPlayers: OrdSet String,
+        playerRuntime: OrdMap String PlayerRuntime,
+    },
+}
+
+pub def newGameState(w: World): GameState =
+    MkGameState {
+        world: w,
+        players: mapEmpty(),
+        battles: mapEmpty(),
+        respawn: mapEmpty(),
+        stories: mapEmpty(),
+        isolatedBattles: setEmpty(),
+        dirtyPlayers: setEmpty(),
+        playerRuntime: mapEmpty(),
+    }
+
+pub def loadGameState(basePath: String): Result GameState String =
+    match loadAllAssets(basePath) {
+        Ok(w) -> Ok(newGameState(w)),
+        Err(e) -> Err(e),
+    }
+
+pub def gsWorldL(): Lens GameState World =
+    lens((s) -> s.world, (s, v) -> MkGameState {
+        world: v, players: s.players, battles: s.battles, respawn: s.respawn,
+        stories: s.stories, isolatedBattles: s.isolatedBattles, dirtyPlayers: s.dirtyPlayers, playerRuntime: s.playerRuntime,
+    })
+
+pub def gsPlayersL(): Lens GameState (OrdMap String Player) =
+    lens((s) -> s.players, (s, v) -> MkGameState {
+        world: s.world, players: v, battles: s.battles, respawn: s.respawn,
+        stories: s.stories, isolatedBattles: s.isolatedBattles, dirtyPlayers: s.dirtyPlayers, playerRuntime: s.playerRuntime,
+    })
+
+pub def gsBattlesL(): Lens GameState (OrdMap String Battle) =
+    lens((s) -> s.battles, (s, v) -> MkGameState {
+        world: s.world, players: s.players, battles: v, respawn: s.respawn,
+        stories: s.stories, isolatedBattles: s.isolatedBattles, dirtyPlayers: s.dirtyPlayers, playerRuntime: s.playerRuntime,
+    })
+
+pub def gsRespawnL(): Lens GameState (OrdMap String Float) =
+    lens((s) -> s.respawn, (s, v) -> MkGameState {
+        world: s.world, players: s.players, battles: s.battles, respawn: v,
+        stories: s.stories, isolatedBattles: s.isolatedBattles, dirtyPlayers: s.dirtyPlayers, playerRuntime: s.playerRuntime,
+    })
+
+pub def gsStoriesL(): Lens GameState (OrdMap String PlayerStoryState) =
+    lens((s) -> s.stories, (s, v) -> MkGameState {
+        world: s.world, players: s.players, battles: s.battles, respawn: s.respawn,
+        stories: v, isolatedBattles: s.isolatedBattles, dirtyPlayers: s.dirtyPlayers, playerRuntime: s.playerRuntime,
+    })
+
+pub def gsIsolatedBattlesL(): Lens GameState (OrdSet String) =
+    lens((s) -> s.isolatedBattles, (s, v) -> MkGameState {
+        world: s.world, players: s.players, battles: s.battles, respawn: s.respawn,
+        stories: s.stories, isolatedBattles: v, dirtyPlayers: s.dirtyPlayers, playerRuntime: s.playerRuntime,
+    })
+
+pub def gsDirtyPlayersL(): Lens GameState (OrdSet String) =
+    lens((s) -> s.dirtyPlayers, (s, v) -> MkGameState {
+        world: s.world, players: s.players, battles: s.battles, respawn: s.respawn,
+        stories: s.stories, isolatedBattles: s.isolatedBattles, dirtyPlayers: v, playerRuntime: s.playerRuntime,
+    })
+
+pub def gsPlayerRuntimeL(): Lens GameState (OrdMap String PlayerRuntime) =
+    lens((s) -> s.playerRuntime, (s, v) -> MkGameState {
+        world: s.world, players: s.players, battles: s.battles, respawn: s.respawn,
+        stories: s.stories, isolatedBattles: s.isolatedBattles, dirtyPlayers: s.dirtyPlayers, playerRuntime: v,
+    })
+
+pub def updateMapRoomInWorld(
+    wrld: World,
+    mid: String,
+    pos: (Int, Int),
+    f: Room -> Room
+): World = {
+    let updatedMaps = mapUpdate(wrld.maps, mid, (mp) ->
+        over(mapRoomsL(), (rs) -> mapUpdate(rs, pos, f), mp)
+    );
+    set(worldMapsL(), updatedMaps, wrld)
+}
+
+// ============================================================================
+// Structured `GameException`
+// ============================================================================
+
+pub data GameException {
+    PlayerNotFound(String),
+    BattleNotFound(String),
+    UnableToInteract(Character, CharAction),
+    UnableToMove(Direction, Room),
+    ExceptionInWorld(WorldException),
+    ExceptionInCombat(CombatException),
+    StructuredException(ErrorSummary),
+    OtherException(String),
+}
+
+def charActionCode(act: CharAction): String = match act {
+    Attacking -> "attack",
+    Dialogue -> "talk",
+    Sparring -> "spar",
+}
+
+pub def gameExceptionText(err: GameException): String = match err {
+    PlayerNotFound(pid) -> "Player not found: " + pid,
+    BattleNotFound(bid) -> "Battle not found: " + bid,
+    UnableToInteract(ch, act) -> "Unable to " + charActionCode(act) + ": " + ch.charName,
+    UnableToMove(dir, room) -> "Unable to move " + directionToText(dir) + " in " + room.roomName,
+    ExceptionInWorld(we) -> "Exception in world: " + worldExceptionText(we),
+    ExceptionInCombat(ce) -> "Exception in combat: " + combatExceptionText(ce),
+    StructuredException(sum) -> "Structured exception: " + sum.errorSummaryCode,
+    OtherException(msg) -> "Other exception: " + msg,
+}
+
+pub def gameExceptionToSummary(err: GameException): ErrorSummary = match err {
+    PlayerNotFound(pid) ->
+        MkErrorSummary { errorSummaryCode: "player_not_found", errorSummaryParams: mapFromList([("playerId", pid)]) },
+    BattleNotFound(bid) ->
+        MkErrorSummary { errorSummaryCode: "battle_not_found", errorSummaryParams: mapFromList([("battleId", bid)]) },
+    UnableToInteract(ch, act) ->
+        MkErrorSummary {
+            errorSummaryCode: "unable_to_interact",
+            errorSummaryParams: mapFromList([("target", ch.charName), ("action", charActionCode(act))]),
+        },
+    UnableToMove(dir, room) ->
+        MkErrorSummary {
+            errorSummaryCode: "unable_to_move",
+            errorSummaryParams: mapFromList([("direction", directionToText(dir)), ("room", room.roomName)]),
+        },
+    ExceptionInWorld(we) ->
+        MkErrorSummary { errorSummaryCode: "world_exception", errorSummaryParams: mapFromList([("detail", worldExceptionText(we))]) },
+    ExceptionInCombat(ce) ->
+        MkErrorSummary { errorSummaryCode: "combat_exception", errorSummaryParams: mapFromList([("detail", combatExceptionText(ce))]) },
+    StructuredException(sum) ->
+        sum,
+    OtherException(msg) ->
+        MkErrorSummary { errorSummaryCode: "other", errorSummaryParams: mapFromList([("detail", msg)]) },
+}
+
+// ============================================================================
+// Transactional MTL `Game a` Monad Instances
+// ============================================================================
+
+pub data Game a {
+    MkGame((GameState, Rng) -> Result (a, GameState, Rng, List PlayerResp) GameException),
+}
+
+pub def runGameWithRng(
+    gs: GameState,
+    rng: Rng,
+    action: Game a
+): Result (a, GameState, Rng, List PlayerResp) GameException = match action {
+    MkGame(f) -> f(gs, rng),
+}
+
+pub def runGame(
+    gs: GameState,
+    rng: Rng,
+    action: Game a
+): Result (List PlayerResp, GameState, Rng) GameException =
+    match runGameWithRng(gs, rng, action) {
+        Ok((_, gs2, rng2, out)) -> Ok((out, gs2, rng2)),
+        Err(e) -> Err(e),
+    }
+
+instance Functor Game {
+    def fmap(f, ga) = MkGame((gs, r) -> match runGameWithRng(gs, r, ga) {
+        Ok((a, gs2, r2, out)) -> Ok((f(a), gs2, r2, out)),
+        Err(e) -> Err(e),
+    })
+}
+
+instance Applicative Game {
+    def pure(x) = MkGame((gs, r) -> Ok((x, gs, r, Nil)))
+    def ap(gf, ga) = MkGame((gs, r) -> match runGameWithRng(gs, r, gf) {
+        Err(e) -> Err(e),
+        Ok((f, gs2, r2, out1)) -> match runGameWithRng(gs2, r2, ga) {
+            Err(e2) -> Err(e2),
+            Ok((a, gs3, r3, out2)) -> Ok((f(a), gs3, r3, listAppend(out1, out2))),
+        },
+    })
+}
+
+instance Monad Game {
+    def (>>=)(ga, k) = MkGame((gs, r) -> match runGameWithRng(gs, r, ga) {
+        Err(e) -> Err(e),
+        Ok((a, gs2, r2, out1)) -> match runGameWithRng(gs2, r2, k(a)) {
+            Err(e2) -> Err(e2),
+            Ok((v, gs3, r3, out2)) -> Ok((v, gs3, r3, listAppend(out1, out2))),
+        },
+    })
+}
+
+instance MonadState GameState Game {
+    def get() = MkGame((gs, r) -> Ok((gs, gs, r, Nil)))
+    def put(gs2) = MkGame((_, r) -> Ok(((), gs2, r, Nil)))
+}
+
+instance MonadError GameException Game {
+    def throwErr(err) = MkGame((_, _) -> Err(err))
+}
+
+instance MonadWriter (List PlayerResp) Game {
+    def tell(out) = MkGame((gs, r) -> Ok(((), gs, r, out)))
+}
+
+instance MonadRng Game {
+    def rollRange(lo, hi) = MkGame((gs, r) -> {
+        let (v, r2) = nextRange(r, lo, hi);
+        Ok((v, gs, r2, Nil))
+    })
+}
+
+pub def tellGame(pid: String, resp: ActionResp): Game Void =
+    tell([(pid, resp)])
+
+pub def throwStructured(code: String, params: List (String, String)): Game a =
+    throwErr(StructuredException(MkErrorSummary {
+        errorSummaryCode: code,
+        errorSummaryParams: mapFromList(params),
+    }))
+
+// Atomic rollback: if `action` throws, `handler` runs on the untouched `(gs, r)`!
+pub def catchGame(action: Game a, handler: GameException -> Game a): Game a =
+    MkGame((gs, r) -> match runGameWithRng(gs, r, action) {
+        Ok(res) -> Ok(res),
+        Err(err) -> runGameWithRng(gs, r, handler(err)),
+    })
+
+pub def liftCombat(wrld: World, battle: Battle, ca: Combat a): Game (a, Battle, List PlayerResp) =
+    MkGame((gs, r) -> match runCombatPure(wrld, battle, r, ca) {
+        Ok((v, b2, r2, resps)) -> Ok(((v, b2, resps), gs, r2, Nil)),
+        Err(ce) -> Err(ExceptionInCombat(ce)),
+    })
+
+// ============================================================================
+// Domain State Accessors & Player Initialization
+// ============================================================================
+
+pub def getsPlayer(pid: String): Game Player =
+    get() >>= (gs) -> match mapLookup(gs.players, pid) {
+        Some(p) -> pure(p),
+        None -> throwErr(PlayerNotFound(pid)),
+    }
+
+pub def updatePlayer(pid: String, f: Player -> Player): Game Void =
+    overL(gsPlayersL(), (m) -> mapUpdate(m, pid, f))
+
+pub def getsBattle(bid: String): Game Battle =
+    get() >>= (gs) -> match mapLookup(gs.battles, bid) {
+        Some(b) -> pure(b),
+        None -> throwErr(BattleNotFound(bid)),
+    }
+
+pub def getsWorldMap(mid: String): Game GameMap =
+    get() >>= (gs) -> match mapLookup(gs.world.maps, mid) {
+        Some(mp) -> pure(mp),
+        None -> throwErr(ExceptionInWorld(MapNotFound(mid))),
+    }
+
+pub def getsWorldRoom(mid: String, pos: (Int, Int)): Game Room =
+    getsWorldMap(mid) >>= (mp) -> match mapLookup(mp.mapRooms, pos) {
+        Some(r) -> pure(r),
+        None -> throwErr(ExceptionInWorld(RoomNotFound(mid, pos))),
+    }
+
+pub def getsWorldChar(cid: String): Game Character =
+    get() >>= (gs) -> match mapLookup(gs.world.chars, cid) {
+        Some(c) -> pure(c),
+        None -> throwErr(ExceptionInWorld(CharNotFound(cid))),
+    }
+
+pub def getsWorldItem(iid: String): Game Item =
+    get() >>= (gs) -> match mapLookup(gs.world.items, iid) {
+        Some(i) -> pure(i),
+        None -> throwErr(ExceptionInWorld(ItemNotFound(iid))),
+    }
+
+pub def usePlayerRuntime(pid: String): Game PlayerRuntime =
+    ((gs: GameState) -> optOr(mapLookup(gs.playerRuntime, pid), newPlayerRuntime())) <$> get()
+
+pub def putPlayerRuntime(pid: String, rt: PlayerRuntime): Game Void =
+    overL(gsPlayerRuntimeL(), (m) -> mapInsert(m, pid, rt))
+
+pub def markPlayerDirty(pid: String): Game Void =
+    overL(gsDirtyPlayersL(), (s) -> setInsert(s, pid))
+
+def characterCreationFlags(choice: CharacterCreationChoice): OrdSet String =
+    setFromList([
+        "creation.gender." + genderToText(choice.creationGender),
+        "creation.origin." + choice.creationOrigin,
+        "creation.childhood1." + choice.creationChildhoodOne,
+        "creation.childhood2." + choice.creationChildhoodTwo,
+    ])
+
+pub def createDefaultPlayerWithCreation(
+    pid: String,
+    path: String,
+    creationChoice: Option CharacterCreationChoice
+): Game Void = {
+    let loaded: Result Player String = loadConfigurableFrom(path);
+    match loaded {
+        Err(e) -> throwErr(OtherException(e)),
+        Ok(rawPlayer) -> {
+            let c0 = rawPlayer.playerCharacter;
+            let namedChar = MkCharacter {
+                charId: "player$" + pid,
+                charName: c0.charName,
+                charDesc: c0.charDesc,
+                charGender: c0.charGender,
+                charAppearance: c0.charAppearance,
+                charDialogue: c0.charDialogue,
+                charActions: c0.charActions,
+                charInitiallyHidden: c0.charInitiallyHidden,
+                charRespawn: c0.charRespawn,
+                charHP: c0.charHP,
+                charMaxHP: c0.charMaxHP,
+                charQi: c0.charQi,
+                charMaxQi: c0.charMaxQi,
+                charJing: c0.charJing,
+                charQiRegen: c0.charQiRegen,
+                charInnate: c0.charInnate,
+                charStrength: c0.charStrength,
+                charAgility: c0.charAgility,
+                charVitality: c0.charVitality,
+                charEquipped: c0.charEquipped,
+                charEnabled: c0.charEnabled,
+                charTeaches: c0.charTeaches,
+                charTeachBonus: c0.charTeachBonus,
+                charTeachRequires: c0.charTeachRequires,
+                charShop: c0.charShop,
+                charRank: c0.charRank,
+                charRewardExpCeiling: c0.charRewardExpCeiling,
+                charFixedReward: c0.charFixedReward,
+                charArt: c0.charArt,
+                charStatus: c0.charStatus,
+            };
+            let withId = MkPlayer {
+                playerId: pid,
+                playerPosition: rawPlayer.playerPosition,
+                playerConcurrency: rawPlayer.playerConcurrency,
+                playerStatus: rawPlayer.playerStatus,
+                playerInventory: rawPlayer.playerInventory,
+                playerMoney: rawPlayer.playerMoney,
+                playerPotential: rawPlayer.playerPotential,
+                playerCombatExp: rawPlayer.playerCombatExp,
+                playerCharacter: namedChar,
+            };
+            let finalPlayerRes: Result Player GameException = match creationChoice {
+                None -> Ok(withId),
+                Some(ch) -> match loadCharacterCreationConfig(characterCreationConfigPath()) {
+                    Err(ce) -> Err(OtherException(ce)),
+                    Ok(cfg) -> Ok(applyCharacterCreationChoice(cfg, ch, withId)),
+                },
+            };
+            match finalPlayerRes {
+                Err(ge) -> throwErr(ge),
+                Ok(player) ->
+                    get() >>= (gs) -> {
+                        let baseStory = newPlayerStoryStateFor(gs.world.chars);
+                        let story = match creationChoice {
+                            None -> baseStory,
+                            Some(ch) -> baseStory |> overF(storyFlagsL(), (fl) -> fl <+> characterCreationFlags(ch)),
+                        };
+                        let (mid, pos) = player.playerPosition;
+                        overL(gsPlayersL(), (m) -> mapInsert(m, pid, player))
+                        *>> overL(gsStoriesL(), (m) -> mapInsert(m, pid, story))
+                        *>> overL(gsWorldL(), (w) ->
+                            updateMapRoomInWorld(w, mid, pos, overF(roomPlayerL(), (ps) -> setInsert(ps, pid)))
+                        )
+                    },
+            }
+        },
+    }
+}
+
+pub def createDefaultPlayer(pid: String, path: String): Game Void =
+    createDefaultPlayerWithCreation(pid, path, None)

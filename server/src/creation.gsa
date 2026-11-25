@@ -1,0 +1,325 @@
+// Character Creation Algebra (`Semigroup` / `Monoid` Bonus Accumulation),
+// Codec Pipelines, and Initial Player Transformation (`creation`).
+
+use std.option.{Option, Some, None}
+use std.result.Result
+use std.str.strJoin
+use std.codec.{
+    Encode, encode, object, (:=),
+    Decoder, (|>), succeed, str, int, list, req, withDefault
+}
+use fp.{
+    Semigroup, (<+>), Monoid, empty,
+    setF, maxInt, listFind
+}
+use yaml.{Configurable, loadConfigurableFrom}
+use entity.{
+    Gender, UnknownGender, genderToText, decodeGender,
+    InnateAttrs, MkInnateAttrs,
+    Character, MkCharacter, Player, playerCharL,
+    clampInnateScore, clampAppearanceScore, deriveStats
+}
+
+pub data CharacterCreationChoice {
+    MkCharacterCreationChoice {
+        creationGender: Gender,
+        creationOrigin: String,
+        creationChildhoodOne: String,
+        creationChildhoodTwo: String,
+    },
+}
+
+pub def decodeCharacterCreationChoice(): Decoder CharacterCreationChoice =
+    succeed((g) -> (o) -> (c1) -> (c2) -> MkCharacterCreationChoice {
+        creationGender: g,
+        creationOrigin: o,
+        creationChildhoodOne: c1,
+        creationChildhoodTwo: c2,
+    })
+        |> withDefault("gender", decodeGender(), UnknownGender)
+        |> req("origin", str)
+        |> req("childhood1", str)
+        |> req("childhood2", str)
+
+instance Encode CharacterCreationChoice {
+    def encode(c) = object([
+        "gender"     := c.creationGender,
+        "origin"     := c.creationOrigin,
+        "childhood1" := c.creationChildhoodOne,
+        "childhood2" := c.creationChildhoodTwo,
+    ])
+}
+
+pub data CreationBonus {
+    MkCreationBonus {
+        bonusStrength: Int,
+        bonusAgility: Int,
+        bonusVitality: Int,
+        bonusMaxQi: Int,
+        bonusAppearance: Int,
+    },
+}
+
+pub def emptyCreationBonus(): CreationBonus =
+    MkCreationBonus {
+        bonusStrength: 0,
+        bonusAgility: 0,
+        bonusVitality: 0,
+        bonusMaxQi: 0,
+        bonusAppearance: 0,
+    }
+
+instance Semigroup CreationBonus {
+    def (<+>)(a, b) = MkCreationBonus {
+        bonusStrength: a.bonusStrength + b.bonusStrength,
+        bonusAgility: a.bonusAgility + b.bonusAgility,
+        bonusVitality: a.bonusVitality + b.bonusVitality,
+        bonusMaxQi: a.bonusMaxQi + b.bonusMaxQi,
+        bonusAppearance: a.bonusAppearance + b.bonusAppearance,
+    }
+}
+
+instance Monoid CreationBonus {
+    def empty() = emptyCreationBonus()
+}
+
+pub def decodeCreationBonus(): Decoder CreationBonus =
+    succeed((s) -> (a) -> (v) -> (mq) -> (app) -> MkCreationBonus {
+        bonusStrength: s,
+        bonusAgility: a,
+        bonusVitality: v,
+        bonusMaxQi: mq,
+        bonusAppearance: app,
+    })
+        |> withDefault("strength", int, 0)
+        |> withDefault("agility", int, 0)
+        |> withDefault("vitality", int, 0)
+        |> withDefault("maxQi", int, 0)
+        |> withDefault("appearance", int, 0)
+
+instance Encode CreationBonus {
+    def encode(b) = object([
+        "strength"   := b.bonusStrength,
+        "agility"    := b.bonusAgility,
+        "vitality"   := b.bonusVitality,
+        "maxQi"      := b.bonusMaxQi,
+        "appearance" := b.bonusAppearance,
+    ])
+}
+
+pub data CreationOption {
+    MkCreationOption {
+        creationOptionId: String,
+        creationOptionLabel: String,
+        creationOptionStory: String,
+        creationOptionBonus: CreationBonus,
+    },
+}
+
+pub def decodeCreationOption(): Decoder CreationOption =
+    succeed((id) -> (lbl) -> (st) -> (bon) -> MkCreationOption {
+        creationOptionId: id,
+        creationOptionLabel: lbl,
+        creationOptionStory: st,
+        creationOptionBonus: bon,
+    })
+        |> req("id", str)
+        |> req("label", str)
+        |> req("story", str)
+        |> req("bonus", decodeCreationBonus())
+
+instance Encode CreationOption {
+    def encode(o) = object([
+        "id"    := o.creationOptionId,
+        "label" := o.creationOptionLabel,
+        "story" := o.creationOptionStory,
+        "bonus" := o.creationOptionBonus,
+    ])
+}
+
+pub data CreationGenderOption {
+    MkCreationGenderOption {
+        creationGenderOptionId: String,
+        creationGenderOptionLabel: String,
+    },
+}
+
+pub def decodeCreationGenderOption(): Decoder CreationGenderOption =
+    succeed((id) -> (lbl) -> MkCreationGenderOption {
+        creationGenderOptionId: id,
+        creationGenderOptionLabel: lbl,
+    })
+        |> req("id", str)
+        |> req("label", str)
+
+instance Encode CreationGenderOption {
+    def encode(g) = object([
+        "id"    := g.creationGenderOptionId,
+        "label" := g.creationGenderOptionLabel,
+    ])
+}
+
+pub data CharacterCreationConfig {
+    MkCharacterCreationConfig {
+        creationBaseStats: CreationBonus,
+        creationGenderOptions: List CreationGenderOption,
+        creationOrigins: List CreationOption,
+        creationChildhoodOneOptions: List CreationOption,
+        creationChildhoodTwoOptions: List CreationOption,
+    },
+}
+
+pub def decodeCharacterCreationConfig(): Decoder CharacterCreationConfig =
+    succeed((bs) -> (gs) -> (os) -> (c1) -> (c2) -> MkCharacterCreationConfig {
+        creationBaseStats: bs,
+        creationGenderOptions: gs,
+        creationOrigins: os,
+        creationChildhoodOneOptions: c1,
+        creationChildhoodTwoOptions: c2,
+    })
+        |> req("baseStats", decodeCreationBonus())
+        |> req("genders", list(decodeCreationGenderOption()))
+        |> req("origins", list(decodeCreationOption()))
+        |> req("childhood1", list(decodeCreationOption()))
+        |> req("childhood2", list(decodeCreationOption()))
+
+instance Encode CharacterCreationConfig {
+    def encode(cfg) = object([
+        "baseStats"  := cfg.creationBaseStats,
+        "genders"    := cfg.creationGenderOptions,
+        "origins"    := cfg.creationOrigins,
+        "childhood1" := cfg.creationChildhoodOneOptions,
+        "childhood2" := cfg.creationChildhoodTwoOptions,
+    ])
+}
+
+instance Configurable CharacterCreationConfig {
+    def configId(_) = "character_creation"
+    def configDecoder() = decodeCharacterCreationConfig()
+}
+
+pub def characterCreationConfigPath(): String = "resources/scripts/character_creation.yaml"
+
+pub def loadCharacterCreationConfig(path: String): Result CharacterCreationConfig String =
+    loadConfigurableFrom(path)
+
+def optionBonus(options: List CreationOption, optId: String): CreationBonus =
+    match listFind(options, (o) -> o.creationOptionId == optId) {
+        Some(o) -> o.creationOptionBonus,
+        None -> empty(),
+    }
+
+def optionName(options: List CreationOption, optId: String): String =
+    match listFind(options, (o) -> o.creationOptionId == optId) {
+        Some(o) -> o.creationOptionLabel,
+        None -> optId,
+    }
+
+def genderName(options: List CreationGenderOption, g: Gender): String = {
+    let gid = genderToText(g);
+    match listFind(options, (o) -> o.creationGenderOptionId == gid) {
+        Some(o) -> o.creationGenderOptionLabel,
+        None -> gid,
+    }
+}
+
+def characterCreationSummary(cfg: CharacterCreationConfig, ch: CharacterCreationChoice): String =
+    strJoin([
+        "性别：" + genderName(cfg.creationGenderOptions, ch.creationGender) + "。",
+        "出身：" + optionName(cfg.creationOrigins, ch.creationOrigin) + "。",
+        "幼年：" + optionName(cfg.creationChildhoodOneOptions, ch.creationChildhoodOne) + "。",
+        "后来：" + optionName(cfg.creationChildhoodTwoOptions, ch.creationChildhoodTwo) + "。",
+    ], "\n")
+
+def restoreVitals(player: Player): Player = {
+    let derived = deriveStats(player);
+    let c = player.playerCharacter;
+    let ch = MkCharacter {
+        charId: c.charId,
+        charName: c.charName,
+        charDesc: c.charDesc,
+        charGender: c.charGender,
+        charAppearance: c.charAppearance,
+        charDialogue: c.charDialogue,
+        charActions: c.charActions,
+        charInitiallyHidden: c.charInitiallyHidden,
+        charRespawn: c.charRespawn,
+        charHP: derived.dsMaxHp,
+        charMaxHP: derived.dsMaxHp,
+        charQi: derived.dsMaxQi,
+        charMaxQi: c.charMaxQi,
+        charJing: derived.dsMaxJing,
+        charQiRegen: c.charQiRegen,
+        charInnate: c.charInnate,
+        charStrength: c.charStrength,
+        charAgility: c.charAgility,
+        charVitality: c.charVitality,
+        charEquipped: c.charEquipped,
+        charEnabled: c.charEnabled,
+        charTeaches: c.charTeaches,
+        charTeachBonus: c.charTeachBonus,
+        charTeachRequires: c.charTeachRequires,
+        charShop: c.charShop,
+        charRank: c.charRank,
+        charRewardExpCeiling: c.charRewardExpCeiling,
+        charFixedReward: c.charFixedReward,
+        charArt: c.charArt,
+        charStatus: c.charStatus,
+    };
+    player |> setF(playerCharL(), ch)
+}
+
+pub def applyCharacterCreationChoice(
+    cfg: CharacterCreationConfig,
+    choice: CharacterCreationChoice,
+    player: Player
+): Player = {
+    // Combine origin + childhood1 + childhood2 bonuses via `Semigroup` `<+>`!
+    let total =
+        optionBonus(cfg.creationOrigins, choice.creationOrigin)
+        <+> optionBonus(cfg.creationChildhoodOneOptions, choice.creationChildhoodOne)
+        <+> optionBonus(cfg.creationChildhoodTwoOptions, choice.creationChildhoodTwo);
+
+    let c = player.playerCharacter;
+    let oldInnate = c.charInnate;
+    let newInnate = MkInnateAttrs {
+        innateStrength: clampInnateScore(oldInnate.innateStrength + total.bonusStrength),
+        innateAgility: clampInnateScore(oldInnate.innateAgility + total.bonusAgility),
+        innateVitality: clampInnateScore(oldInnate.innateVitality + total.bonusVitality),
+    };
+
+    let updatedChar = MkCharacter {
+        charId: c.charId,
+        charName: c.charName,
+        charDesc: characterCreationSummary(cfg, choice),
+        charGender: choice.creationGender,
+        charAppearance: clampAppearanceScore(c.charAppearance + total.bonusAppearance),
+        charDialogue: c.charDialogue,
+        charActions: c.charActions,
+        charInitiallyHidden: c.charInitiallyHidden,
+        charRespawn: c.charRespawn,
+        charHP: c.charHP,
+        charMaxHP: c.charMaxHP,
+        charQi: c.charQi,
+        charMaxQi: maxInt(0, c.charMaxQi + total.bonusMaxQi),
+        charJing: c.charJing,
+        charQiRegen: c.charQiRegen,
+        charInnate: newInnate,
+        charStrength: c.charStrength,
+        charAgility: c.charAgility,
+        charVitality: c.charVitality,
+        charEquipped: c.charEquipped,
+        charEnabled: c.charEnabled,
+        charTeaches: c.charTeaches,
+        charTeachBonus: c.charTeachBonus,
+        charTeachRequires: c.charTeachRequires,
+        charShop: c.charShop,
+        charRank: c.charRank,
+        charRewardExpCeiling: c.charRewardExpCeiling,
+        charFixedReward: c.charFixedReward,
+        charArt: c.charArt,
+        charStatus: c.charStatus,
+    };
+
+    restoreVitals(player |> setF(playerCharL(), updatedChar))
+}

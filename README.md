@@ -1,15 +1,15 @@
 # 听风录（Tingfeng）
 
-《听风录》是一款以 Haskell 服务端与 Svelte 网页客户端构建的写实武侠文字 MUD。
+《听风录》是一款以 **Geisha 服务端**与 **Haskell Canvas2D Wasm 网页客户端**构建的写实武侠文字 MUD。
 
-The project is still WIP, but the current build already has a playable local flow: WebSocket login, room movement through a clickable map, NPC popup interactions, a linear story chapter, AP/Qi combat, martial arts progression, item rewards, manual-based martial art learning, and JSON player saves.
+The project has a playable local flow: WebSocket login, room movement through a clickable map, NPC popup interactions, multi-chapter story lines, AP/Qi combat, martial arts progression, item rewards, manual-based martial art learning, and JSON player saves.
 
 ## Tech Stack
 
-- Haskell, GHC 9.10.3, Stack resolver `lts-24.19`
+- Pure Geisha backend (`server/src/*.gsa` -> native LLVM 20 binary `server/build/tingfeng-server`)
 - WebSocket server on `127.0.0.1:9160`
-- YAML content under `resources/scripts/`
-- Svelte + TypeScript client under `client/`
+- YAML/JSON content under `resources/scripts/`
+- Haskell GHC Wasm Canvas2D client under `client/hs/`
 - JSON player saves under `saves/`
 
 ## Run
@@ -20,14 +20,14 @@ One-command local test mode:
 make dev-test
 ```
 
-This builds the server executable if needed, installs client dependencies if needed, starts the server with `MUD_DEV_MODE=1`, starts the Vite client dev server, and opens `http://127.0.0.1:8080/?test=1&user=tester`.
+This builds the Geisha server executable if needed, starts the server with `MUD_DEV_MODE=1`, starts the client server, and opens `http://127.0.0.1:8080/?test=1&user=tester`.
 
 Manual commands:
 
 ```bash
-stack build
-stack test
-stack exec tingfeng-exe
+make build
+make test
+make run
 ```
 
 In another shell:
@@ -43,7 +43,7 @@ Open `http://127.0.0.1:8080`.
 For repeated local story-flow testing without typing a login name:
 
 ```bash
-MUD_DEV_MODE=1 stack exec tingfeng-exe
+MUD_DEV_MODE=1 ./server/build/tingfeng-server
 ```
 
 Then open:

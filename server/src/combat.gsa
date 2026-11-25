@@ -1,0 +1,802 @@
+// Pure Deterministic Functional Combat Engine (`combat`), built on Geisha's
+// `std.control` HKT Hierarchy + Multi-Param `MonadState`/`MonadReader`/`MonadError`
+// + `MonadWriter`/`MonadRng` FunDeps + First-Class `Lens Battle BattleState` (`useL`/`assignL`/`overL`).
+
+use std.option.{Option, Some, None}
+use std.result.{Result, Ok, Err}
+use std.list.{listRev, listAppend, listMap, listAny}
+use std.rand.{Rng, nextRange}
+use fp.{
+    Functor, fmap, (<$>),
+    Applicative, pure, ap,
+    Monad, (>>=), (*>>), voidM,
+    MonadState, get, put,
+    MonadReader, ask,
+    MonadError, throwErr,
+    MonadWriter, tell,
+    MonadRng, rollRange, pickRandom,
+    mapListM, forEachM, whenM,
+    Lens, lens, (~>>), view, set, over, useL, assignL, overL,
+    minInt, maxInt, minFloat, maxFloat, floorDiv, floorInt, roundInt, listMaxInt, listZipWith
+}
+use ordmap.{
+    OrdMap,
+    mapEmpty, mapLookup, mapMember, mapInsert, mapFilter, mapMap, mapElems
+}
+use entity.{
+    EquipSlot, WeaponSlot, WeaponKind, SwordWeapon, FistWeapon,
+    EffectType, DoT, HoT, Buff, DeBuff, listContainsEffectType,
+    Effect, ActiveEffect, MkActiveEffect,
+    CombatActionTiming, AnimationRef, CombatVisualHint, MkCombatVisualHint,
+    ActiveSkillTarget, SingleTarget, AllTarget, SelfTarget,
+    ActiveSkill, AttackMove,
+    ArtType, Sword, Fist, ArtEntity, MartialArt,
+    Character, Player,
+    DerivedStats, characterDerivedStatSources, deriveCharacterStats,
+    characterKnownArtLevel,
+    charHpL
+}
+use world.World
+use message.{
+    CombatMessage, CombatScriptText, CombatEffectTick,
+    CombatEventKind, CombatEventNormal, CombatEventActiveSkill, CombatEventEffectTick,
+    CombatResult, CombatHit, CombatDodge, CombatParry, CombatEffect, combatResultEq,
+    CombatHitOutcome, MkCombatHitOutcome,
+    CombatEvent, MkCombatEvent,
+    ActionResp, CombatEventMsg, PlayerResp
+}
+
+// ============================================================================
+// Combat Constants & Data Structures
+// ============================================================================
+
+pub def maxAp(): Int = 100
+
+pub def apGainRate(): Float = 100.0 / (2.0 * 19.0)
+
+pub data BattleState {
+    MkBattleState {
+        battleActiveSkillCooldowns: OrdMap String Float,
+        battleAp: Int,
+        battleApProgress: Float,
+        battleQi: Int,
+        battleCombatExp: Int,
+        battleChar: Character,
+        battleEffects: OrdMap String ActiveEffect,
+    },
+}
+
+pub data PendingActiveSkill {
+    MkPendingActiveSkill {
+        pendingActiveSkillMartialArt: MartialArt,
+        pendingActiveSkillSkill: ActiveSkill,
+    },
+}
+
+pub data Battle {
+    MkBattle {
+        battleOwner: String,
+        battleState: BattleState,
+        battleEnemyState: BattleState,
+        battleActionLockRemaining: Float,
+        battlePendingActiveSkill: Option PendingActiveSkill,
+    },
+}
+
+pub data PreparedAttack {
+    MkPreparedAttack {
+        preparedAttackArt: ArtEntity,
+        preparedAttackMartialArt: MartialArt,
+        preparedAttackMove: AttackMove,
+    },
+}
+
+pub def newBattleState(char: Character, combatExp: Int): BattleState =
+    MkBattleState {
+        battleActiveSkillCooldowns: mapEmpty(),
+        battleAp: 0,
+        battleApProgress: 0.0,
+        battleQi: char.charQi,
+        battleCombatExp: combatExp,
+        battleChar: char,
+        battleEffects: mapEmpty(),
+    }
+
+pub def newBattle(player: Player, npc: Character): Battle =
+    MkBattle {
+        battleOwner: player.playerId,
+        battleState: newBattleState(player.playerCharacter, player.playerCombatExp),
+        battleEnemyState: newBattleState(npc, 0),
+        battleActionLockRemaining: 0.0,
+        battlePendingActiveSkill: None,
+    }
+
+// ============================================================================
+// Composable Lenses on `Battle` & `BattleState`
+// ============================================================================
+
+pub def playerSideL(): Lens Battle BattleState =
+    lens((b) -> b.battleState, (b, v) -> MkBattle {
+        battleOwner: b.battleOwner,
+        battleState: v,
+        battleEnemyState: b.battleEnemyState,
+        battleActionLockRemaining: b.battleActionLockRemaining,
+        battlePendingActiveSkill: b.battlePendingActiveSkill,
+    })
+
+pub def enemySideL(): Lens Battle BattleState =
+    lens((b) -> b.battleEnemyState, (b, v) -> MkBattle {
+        battleOwner: b.battleOwner,
+        battleState: b.battleState,
+        battleEnemyState: v,
+        battleActionLockRemaining: b.battleActionLockRemaining,
+        battlePendingActiveSkill: b.battlePendingActiveSkill,
+    })
+
+pub def battleActionLockL(): Lens Battle Float =
+    lens((b) -> b.battleActionLockRemaining, (b, v) -> MkBattle {
+        battleOwner: b.battleOwner,
+        battleState: b.battleState,
+        battleEnemyState: b.battleEnemyState,
+        battleActionLockRemaining: v,
+        battlePendingActiveSkill: b.battlePendingActiveSkill,
+    })
+
+pub def battlePendingSkillL(): Lens Battle (Option PendingActiveSkill) =
+    lens((b) -> b.battlePendingActiveSkill, (b, v) -> MkBattle {
+        battleOwner: b.battleOwner,
+        battleState: b.battleState,
+        battleEnemyState: b.battleEnemyState,
+        battleActionLockRemaining: b.battleActionLockRemaining,
+        battlePendingActiveSkill: v,
+    })
+
+pub def bsCooldownsL(): Lens BattleState (OrdMap String Float) =
+    lens((s) -> s.battleActiveSkillCooldowns, (s, v) -> MkBattleState {
+        battleActiveSkillCooldowns: v, battleAp: s.battleAp, battleApProgress: s.battleApProgress,
+        battleQi: s.battleQi, battleCombatExp: s.battleCombatExp, battleChar: s.battleChar, battleEffects: s.battleEffects,
+    })
+
+pub def bsApL(): Lens BattleState Int =
+    lens((s) -> s.battleAp, (s, v) -> MkBattleState {
+        battleActiveSkillCooldowns: s.battleActiveSkillCooldowns, battleAp: v, battleApProgress: s.battleApProgress,
+        battleQi: s.battleQi, battleCombatExp: s.battleCombatExp, battleChar: s.battleChar, battleEffects: s.battleEffects,
+    })
+
+pub def bsApProgressL(): Lens BattleState Float =
+    lens((s) -> s.battleApProgress, (s, v) -> MkBattleState {
+        battleActiveSkillCooldowns: s.battleActiveSkillCooldowns, battleAp: s.battleAp, battleApProgress: v,
+        battleQi: s.battleQi, battleCombatExp: s.battleCombatExp, battleChar: s.battleChar, battleEffects: s.battleEffects,
+    })
+
+pub def bsQiL(): Lens BattleState Int =
+    lens((s) -> s.battleQi, (s, v) -> MkBattleState {
+        battleActiveSkillCooldowns: s.battleActiveSkillCooldowns, battleAp: s.battleAp, battleApProgress: s.battleApProgress,
+        battleQi: v, battleCombatExp: s.battleCombatExp, battleChar: s.battleChar, battleEffects: s.battleEffects,
+    })
+
+pub def bsCharL(): Lens BattleState Character =
+    lens((s) -> s.battleChar, (s, v) -> MkBattleState {
+        battleActiveSkillCooldowns: s.battleActiveSkillCooldowns, battleAp: s.battleAp, battleApProgress: s.battleApProgress,
+        battleQi: s.battleQi, battleCombatExp: s.battleCombatExp, battleChar: v, battleEffects: s.battleEffects,
+    })
+
+pub def bsEffectsL(): Lens BattleState (OrdMap String ActiveEffect) =
+    lens((s) -> s.battleEffects, (s, v) -> MkBattleState {
+        battleActiveSkillCooldowns: s.battleActiveSkillCooldowns, battleAp: s.battleAp, battleApProgress: s.battleApProgress,
+        battleQi: s.battleQi, battleCombatExp: s.battleCombatExp, battleChar: s.battleChar, battleEffects: v,
+    })
+
+// ============================================================================
+// Pure Deterministic MTL `Combat a` Instances
+// ============================================================================
+
+pub data CombatException {
+    MkCombatException(String),
+}
+
+pub def combatExceptionText(e: CombatException): String = match e {
+    MkCombatException(msg) -> msg,
+}
+
+pub data Combat a {
+    MkCombat((World, Battle, Rng) -> Result (a, Battle, Rng, List PlayerResp) CombatException),
+}
+
+pub def runCombatPure(
+    wrld: World,
+    battle: Battle,
+    rng: Rng,
+    action: Combat a
+): Result (a, Battle, Rng, List PlayerResp) CombatException = match action {
+    MkCombat(f) -> f(wrld, battle, rng),
+}
+
+instance Functor Combat {
+    def fmap(f, ca) = MkCombat((w, b, r) -> match runCombatPure(w, b, r, ca) {
+        Ok((a, b2, r2, out)) -> Ok((f(a), b2, r2, out)),
+        Err(e) -> Err(e),
+    })
+}
+
+instance Applicative Combat {
+    def pure(x) = MkCombat((_, b, r) -> Ok((x, b, r, Nil)))
+    def ap(cf, ca) = MkCombat((w, b, r) -> match runCombatPure(w, b, r, cf) {
+        Err(e) -> Err(e),
+        Ok((f, b2, r2, out1)) -> match runCombatPure(w, b2, r2, ca) {
+            Err(e2) -> Err(e2),
+            Ok((a, b3, r3, out2)) -> Ok((f(a), b3, r3, listAppend(out1, out2))),
+        },
+    })
+}
+
+instance Monad Combat {
+    def (>>=)(ca, k) = MkCombat((w, b, r) -> match runCombatPure(w, b, r, ca) {
+        Err(e) -> Err(e),
+        Ok((a, b2, r2, out1)) -> match runCombatPure(w, b2, r2, k(a)) {
+            Err(e2) -> Err(e2),
+            Ok((v, b3, r3, out2)) -> Ok((v, b3, r3, listAppend(out1, out2))),
+        },
+    })
+}
+
+instance MonadState Battle Combat {
+    def get() = MkCombat((_, b, r) -> Ok((b, b, r, Nil)))
+    def put(b2) = MkCombat((_, _, r) -> Ok(((), b2, r, Nil)))
+}
+
+instance MonadReader World Combat {
+    def ask() = MkCombat((w, b, r) -> Ok((w, b, r, Nil)))
+}
+
+instance MonadError CombatException Combat {
+    def throwErr(e) = MkCombat((_, _, _) -> Err(e))
+}
+
+instance MonadWriter (List PlayerResp) Combat {
+    def tell(out) = MkCombat((_, b, r) -> Ok(((), b, r, out)))
+}
+
+instance MonadRng Combat {
+    def rollRange(lo, hi) = MkCombat((_, b, r) -> {
+        let (v, r2) = nextRange(r, lo, hi);
+        Ok((v, b, r2, Nil))
+    })
+}
+
+pub def tellCombat(pid: String, resp: ActionResp): Combat Void =
+    tell([(pid, resp)])
+
+// ============================================================================
+// Pure Combat Formulas & Helpers
+// ============================================================================
+
+pub def preferredCombatArtTypes(char: Character): List ArtType =
+    match mapLookup(char.charEquipped, WeaponSlot) {
+        Some(eq) -> match eq.equippedWeaponKind {
+            Some(SwordWeapon) if (mapMember(char.charEnabled, Sword)) -> [Sword],
+            Some(FistWeapon) if (mapMember(char.charEnabled, Fist)) -> [Fist],
+            _ -> [Sword, Fist],
+        },
+        None -> [Sword, Fist],
+    }
+
+pub def unlockedPreparedAttacks(martialArts: OrdMap String MartialArt, char: Character): List PreparedAttack =
+    fp.listConcatMap(
+        preferredCombatArtTypes(char),
+        (at) -> match mapLookup(char.charEnabled, at) {
+            None -> Nil,
+            Some(artEnt) -> match mapLookup(martialArts, artEnt.artDef) {
+                None -> Nil,
+                Some(ma) -> fp.listFilterMap(
+                    ma.artAttackMoves,
+                    (mv) ->
+                        if (mv.attackMoveUnlockLevel <= artEnt.artLevel) {
+                            Some(MkPreparedAttack {
+                                preparedAttackArt: artEnt,
+                                preparedAttackMartialArt: ma,
+                                preparedAttackMove: mv,
+                            })
+                        } else None
+                ),
+            },
+        }
+    )
+
+pub def attackPower(attackerStats: DerivedStats, pa: PreparedAttack): Int =
+    maxInt(1, attackerStats.dsAttack + attackerStats.dsHit + pa.preparedAttackMove.attackMoveDamage * 4)
+
+pub def dodgePower(defenderStats: DerivedStats): Int =
+    maxInt(0, defenderStats.dsDodge)
+
+pub def parryPower(defenderStats: DerivedStats): Int =
+    maxInt(0, defenderStats.dsParry)
+
+pub def computeDamage(attackerStats: DerivedStats, defenderStats: DerivedStats, pa: PreparedAttack): Int = {
+    let baseDmg = pa.preparedAttackMove.attackMoveDamage;
+    let artBonus = floorDiv(pa.preparedAttackArt.artLevel, 3);
+    maxInt(1, baseDmg + artBonus + attackerStats.dsDamageBonus - defenderStats.dsDamageReduction)
+}
+
+def sumFloatList(xs: List Float): Float =
+    std.list.listFold(xs, 0.0, (acc, x) -> acc + x)
+
+pub def splitByShares(total: Int, shares: List Float): List Int = {
+    let shareSum = sumFloatList(shares);
+    if (shareSum <= 0.0) [total]
+    else {
+        let cur = cellNew(shares);
+        let runAcc = cellNew(0.0);
+        let prevCum = cellNew(0);
+        let out = cellNew(Nil);
+        while (match cellGet(cur) { Nil -> false, _ -> true }) {
+            match cellGet(cur) {
+                Cons(sh, rest) -> {
+                    let nextRun = cellGet(runAcc) + sh;
+                    cellSet(runAcc, nextRun);
+                    let cum = floorInt(intToFloat(total) * nextRun / shareSum + 0.5);
+                    let part = cum - cellGet(prevCum);
+                    cellSet(prevCum, cum);
+                    cellSet(out, Cons(part, cellGet(out)));
+                    cellSet(cur, rest)
+                },
+                Nil -> (),
+            }
+        };
+        listRev(cellGet(out))
+    }
+}
+
+pub def combatEventRespHits(
+    kind: CombatEventKind,
+    actorName: String,
+    targetName: String,
+    msg: CombatMessage,
+    damage: Option Int,
+    heal: Option Int,
+    result: CombatResult,
+    hits: List CombatHitOutcome,
+    visual: CombatVisualHint
+): ActionResp =
+    CombatEventMsg(MkCombatEvent {
+        combatEventKind: kind,
+        combatEventActorName: actorName,
+        combatEventTargetName: targetName,
+        combatEventMessage: msg,
+        combatEventDamage: damage,
+        combatEventHeal: heal,
+        combatEventResult: result,
+        combatEventHits: hits,
+        combatEventVisual: visual,
+    })
+
+pub def combatEventResp(
+    kind: CombatEventKind,
+    actorName: String,
+    targetName: String,
+    msg: CombatMessage,
+    damage: Option Int,
+    heal: Option Int,
+    result: CombatResult,
+    visual: CombatVisualHint
+): ActionResp =
+    combatEventRespHits(
+        kind,
+        actorName,
+        targetName,
+        msg,
+        damage,
+        heal,
+        result,
+        [MkCombatHitOutcome { combatHitResult: result, combatHitDamage: damage, combatHitHeal: heal }],
+        visual
+    )
+
+// ============================================================================
+// MTL + Lens Combat Pipeline
+// ============================================================================
+
+pub def battleDerivedStats(side: Lens Battle BattleState): Combat DerivedStats =
+    ask() >>= (wrld) ->
+    useL(side) >>= (st) ->
+    pure(deriveCharacterStats(
+        st.battleChar,
+        st.battleCombatExp,
+        characterDerivedStatSources(wrld.effects, st.battleEffects, st.battleChar)
+    ))
+
+def combatActionDurationMs(actionId: String): Combat Int =
+    ask() >>= (wrld) ->
+    pure(match mapLookup(wrld.combatActionTimings, actionId) {
+        Some(t) -> t.combatActionTimingLockMs,
+        None -> 720,
+    })
+
+def combatActionApproachMs(actionId: String): Combat Int =
+    ask() >>= (wrld) ->
+    pure(match mapLookup(wrld.combatActionTimings, actionId) {
+        Some(t) -> t.combatActionTimingApproachMs,
+        None -> 0,
+    })
+
+def combatActionHitShares(actionId: String): Combat (List Float) =
+    ask() >>= (wrld) ->
+    pure(match mapLookup(wrld.combatActionTimings, actionId) {
+        Some(t) -> t.combatActionTimingHitShares,
+        None -> [1.0],
+    })
+
+def combatVisualHint(actionId: String, tags: List String, params: Option std.codec.Value): Combat CombatVisualHint =
+    combatActionDurationMs(actionId) >>= (dur) ->
+    pure(MkCombatVisualHint {
+        combatVisualActionId: actionId,
+        combatVisualTags: tags,
+        combatVisualDurationMs: Some(dur),
+        combatVisualParams: params,
+    })
+
+def effectTickVisual(effectKind: String): Combat CombatVisualHint =
+    combatVisualHint("rig.effect." + effectKind, ["effect", effectKind], None)
+
+def resolveAnimationRef(anim: AnimationRef): Combat CombatVisualHint =
+    combatVisualHint(anim.animationRefAction, anim.animationRefTags, anim.animationRefParams)
+
+def lockBattleForVisual(visual: CombatVisualHint): Combat Void = {
+    let durC = match visual.combatVisualDurationMs {
+        Some(d) -> pure(d),
+        None -> combatActionDurationMs(visual.combatVisualActionId),
+    };
+    durC >>= (durMs) ->
+    combatActionApproachMs(visual.combatVisualActionId) >>= (appMs) -> {
+        let lockSec = intToFloat(durMs + appMs) / 1000.0;
+        overL(battleActionLockL(), (cur) -> maxFloat(lockSec, cur))
+    }
+}
+
+def contest(attack: Int, defense: Int): Combat Bool =
+    if (attack <= 0) pure(false)
+    else if (defense <= 0) pure(true)
+    else ((roll) -> roll <= attack) <$> rollRange(1, attack + defense)
+
+def aggregateHitResult(outcomes: List CombatHitOutcome): CombatResult =
+    if (listAny(outcomes, (o) -> combatResultEq(o.combatHitResult, CombatHit))) CombatHit
+    else match outcomes {
+        Cons(first, _) -> first.combatHitResult,
+        Nil -> CombatEffect,
+    }
+
+def runAttackPipeline(
+    left: Lens Battle BattleState,
+    right: Lens Battle BattleState,
+    pa: PreparedAttack
+): Combat Void =
+    battleDerivedStats(left) >>= (atkStats) ->
+    battleDerivedStats(right) >>= (defStats) ->
+    resolveAnimationRef(pa.preparedAttackMove.attackMoveAnimation) >>= (visual) ->
+    combatActionHitShares(visual.combatVisualActionId) >>= (shares) -> {
+        let atkScore = attackPower(atkStats, pa);
+        let dodScore = dodgePower(defStats);
+        let parScore = parryPower(defStats);
+        let moveText = pa.preparedAttackMove.attackMoveMsg;
+        let fullDmg = maxInt(1, computeDamage(atkStats, defStats, pa));
+        let parts = splitByShares(fullDmg, shares);
+        mapListM(parts, (part) ->
+            contest(atkScore, dodScore) >>= (hit) ->
+                if (!hit) pure(MkCombatHitOutcome { combatHitResult: CombatDodge, combatHitDamage: Some(0), combatHitHeal: None })
+                else contest(atkScore, parScore) >>= (parryFailed) ->
+                    if (parryFailed) pure(MkCombatHitOutcome { combatHitResult: CombatHit, combatHitDamage: Some(maxInt(1, part)), combatHitHeal: None })
+                    else pure(MkCombatHitOutcome { combatHitResult: CombatParry, combatHitDamage: Some(0), combatHitHeal: None })
+        ) >>= (outcomes) ->
+        get() >>= (b) ->
+        useL(left ~>> bsCharL()) >>= (atkChar) ->
+        useL(right ~>> bsCharL()) >>= (defChar) -> {
+            let landed = std.list.listFold(outcomes, 0, (acc, o) -> match (o.combatHitResult, o.combatHitDamage) {
+                (CombatHit, Some(d)) -> acc + d,
+                _ -> acc,
+            });
+            let res = aggregateHitResult(outcomes);
+            let msg = match res {
+                CombatDodge -> moveText + "，却被侧身闪避",
+                CombatParry -> moveText + "，被抬手格开",
+                _ -> moveText,
+            };
+            whenM(landed > 0, () -> overL(right ~>> bsCharL() ~>> charHpL(), (hp) -> hp - landed))
+            *>> lockBattleForVisual(visual)
+            *>> tellCombat(
+                b.battleOwner,
+                combatEventRespHits(
+                    CombatEventNormal,
+                    atkChar.charName,
+                    defChar.charName,
+                    CombatScriptText(msg),
+                    Some(landed),
+                    None,
+                    res,
+                    outcomes,
+                    visual
+                )
+            )
+        }
+    }
+
+pub def battleAttack(left: Lens Battle BattleState, right: Lens Battle BattleState): Combat Void =
+    ask() >>= (wrld) ->
+    useL(left ~>> bsCharL()) >>= (attacker) ->
+    pickRandom(unlockedPreparedAttacks(wrld.martialArts, attacker)) >>= (optPa) ->
+        match optPa {
+            None -> throwErr(MkCombatException("No unlocked move selected for " + attacker.charId)),
+            Some(pa) -> runAttackPipeline(left, right, pa),
+        }
+
+def currentApProgress(side: Lens Battle BattleState): Combat Float =
+    ((st: BattleState) -> maxFloat(st.battleApProgress, intToFloat(st.battleAp))) <$> useL(side)
+
+def accumulateAp(dt: Float, stats: DerivedStats, side: Lens Battle BattleState): Combat Void =
+    currentApProgress(side) >>= (cur) -> {
+        let next = minFloat(intToFloat(maxAp()), cur + dt * intToFloat(stats.dsAgility) * apGainRate());
+        assignL(side ~>> bsApProgressL(), next)
+        *>> assignL(side ~>> bsApL(), floorInt(next))
+    }
+
+def checkApAndAttack(left: Lens Battle BattleState, right: Lens Battle BattleState): Combat Bool =
+    currentApProgress(left) >>= (leftAp) ->
+        if (leftAp >= intToFloat(maxAp())) {
+            assignL(left ~>> bsApL(), 0)
+            *>> assignL(left ~>> bsApProgressL(), 0.0)
+            *>> battleAttack(left, right)
+            *>> pure(true)
+        } else pure(false)
+
+def activeSkillArtLevel(skill: ActiveSkill, char: Character): Int = {
+    let reqLvls = listMap(skill.activeSkillReqArts, (aid) -> characterKnownArtLevel(aid, char));
+    let prepLvls = listMap(mapElems(char.charEnabled), (e) -> e.artLevel);
+    listMaxInt(listAppend(reqLvls, prepLvls), 0)
+}
+
+def activeSkillDamageAmount(
+    skill: ActiveSkill,
+    caster: Lens Battle BattleState,
+    target: Lens Battle BattleState
+): Combat (Option Int) = match skill.activeSkillDamage {
+    None -> pure(None),
+    Some(baseDmg) ->
+        battleDerivedStats(caster) >>= (cStats) ->
+        battleDerivedStats(target) >>= (tStats) ->
+        useL(caster ~>> bsCharL()) >>= (cChar) -> {
+            let artBonus = floorDiv(activeSkillArtLevel(skill, cChar), 2);
+            let mitigation = floorDiv(tStats.dsDefense, 8);
+            pure(Some(maxInt(1, baseDmg + artBonus + cStats.dsDamageBonus - mitigation)))
+        },
+}
+
+def activeSkillHealAmount(skill: ActiveSkill, caster: Lens Battle BattleState): Combat (Option Int) =
+    match skill.activeSkillHeal {
+        None -> pure(None),
+        Some(baseHeal) ->
+            ((cStats: DerivedStats) -> Some(baseHeal + floorDiv(maxInt(0, cStats.dsVitality - 10), 4)))
+            <$> battleDerivedStats(caster),
+    }
+
+def applyActiveSkillEffects(
+    skill: ActiveSkill,
+    caster: Lens Battle BattleState,
+    target: Lens Battle BattleState,
+    dmgOpt: Option Int,
+    healOpt: Option Int
+): Combat Void = {
+    let applyDmg = match dmgOpt {
+        Some(dmg) -> overL(target ~>> bsCharL() ~>> charHpL(), (hp) -> hp - dmg),
+        None -> pure(()),
+    };
+    let applyHeal = match healOpt {
+        Some(hl) ->
+            battleDerivedStats(target) >>= (tStats) ->
+            overL(target ~>> bsCharL() ~>> charHpL(), (hp) -> minInt(tStats.dsMaxHp, hp + hl)),
+        None -> pure(()),
+    };
+    let applyEffTarget = forEachM(skill.activeSkillEffTarget, (triple) -> match triple {
+        (effId, dur, val) ->
+            overL(target ~>> bsEffectsL(), (m) -> mapInsert(m, effId, MkActiveEffect {
+                activeEffectDef: effId,
+                activeEffectRemaining: dur,
+                activeEffectValue: val,
+            })),
+    });
+    let applyEffSelf = forEachM(skill.activeSkillEffSelf, (triple) -> match triple {
+        (effId, dur, val) ->
+            overL(caster ~>> bsEffectsL(), (m) -> mapInsert(m, effId, MkActiveEffect {
+                activeEffectDef: effId,
+                activeEffectRemaining: dur,
+                activeEffectValue: val,
+            })),
+    });
+    let applyCleanse = match skill.activeSkillCleanse {
+        Nil -> pure(()),
+        cleanseTypes ->
+            ask() >>= (wrld) ->
+            overL(caster ~>> bsEffectsL(), (m) ->
+                mapFilter(m, (ae) -> match mapLookup(wrld.effects, ae.activeEffectDef) {
+                    Some(eff) -> !listContainsEffectType(cleanseTypes, eff.effectType),
+                    None -> true,
+                })
+            ),
+    };
+    applyDmg *>> applyHeal *>> applyEffTarget *>> applyEffSelf *>> applyCleanse
+}
+
+pub def useActiveSkill(
+    _ma: MartialArt,
+    skill: ActiveSkill,
+    caster: Lens Battle BattleState,
+    target: Lens Battle BattleState
+): Combat Void = {
+    let effTargetSide = match skill.activeSkillTarget {
+        SelfTarget -> caster,
+        _ -> target,
+    };
+    activeSkillDamageAmount(skill, caster, effTargetSide) >>= (dmgOpt) ->
+    activeSkillHealAmount(skill, caster) >>= (healOpt) ->
+    overL(caster ~>> bsQiL(), (q) -> q - skill.activeSkillCost)
+    *>> overL(caster ~>> bsCooldownsL(), (m) -> mapInsert(m, skill.activeSkillId, skill.activeSkillCooldown))
+    *>> applyActiveSkillEffects(skill, caster, effTargetSide, dmgOpt, healOpt)
+    *>> get() >>= (b) ->
+    useL(caster ~>> bsCharL()) >>= (cChar) ->
+    useL(effTargetSide ~>> bsCharL()) >>= (tChar) ->
+    resolveAnimationRef(skill.activeSkillAnimation) >>= (visual) ->
+    combatActionHitShares(visual.combatVisualActionId) >>= (shares) -> {
+        let res = match skill.activeSkillDamage {
+            Some(_) -> CombatHit,
+            None -> CombatEffect,
+        };
+        let splitOpt = (optAmt: Option Int) -> match optAmt {
+            None -> listMap(shares, (_) -> None),
+            Some(tot) -> listMap(splitByShares(tot, shares), (p) -> Some(p)),
+        };
+        let outcomes = listZipWith(
+            splitOpt(dmgOpt),
+            splitOpt(healOpt),
+            (d, h) -> MkCombatHitOutcome { combatHitResult: res, combatHitDamage: d, combatHitHeal: h }
+        );
+        lockBattleForVisual(visual)
+        *>> tellCombat(
+            b.battleOwner,
+            combatEventRespHits(
+                CombatEventActiveSkill,
+                cChar.charName,
+                tChar.charName,
+                CombatScriptText(skill.activeSkillMsg),
+                dmgOpt,
+                healOpt,
+                res,
+                outcomes,
+                visual
+            )
+        )
+    }
+}
+
+def applyActiveEffects(dt: Float, side: Lens Battle BattleState): Combat Void =
+    ask() >>= (wrld) ->
+    get() >>= (b) ->
+    useL(side) >>= (st) ->
+        forEachM(mapElems(st.battleEffects), (ae) -> {
+            let amt = maxInt(0, roundInt(dt * intToFloat(ae.activeEffectValue)));
+            match mapLookup(wrld.effects, ae.activeEffectDef) {
+                Some(eff) if (amt > 0) -> match eff.effectType {
+                    DoT ->
+                        effectTickVisual("dot") >>= (vis) ->
+                        overL(side ~>> bsCharL() ~>> charHpL(), (hp) -> hp - amt)
+                        *>> tellCombat(
+                            b.battleOwner,
+                            combatEventResp(
+                                CombatEventEffectTick,
+                                eff.effectName,
+                                st.battleChar.charName,
+                                CombatEffectTick(ae.activeEffectDef, eff.effectName, "dot", amt),
+                                Some(amt),
+                                None,
+                                CombatHit,
+                                vis
+                            )
+                        ),
+                    HoT ->
+                        effectTickVisual("hot") >>= (vis) ->
+                        battleDerivedStats(side) >>= (dStats) ->
+                        overL(side ~>> bsCharL() ~>> charHpL(), (hp) -> minInt(dStats.dsMaxHp, hp + amt))
+                        *>> tellCombat(
+                            b.battleOwner,
+                            combatEventResp(
+                                CombatEventEffectTick,
+                                eff.effectName,
+                                st.battleChar.charName,
+                                CombatEffectTick(ae.activeEffectDef, eff.effectName, "hot", amt),
+                                None,
+                                Some(amt),
+                                CombatEffect,
+                                vis
+                            )
+                        ),
+                    Buff -> pure(()),
+                    DeBuff -> pure(()),
+                },
+                _ -> pure(()),
+            }
+        })
+
+def expireActiveEffects(dt: Float, side: Lens Battle BattleState): Combat Void =
+    overL(
+        side ~>> bsEffectsL(),
+        (m) -> mapFilter(
+            mapMap(m, (e) -> MkActiveEffect {
+                activeEffectDef: e.activeEffectDef,
+                activeEffectRemaining: e.activeEffectRemaining - dt,
+                activeEffectValue: e.activeEffectValue,
+            }),
+            (e) -> e.activeEffectRemaining > 0.0
+        )
+    )
+
+pub def flushBattleMaintenanceTick(dt: Float): Combat Bool =
+    overL(
+        playerSideL() ~>> bsCooldownsL(),
+        (m) -> mapFilter(mapMap(m, (cd) -> cd - dt), (cd) -> cd > 0.0)
+    )
+    *>> overL(
+        enemySideL() ~>> bsCooldownsL(),
+        (m) -> mapFilter(mapMap(m, (cd) -> cd - dt), (cd) -> cd > 0.0)
+    )
+    *>> applyActiveEffects(dt, playerSideL())
+    *>> applyActiveEffects(dt, enemySideL())
+    *>> expireActiveEffects(dt, playerSideL())
+    *>> expireActiveEffects(dt, enemySideL())
+    *>> useL(playerSideL() ~>> bsCharL() ~>> charHpL()) >>= (pHp) ->
+    useL(enemySideL() ~>> bsCharL() ~>> charHpL()) >>= (eHp) ->
+        if (pHp <= 0 || eHp <= 0) pure(true)
+        else
+            battleDerivedStats(playerSideL()) >>= (pStats) ->
+            battleDerivedStats(enemySideL()) >>= (eStats) ->
+                overL(playerSideL() ~>> bsQiL(), (q) -> minInt(pStats.dsMaxQi, q))
+                *>> overL(enemySideL() ~>> bsQiL(), (q) -> minInt(eStats.dsMaxQi, q))
+                *>> pure(false)
+
+def consumeBattleActionLock(dt: Float): Combat Float =
+    useL(battleActionLockL()) >>= (rem) ->
+        if (rem <= 0.0) pure(dt)
+        else {
+            let nextLock = rem - dt;
+            assignL(battleActionLockL(), maxFloat(0.0, nextLock))
+            *>> pure(maxFloat(0.0, -nextLock))
+        }
+
+pub def flushBattleActionTick(dt: Float): Combat Bool =
+    useL(battleActionLockL()) >>= (lockBefore) ->
+    consumeBattleActionLock(dt) >>= (actionDt) ->
+    useL(playerSideL() ~>> bsCharL() ~>> charHpL()) >>= (pHp0) ->
+    useL(enemySideL() ~>> bsCharL() ~>> charHpL()) >>= (eHp0) ->
+        if (pHp0 <= 0 || eHp0 <= 0) pure(true)
+        else if (lockBefore > 0.0 && dt < lockBefore) pure(false)
+        else useL(battlePendingSkillL()) >>= (pendingOpt) -> match pendingOpt {
+            Some(pending) ->
+                assignL(battlePendingSkillL(), None)
+                *>> useActiveSkill(pending.pendingActiveSkillMartialArt, pending.pendingActiveSkillSkill, playerSideL(), enemySideL())
+                *>> useL(enemySideL() ~>> bsCharL() ~>> charHpL()) >>= (eHp) ->
+                useL(playerSideL() ~>> bsCharL() ~>> charHpL()) >>= (pHp) ->
+                    pure(eHp <= 0 || pHp <= 0),
+            None ->
+                battleDerivedStats(playerSideL()) >>= (pStats) ->
+                battleDerivedStats(enemySideL()) >>= (eStats) ->
+                    accumulateAp(actionDt, pStats, playerSideL())
+                    *>> accumulateAp(actionDt, eStats, enemySideL())
+                    *>> checkApAndAttack(playerSideL(), enemySideL()) >>= (playerActed) ->
+                    useL(enemySideL() ~>> bsCharL() ~>> charHpL()) >>= (eHp) ->
+                        if (eHp <= 0) pure(true)
+                        else {
+                            let enemyStep = if (playerActed) pure(()) else voidM(checkApAndAttack(enemySideL(), playerSideL()));
+                            enemyStep *>> (((pHp: Int) -> pHp <= 0) <$> useL(playerSideL() ~>> bsCharL() ~>> charHpL()))
+                        },
+        }
+
+pub def flushBattleTick(dt: Float): Combat Bool =
+    flushBattleMaintenanceTick(dt) >>= (over0) ->
+        if (over0) pure(true)
+        else flushBattleActionTick(dt)

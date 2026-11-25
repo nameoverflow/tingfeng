@@ -1,0 +1,629 @@
+// Pure-Geisha Indentation-Aware YAML Parser -> `std.codec.Value`,
+// plus the `Configurable` Concept for declarative single/list/manifest asset loading.
+
+use std.option.{Option, Some, None}
+use std.result.{Result, Ok, Err}
+use std.list.{listRev, listAppend, listMap}
+use std.vec.{Vec, vecNew, vecPush, vecLen, vecGetOr}
+use std.buf.{StringBuf, bufNew, bufPushByte, bufPushStr, bufToString}
+use std.str.{intToStr, strTrim, strEndsWith, strJoin, parseInt64, parseFloat}
+use std.path.pathJoin
+use sys.fs.{isDir, readDir, readFile}
+use std.codec.{
+    Value, VNull, VBool, VInt, VFloat, VStr, VArr, VObj,
+    Decoder, DecodeErr, formatErr, run, at, list, oneOf, (<|>)
+}
+use std.json.parse as parseJson
+use fp.Ord
+use ordmap.{OrdMap, mapEmpty, mapInsert, mapFromList, setFromList, setToAscList}
+
+// ============================================================================
+// Preprocessed Non-Empty YAML Lines
+// ============================================================================
+
+data YamlLine {
+    MkYamlLine {
+        lineNo: Int,
+        indent: Int,
+        text: String, // trimmed content with trailing comment stripped
+    },
+}
+
+// Strip `# ...` comment outside single/double quotes (in YAML, `#` starts a comment
+// when at index 0 or preceded by whitespace).
+def stripLineComment(raw: String): String = {
+    let n = strLen(raw);
+    let i = cellNew(0);
+    let quote = cellNew(0); // 0 = none, 34 = '"', 39 = '\''
+    let cutAt = cellNew(n);
+    while (cellGet(i) < n && cellGet(cutAt) == n) {
+        let idx = cellGet(i);
+        let c = strByteAt(raw, idx);
+        let q = cellGet(quote);
+        if (q == 34) {
+            if (c == 92 && idx + 1 < n) {
+                cellSet(i, idx + 2)
+            } else {
+                if (c == 34) cellSet(quote, 0) else ();
+                cellSet(i, idx + 1)
+            }
+        } else if (q == 39) {
+            if (c == 39) {
+                if (idx + 1 < n && strByteAt(raw, idx + 1) == 39) {
+                    cellSet(i, idx + 2)
+                } else {
+                    cellSet(quote, 0);
+                    cellSet(i, idx + 1)
+                }
+            } else {
+                cellSet(i, idx + 1)
+            }
+        } else {
+            if (c == 34 || c == 39) {
+                cellSet(quote, c);
+                cellSet(i, idx + 1)
+            } else if (c == 35 && (idx == 0 || strByteAt(raw, idx - 1) == 32 || strByteAt(raw, idx - 1) == 9)) {
+                cellSet(cutAt, idx)
+            } else {
+                cellSet(i, idx + 1)
+            }
+        }
+    };
+    strSlice(raw, 0, cellGet(cutAt))
+}
+
+def preprocessLines(src: String): Vec YamlLine = {
+    let out = vecNew();
+    let rawLines = std.str.strSplitChar(src, '\n');
+    let cur = cellNew(rawLines);
+    let lineNo = cellNew(1);
+    while (match cellGet(cur) { Nil -> false, _ -> true }) {
+        match cellGet(cur) {
+            Cons(raw0, rest) -> {
+                let ln = cellGet(lineNo);
+                let raw = if (strLen(raw0) > 0 && strByteAt(raw0, strLen(raw0) - 1) == 13) {
+                    strSlice(raw0, 0, strLen(raw0) - 1)
+                } else raw0;
+                let stripped = stripLineComment(raw);
+                let n = strLen(stripped);
+                let ind = cellNew(0);
+                while (cellGet(ind) < n && strByteAt(stripped, cellGet(ind)) == 32) {
+                    cellSet(ind, cellGet(ind) + 1)
+                };
+                let body = strTrim(strSlice(stripped, cellGet(ind), n));
+                if (strLen(body) > 0 && body != "---" && body != "...") {
+                    vecPush(out, MkYamlLine { lineNo: ln, indent: cellGet(ind), text: body })
+                } else ();
+                cellSet(lineNo, ln + 1);
+                cellSet(cur, rest)
+            },
+            Nil -> (),
+        }
+    };
+    out
+}
+
+// ============================================================================
+// Scalar & Inline Flow (`[...]`, `{...}`) Parser
+// ============================================================================
+
+def unquoteSingle(s: String): Result String String = {
+    let n = strLen(s);
+    if (n < 2 || strByteAt(s, 0) != 39 || strByteAt(s, n - 1) != 39) {
+        Err("invalid single-quoted YAML string: " + s)
+    } else {
+        let b = bufNew();
+        let i = cellNew(1);
+        let limit = n - 1;
+        while (cellGet(i) < limit) {
+            let idx = cellGet(i);
+            let c = strByteAt(s, idx);
+            if (c == 39 && idx + 1 < limit && strByteAt(s, idx + 1) == 39) {
+                bufPushByte(b, 39);
+                cellSet(i, idx + 2)
+            } else {
+                bufPushByte(b, c);
+                cellSet(i, idx + 1)
+            }
+        };
+        Ok(bufToString(b))
+    }
+}
+
+def looksLikeNumber(s: String): Bool = {
+    let n = strLen(s);
+    if (n == 0) false
+    else {
+        let c0 = strByteAt(s, 0);
+        if (c0 == 45) {
+            n > 1 && strByteAt(s, 1) >= 48 && strByteAt(s, 1) <= 57
+        } else {
+            c0 >= 48 && c0 <= 57
+        }
+    }
+}
+
+def hasDotOrExp(s: String): Bool = {
+    let n = strLen(s);
+    let i = cellNew(0);
+    let found = cellNew(false);
+    while (cellGet(i) < n && !cellGet(found)) {
+        let c = strByteAt(s, cellGet(i));
+        if (c == 46 || c == 101 || c == 69) cellSet(found, true) else ();
+        cellSet(i, cellGet(i) + 1)
+    };
+    cellGet(found)
+}
+
+def splitTopLevelFlow(inner: String, sepByte: Int): List String = {
+    let trimmed = strTrim(inner);
+    if (strLen(trimmed) == 0) Nil
+    else {
+        let n = strLen(trimmed);
+        let i = cellNew(0);
+        let start = cellNew(0);
+        let depth = cellNew(0);
+        let quote = cellNew(0);
+        let acc = cellNew(Nil);
+        while (cellGet(i) < n) {
+            let idx = cellGet(i);
+            let c = strByteAt(trimmed, idx);
+            let q = cellGet(quote);
+            if (q == 34) {
+                if (c == 92 && idx + 1 < n) cellSet(i, idx + 2)
+                else {
+                    if (c == 34) cellSet(quote, 0) else ();
+                    cellSet(i, idx + 1)
+                }
+            } else if (q == 39) {
+                if (c == 39 && idx + 1 < n && strByteAt(trimmed, idx + 1) == 39) cellSet(i, idx + 2)
+                else {
+                    if (c == 39) cellSet(quote, 0) else ();
+                    cellSet(i, idx + 1)
+                }
+            } else {
+                if (c == 34 || c == 39) {
+                    cellSet(quote, c)
+                } else if (c == 91 || c == 123) {
+                    cellSet(depth, cellGet(depth) + 1)
+                } else if (c == 93 || c == 125) {
+                    cellSet(depth, cellGet(depth) - 1)
+                } else if (c == sepByte && cellGet(depth) == 0) {
+                    let seg = strTrim(strSlice(trimmed, cellGet(start), idx));
+                    if (strLen(seg) > 0) cellSet(acc, Cons(seg, cellGet(acc))) else ();
+                    cellSet(start, idx + 1)
+                } else ();
+                cellSet(i, idx + 1)
+            }
+        };
+        let tail = strTrim(strSlice(trimmed, cellGet(start), n));
+        if (strLen(tail) > 0) cellSet(acc, Cons(tail, cellGet(acc))) else ();
+        listRev(cellGet(acc))
+    }
+}
+
+// Find key-value separator `:` at top level (outside quotes & flow brackets), where `:`
+// is at end of string or followed by space.
+def findMappingColon(s: String): Option Int = {
+    let n = strLen(s);
+    let i = cellNew(0);
+    let depth = cellNew(0);
+    let quote = cellNew(0);
+    let found = cellNew(-1);
+    while (cellGet(i) < n && cellGet(found) < 0) {
+        let idx = cellGet(i);
+        let c = strByteAt(s, idx);
+        let q = cellGet(quote);
+        if (q == 34) {
+            if (c == 92 && idx + 1 < n) cellSet(i, idx + 2)
+            else {
+                if (c == 34) cellSet(quote, 0) else ();
+                cellSet(i, idx + 1)
+            }
+        } else if (q == 39) {
+            if (c == 39 && idx + 1 < n && strByteAt(s, idx + 1) == 39) cellSet(i, idx + 2)
+            else {
+                if (c == 39) cellSet(quote, 0) else ();
+                cellSet(i, idx + 1)
+            }
+        } else {
+            if (c == 34 || c == 39) cellSet(quote, c)
+            else if (c == 91 || c == 123) cellSet(depth, cellGet(depth) + 1)
+            else if (c == 93 || c == 125) cellSet(depth, cellGet(depth) - 1)
+            else if (c == 58 && cellGet(depth) == 0) {
+                if (idx + 1 == n || strByteAt(s, idx + 1) == 32 || strByteAt(s, idx + 1) == 9) {
+                    cellSet(found, idx)
+                } else ()
+            } else ();
+            cellSet(i, idx + 1)
+        }
+    };
+    if (cellGet(found) >= 0) Some(cellGet(found)) else None
+}
+
+def parseKeyToken(rawKey: String): Result String String = {
+    let k = strTrim(rawKey);
+    let n = strLen(k);
+    if (n == 0) Err("empty YAML mapping key")
+    else if (strByteAt(k, 0) == 34) {
+        match parseJson(k) {
+            Ok(VStr(s)) -> Ok(s),
+            _ -> Err("invalid double-quoted YAML key: " + k),
+        }
+    } else if (strByteAt(k, 0) == 39) {
+        unquoteSingle(k)
+    } else {
+        Ok(k)
+    }
+}
+
+def parseInlineValue(raw: String, lineNo: Int): Result Value String = {
+    let s = strTrim(raw);
+    let n = strLen(s);
+    if (n == 0 || s == "null" || s == "Null" || s == "NULL" || s == "~") {
+        Ok(VNull)
+    } else if (s == "true" || s == "True" || s == "TRUE") {
+        Ok(VBool(true))
+    } else if (s == "false" || s == "False" || s == "FALSE") {
+        Ok(VBool(false))
+    } else if (strByteAt(s, 0) == 34) {
+        match parseJson(s) {
+            Ok(v) -> Ok(v),
+            Err(e) -> Err("line " + intToStr(lineNo) + ": " + e),
+        }
+    } else if (strByteAt(s, 0) == 39) {
+        let uq = unquoteSingle(s)?;
+        Ok(VStr(uq))
+    } else if (strByteAt(s, 0) == 91) {
+        if (strByteAt(s, n - 1) != 93) {
+            Err("line " + intToStr(lineNo) + ": unterminated flow sequence: " + s)
+        } else {
+            let parts = splitTopLevelFlow(strSlice(s, 1, n - 1), 44);
+            parseFlowSeqItems(parts, lineNo, Nil)
+        }
+    } else if (strByteAt(s, 0) == 123) {
+        if (strByteAt(s, n - 1) != 125) {
+            Err("line " + intToStr(lineNo) + ": unterminated flow mapping: " + s)
+        } else {
+            let parts = splitTopLevelFlow(strSlice(s, 1, n - 1), 44);
+            parseFlowMapEntries(parts, lineNo, Nil)
+        }
+    } else if (looksLikeNumber(s)) {
+        if (hasDotOrExp(s)) {
+            match parseFloat(s) {
+                Ok(f) -> Ok(VFloat(f)),
+                Err(_) -> Ok(VStr(s)),
+            }
+        } else {
+            match parseInt64(s) {
+                Ok(iv) -> Ok(VInt(iv)),
+                Err(_) -> Ok(VStr(s)),
+            }
+        }
+    } else {
+        Ok(VStr(s))
+    }
+}
+
+def parseFlowSeqItems(parts: List String, lineNo: Int, acc: List Value): Result Value String = match parts {
+    Nil -> Ok(VArr(listRev(acc))),
+    Cons(p, rest) -> {
+        let v = parseInlineValue(p, lineNo)?;
+        parseFlowSeqItems(rest, lineNo, Cons(v, acc))
+    },
+}
+
+def parseFlowMapEntries(parts: List String, lineNo: Int, acc: List (String, Value)): Result Value String = match parts {
+    Nil -> Ok(VObj(listRev(acc))),
+    Cons(p, rest) -> match findMappingColon(p) {
+        None -> Err("line " + intToStr(lineNo) + ": expected ':' in flow mapping entry: " + p),
+        Some(cIdx) -> {
+            let k = parseKeyToken(strSlice(p, 0, cIdx))?;
+            let vRaw = strSlice(p, cIdx + 1, strLen(p));
+            let v = parseInlineValue(vRaw, lineNo)?;
+            parseFlowMapEntries(rest, lineNo, Cons((k, v), acc))
+        },
+    },
+}
+
+// ============================================================================
+// Recursive Indentation-Driven Block Parser
+// ============================================================================
+
+def isSequenceLine(text: String): Bool =
+    text == "-" || (strLen(text) >= 2 && strByteAt(text, 0) == 45 && strByteAt(text, 1) == 32)
+
+def dummyLine(): YamlLine =
+    MkYamlLine { lineNo: 0, indent: -1, text: "" }
+
+def parseNodeAt(lines: Vec YamlLine, pos: Cell Int): Result Value String = {
+    let idx = cellGet(pos);
+    if (idx >= vecLen(lines)) Ok(VNull)
+    else {
+        let ln = vecGetOr(lines, idx, dummyLine());
+        if (isSequenceLine(ln.text)) {
+            parseBlockSequence(lines, pos, ln.indent)
+        } else match findMappingColon(ln.text) {
+            Some(_) -> parseBlockMapping(lines, pos, ln.indent, Nil),
+            None -> {
+                cellSet(pos, idx + 1);
+                parseInlineValue(ln.text, ln.lineNo)
+            },
+        }
+    }
+}
+
+def parseBlockSequence(lines: Vec YamlLine, pos: Cell Int, seqIndent: Int): Result Value String = {
+    let acc: Cell (List Value) = cellNew(Nil);
+    let err: Cell (Option String) = cellNew(None);
+    let looping = cellNew(true);
+
+    while (cellGet(looping) && match cellGet(err) { None -> true, Some(_) -> false }) {
+        let idx = cellGet(pos);
+        if (idx >= vecLen(lines)) {
+            cellSet(looping, false)
+        } else {
+            let ln = vecGetOr(lines, idx, dummyLine());
+            if (ln.indent != seqIndent || !isSequenceLine(ln.text)) {
+                cellSet(looping, false)
+            } else {
+                cellSet(pos, idx + 1);
+                let afterDash = if (ln.text == "-") "" else strTrim(strSlice(ln.text, 2, strLen(ln.text)));
+                if (strLen(afterDash) == 0) {
+                    let nextIdx = cellGet(pos);
+                    if (nextIdx >= vecLen(lines) || vecGetOr(lines, nextIdx, dummyLine()).indent <= seqIndent) {
+                        cellSet(acc, Cons(VNull, cellGet(acc)))
+                    } else {
+                        match parseNodeAt(lines, pos) {
+                            Ok(item) -> cellSet(acc, Cons(item, cellGet(acc))),
+                            Err(e) -> cellSet(err, Some(e)),
+                        }
+                    }
+                } else match findMappingColon(afterDash) {
+                    Some(cIdx) -> {
+                        // Compact mapping inside sequence item: `- key: val` (+ optional sibling keys at indent > seqIndent)
+                        match parseFirstInlineMapPair(lines, pos, seqIndent, ln.lineNo, afterDash, cIdx) {
+                            Err(e) -> cellSet(err, Some(e)),
+                            Ok(firstPair) -> {
+                                let nextIdx = cellGet(pos);
+                                if (nextIdx < vecLen(lines) && vecGetOr(lines, nextIdx, dummyLine()).indent > seqIndent) {
+                                    let childIndent = vecGetOr(lines, nextIdx, dummyLine()).indent;
+                                    match parseBlockMapping(lines, pos, childIndent, [firstPair]) {
+                                        Ok(objVal) -> cellSet(acc, Cons(objVal, cellGet(acc))),
+                                        Err(e2) -> cellSet(err, Some(e2)),
+                                    }
+                                } else {
+                                    cellSet(acc, Cons(VObj([firstPair]), cellGet(acc)))
+                                }
+                            },
+                        }
+                    },
+                    None -> {
+                        match parseInlineValue(afterDash, ln.lineNo) {
+                            Ok(item) -> cellSet(acc, Cons(item, cellGet(acc))),
+                            Err(e) -> cellSet(err, Some(e)),
+                        }
+                    },
+                }
+            }
+        }
+    };
+
+    match cellGet(err) {
+        Some(e) -> Err(e),
+        None -> Ok(VArr(listRev(cellGet(acc)))),
+    }
+}
+
+def parseFirstInlineMapPair(
+    lines: Vec YamlLine,
+    pos: Cell Int,
+    parentIndent: Int,
+    lineNo: Int,
+    entryText: String,
+    colonIdx: Int
+): Result (String, Value) String = {
+    let key = parseKeyToken(strSlice(entryText, 0, colonIdx))?;
+    let valRaw = strTrim(strSlice(entryText, colonIdx + 1, strLen(entryText)));
+    if (strLen(valRaw) > 0) {
+        let v = parseInlineValue(valRaw, lineNo)?;
+        Ok((key, v))
+    } else {
+        let nextIdx = cellGet(pos);
+        if (nextIdx >= vecLen(lines)) {
+            Ok((key, VNull))
+        } else {
+            let nextLn = vecGetOr(lines, nextIdx, dummyLine());
+            // Inside `- key:`, a nested block must be strictly deeper than `parentIndent + 2` (or sequence deeper than `parentIndent`)
+            if (nextLn.indent > parentIndent + 2 || (isSequenceLine(nextLn.text) && nextLn.indent > parentIndent)) {
+                let v = parseNodeAt(lines, pos)?;
+                Ok((key, v))
+            } else {
+                Ok((key, VNull))
+            }
+        }
+    }
+}
+
+def parseBlockMapping(
+    lines: Vec YamlLine,
+    pos: Cell Int,
+    mapIndent: Int,
+    initialRev: List (String, Value)
+): Result Value String = {
+    let acc: Cell (List (String, Value)) = cellNew(initialRev);
+    let err: Cell (Option String) = cellNew(None);
+    let looping = cellNew(true);
+
+    while (cellGet(looping) && match cellGet(err) { None -> true, Some(_) -> false }) {
+        let idx = cellGet(pos);
+        if (idx >= vecLen(lines)) {
+            cellSet(looping, false)
+        } else {
+            let ln = vecGetOr(lines, idx, dummyLine());
+            if (ln.indent != mapIndent || isSequenceLine(ln.text)) {
+                cellSet(looping, false)
+            } else match findMappingColon(ln.text) {
+                None -> {
+                    cellSet(err, Some("line " + intToStr(ln.lineNo) + ": expected ':' in YAML mapping, got: " + ln.text))
+                },
+                Some(cIdx) -> {
+                    cellSet(pos, idx + 1);
+                    match parseKeyToken(strSlice(ln.text, 0, cIdx)) {
+                        Err(ke) -> cellSet(err, Some("line " + intToStr(ln.lineNo) + ": " + ke)),
+                        Ok(key) -> {
+                            let valRaw = strTrim(strSlice(ln.text, cIdx + 1, strLen(ln.text)));
+                            if (strLen(valRaw) > 0) {
+                                match parseInlineValue(valRaw, ln.lineNo) {
+                                    Ok(v) -> cellSet(acc, Cons((key, v), cellGet(acc))),
+                                    Err(ve) -> cellSet(err, Some(ve)),
+                                }
+                            } else {
+                                let nextIdx = cellGet(pos);
+                                if (nextIdx >= vecLen(lines)) {
+                                    cellSet(acc, Cons((key, VNull), cellGet(acc)))
+                                } else {
+                                    let nextLn = vecGetOr(lines, nextIdx, dummyLine());
+                                    if (nextLn.indent > mapIndent || (nextLn.indent == mapIndent && isSequenceLine(nextLn.text))) {
+                                        match parseNodeAt(lines, pos) {
+                                            Ok(v) -> cellSet(acc, Cons((key, v), cellGet(acc))),
+                                            Err(ve) -> cellSet(err, Some(ve)),
+                                        }
+                                    } else {
+                                        cellSet(acc, Cons((key, VNull), cellGet(acc)))
+                                    }
+                                }
+                            }
+                        },
+                    }
+                },
+            }
+        }
+    };
+
+    match cellGet(err) {
+        Some(e) -> Err(e),
+        None -> Ok(VObj(listRev(cellGet(acc)))),
+    }
+}
+
+pub def parseYaml(input: String): Result Value String = {
+    let trimmed = strTrim(input);
+    if (strLen(trimmed) > 0 && (strByteAt(trimmed, 0) == 123 || strByteAt(trimmed, 0) == 91)) {
+        // Valid JSON is valid YAML 1.2; fast-path pure JSON documents (`combat_actions/*.json`, etc.)
+        match parseJson(trimmed) {
+            Ok(v) -> Ok(v),
+            Err(_) -> {
+                let lines = preprocessLines(input);
+                let pos = cellNew(0);
+                parseNodeAt(lines, pos)
+            },
+        }
+    } else {
+        let lines = preprocessLines(input);
+        if (vecLen(lines) == 0) Ok(VNull)
+        else {
+            let pos = cellNew(0);
+            let val = parseNodeAt(lines, pos)?;
+            if (cellGet(pos) < vecLen(lines)) {
+                let rem = vecGetOr(lines, cellGet(pos), dummyLine());
+                Err("line " + intToStr(rem.lineNo) + ": unexpected trailing YAML content at indent " + intToStr(rem.indent) + ": " + rem.text)
+            } else {
+                Ok(val)
+            }
+        }
+    }
+}
+
+pub def parseConfigFile(path: String): Result Value String = {
+    let content = readFile(path)?;
+    if (strEndsWith(path, ".json")) {
+        match parseJson(content) {
+            Ok(v) -> Ok(v),
+            Err(e) -> Err(path + ": " + e),
+        }
+    } else {
+        match parseYaml(content) {
+            Ok(v) -> Ok(v),
+            Err(e) -> Err(path + ": " + e),
+        }
+    }
+}
+
+pub def decodeConfigFile(dec: Decoder a, path: String): Result a String = {
+    let val = parseConfigFile(path)?;
+    match run(dec, val) {
+        Ok(x) -> Ok(x),
+        Err(de) -> Err(path + ": " + formatErr(de)),
+    }
+}
+
+// ============================================================================
+// Declarative `Configurable` Concept (mirrors `Utils.hs` single/list/manifest)
+// ============================================================================
+
+pub concept Configurable a {
+    configId: a -> String
+    configDecoder: () -> Decoder a
+}
+
+def isConfigFilename(name: String): Bool =
+    strEndsWith(name, ".yaml") || strEndsWith(name, ".yml") || strEndsWith(name, ".json")
+
+pub def loadConfigurableFrom(path): forall a. (Configurable a) => String -> Result a String =
+    decodeConfigFile(configDecoder(), path)
+
+def decodeOneOrManyOrManifest(dec: Decoder a, val: Value, path: String): Result (List a) String = {
+    let singleAsList = std.codec.map((x) -> [x], dec);
+    let manyDec = list(dec);
+    let manifestDec = at("actions", list(dec));
+    match run(singleAsList <|> manyDec <|> manifestDec, val) {
+        Ok(items) -> Ok(items),
+        Err(_) -> {
+            let e1 = match run(dec, val) { Ok(_) -> "", Err(e) -> formatErr(e) };
+            let e2 = match run(manyDec, val) { Ok(_) -> "", Err(e) -> formatErr(e) };
+            let e3 = match run(manifestDec, val) { Ok(_) -> "", Err(e) -> formatErr(e) };
+            Err(path + ": " + e1 + "; " + e2 + "; " + e3)
+        },
+    }
+}
+
+pub def loadConfigurableDir(dir): forall a. (Configurable a) => String -> Result (OrdMap String a) String =
+    if (!isDir(dir)) {
+        Err("Directory does not exist: " + dir)
+    } else {
+        let entries = readDir(dir)?;
+        // Sort filenames deterministically via `OrdSet String`
+        let sortedFiles = setToAscList(setFromList(std.list.listFilter(entries, isConfigFilename)));
+        let dec = configDecoder();
+        let acc: Cell (OrdMap String a) = cellNew(mapEmpty());
+        let errs: Cell (List String) = cellNew(Nil);
+        let cur = cellNew(sortedFiles);
+        while (match cellGet(cur) { Nil -> false, _ -> true }) {
+            match cellGet(cur) {
+                Cons(fname, rest) -> {
+                    let fullPath = pathJoin(dir, fname);
+                    match parseConfigFile(fullPath) {
+                        Err(pe) -> cellSet(errs, Cons(pe, cellGet(errs))),
+                        Ok(val) -> match decodeOneOrManyOrManifest(dec, val, fullPath) {
+                            Err(de) -> cellSet(errs, Cons(de, cellGet(errs))),
+                            Ok(items) -> {
+                                let merged = std.list.listFold(
+                                    items,
+                                    cellGet(acc),
+                                    (m, item) -> mapInsert(m, configId(item), item)
+                                );
+                                cellSet(acc, merged)
+                            },
+                        },
+                    };
+                    cellSet(cur, rest)
+                },
+                Nil -> (),
+            }
+        };
+        match listRev(cellGet(errs)) {
+            Nil -> Ok(cellGet(acc)),
+            errList -> Err("Failed loading " + dir + ":\n" + strJoin(errList, "\n")),
+        }
+    }

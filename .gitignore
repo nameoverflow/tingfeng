@@ -1,4 +1,7 @@
-# Haskell build products
+# Geisha & Haskell build products
+server/build/
+*.gscore
+*.ll
 .stack-work/
 dist-newstyle/
 .ghc.environment.*
