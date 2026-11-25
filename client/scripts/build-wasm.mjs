@@ -2,91 +2,67 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { CLIENT_DIR, REPO_ROOT, GSA_DIR, resolveGeishaToolchain } from "./geisha-toolchain.mjs";
 
-const CLIENT_DIR = path.resolve(import.meta.dirname, "..");
-const REPO_ROOT = path.resolve(CLIENT_DIR, "..");
-const HS_DIR = path.join(CLIENT_DIR, "hs");
 const PUBLIC_DIR = path.join(CLIENT_DIR, "public");
 const DIST_DIR = path.join(CLIENT_DIR, "dist");
-
 const checkOnly = process.argv.includes("--check");
 
-// Locate wasm32-wasi-ghc (checks session ghc-wasm, ~/.ghc-wasm, or PATH)
-const candidates = [
-  path.resolve(REPO_ROOT, "../ghc-wasm"),
-  path.join(process.env.HOME || "", ".ghc-wasm"),
+const WASM_EXPORTS = [
+  "tf_init_app",
+  "tf_step_frame",
+  "tf_on_ws_open",
+  "tf_on_ws_message",
+  "tf_on_ws_close",
+  "tf_set_hidden",
+  "tf_pointer_move",
+  "tf_pointer_click",
+  "tf_pan_zoom",
+  "tf_drag_at",
+  "tf_scroll_at",
+  "tf_text_input",
+  "tf_text_submit",
+  "tf_focus_input_id",
+  "tf_blur_input",
+  "tf_key_down",
+  "tf_ui_action",
+  "tf_lab_cmd",
 ];
-let wasmPrefix = candidates.find((p) => fs.existsSync(path.join(p, "wasm32-wasi-ghc/bin/wasm32-wasi-ghc")));
 
-const env = { ...process.env };
-let wasmGhc = "wasm32-wasi-ghc";
-let wasmOpt = "wasm-opt";
-
-if (wasmPrefix) {
-  wasmGhc = path.join(wasmPrefix, "wasm32-wasi-ghc/bin/wasm32-wasi-ghc");
-  wasmOpt = path.join(wasmPrefix, "binaryen/bin/wasm-opt");
-  env.PATH = `${path.join(wasmPrefix, "binaryen/bin")}:${path.join(wasmPrefix, "wasi-sdk/bin")}:${path.join(wasmPrefix, "wasm32-wasi-ghc/bin")}:${env.PATH}`;
-  env.AR = path.join(wasmPrefix, "wasi-sdk/bin/llvm-ar");
-  env.CC = path.join(wasmPrefix, "wasi-sdk/bin/wasm32-wasi-clang");
-  env.CXX = path.join(wasmPrefix, "wasi-sdk/bin/wasm32-wasi-clang++");
-  env.LD = path.join(wasmPrefix, "wasi-sdk/bin/wasm-ld");
-  env.NM = path.join(wasmPrefix, "wasi-sdk/bin/llvm-nm");
-  env.RANLIB = path.join(wasmPrefix, "wasi-sdk/bin/llvm-ranlib");
-}
+const { geisha, wasmRuntime } = resolveGeishaToolchain();
+const entryFile = path.join(GSA_DIR, "src/mod.gsa");
+const exportFlags = WASM_EXPORTS.flatMap((fn) => ["--export", fn]);
 
 if (checkOnly) {
-  const buildCheck = path.join(HS_DIR, "build-check");
-  fs.mkdirSync(buildCheck, { recursive: true });
-  execFileSync(wasmGhc, [
-    "-Wall", "-Werror", "-Wno-x-partial", "-Wno-type-defaults", "-fno-code",
-    "-isrc", "-outputdir", buildCheck,
-    path.join(HS_DIR, "src/Main.hs")
-  ], { cwd: HS_DIR, env, stdio: "inherit" });
-  console.log("✓ Haskell Wasm client typecheck passed (0 warnings/errors).");
+  const buildDir = path.join(GSA_DIR, "build");
+  fs.mkdirSync(buildDir, { recursive: true });
+  const checkLl = path.join(buildDir, "check.ll");
+  execFileSync(
+    geisha,
+    ["--target", "wasm32", "--src-root", GSA_DIR, ...exportFlags, "-e", "-o", checkLl, entryFile],
+    { cwd: CLIENT_DIR, stdio: "inherit" }
+  );
+  fs.rmSync(checkLl, { force: true });
+  console.log("✓ Pure-Geisha Wasm client typecheck & IR verification passed (0 errors).");
   process.exit(0);
 }
 
-const buildWasm = path.join(HS_DIR, "build-wasm");
+if (!wasmRuntime) {
+  throw new Error("wasm_rt.o not found. Run 'make wasm-runtime' in geisha.gsa or set GEISHA_WASM_RUNTIME.");
+}
+
 const outWasmDir = path.join(PUBLIC_DIR, "wasm");
-fs.mkdirSync(buildWasm, { recursive: true });
 fs.mkdirSync(outWasmDir, { recursive: true });
+const finalWasm = path.join(outWasmDir, "tingfeng.wasm");
 
-const rawWasm = path.join(outWasmDir, "tingfeng-hs.raw.wasm");
-const finalWasm = path.join(outWasmDir, "tingfeng-hs.wasm");
-const jsffiOut = path.join(outWasmDir, "ghc_wasm_jsffi.js");
+console.log("[1/2] Compiling pure-Geisha client to wasm32...");
+execFileSync(
+  geisha,
+  ["--target", "wasm32", "--src-root", GSA_DIR, "--runtime", wasmRuntime, ...exportFlags, "-o", finalWasm, entryFile],
+  { cwd: CLIENT_DIR, stdio: "inherit" }
+);
 
-const exportsList = [
-  "hs_init_app", "hs_step_frame", "hs_on_ws_open", "hs_on_ws_message",
-  "hs_on_ws_close", "hs_set_hidden", "hs_pointer_move", "hs_pointer_click",
-  "hs_pan_zoom", "hs_drag_at", "hs_scroll_at", "hs_text_input",
-  "hs_text_submit", "hs_focus_input_id", "hs_blur_input", "hs_key_down", "hs_ui_action", "hs_lab_cmd"
-].map((e) => `--export=${e}`).join(",");
-
-console.log("[1/3] Compiling Haskell client to wasm32-wasi...");
-execFileSync(wasmGhc, [
-  "-O2", "-Wall", "-Wno-x-partial", "-Wno-type-defaults",
-  "-no-hs-main", "-optl-mexec-model=reactor",
-  `-optl-Wl,${exportsList}`,
-  "-isrc", "-outputdir", buildWasm,
-  "src/Main.hs", "-o", rawWasm
-], { cwd: HS_DIR, env, stdio: "inherit" });
-
-const libDir = execFileSync(wasmGhc, ["--print-libdir"], { env }).toString().trim();
-console.log("[2/3] Generating GHC Wasm JSFFI bindings...");
-execFileSync(process.execPath, [
-  path.join(libDir, "post-link.mjs"),
-  "-i", rawWasm, "-o", jsffiOut
-], { env, stdio: "inherit" });
-
-console.log("[3/3] Optimizing Wasm binary with binaryen wasm-opt -O2...");
-execFileSync(wasmOpt, [
-  "-O2", "--enable-reference-types", "--enable-bulk-memory", "--enable-simd",
-  "--enable-nontrapping-float-to-int", "--enable-sign-ext", "--enable-mutable-globals",
-  rawWasm, "-o", finalWasm
-], { env, stdio: "inherit" });
-fs.rmSync(rawWasm, { force: true });
-
-// Assemble self-contained dist/ bundle
+console.log("[2/2] Assembling dist/ bundle...");
 fs.rmSync(DIST_DIR, { recursive: true, force: true });
 fs.cpSync(PUBLIC_DIR, DIST_DIR, { recursive: true });
 fs.mkdirSync(path.join(DIST_DIR, "data"), { recursive: true });
@@ -103,5 +79,5 @@ if (fs.existsSync(portraitSrc)) {
   fs.cpSync(portraitSrc, path.join(DIST_DIR, "portraits"), { recursive: true });
 }
 
-const sz = fs.statSync(path.join(DIST_DIR, "wasm/tingfeng-hs.wasm")).size;
-console.log(`✓ Built dist/wasm/tingfeng-hs.wasm (${(sz / 1048576).toFixed(2)} MB raw).`);
+const sz = fs.statSync(path.join(DIST_DIR, "wasm/tingfeng.wasm")).size;
+console.log(`✓ Built dist/wasm/tingfeng.wasm (${(sz / 1024).toFixed(1)} KB raw).`);

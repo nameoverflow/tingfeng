@@ -1,0 +1,1099 @@
+// Deterministic Combat Timeline Resolver, IK Contact Pinning, and Stage Director (`battle`).
+
+use std.option.{Option, Some, None}
+use std.list.{listLen, listRev, listAppend, listMap}
+use std.str.intToStr
+use std.codec.Value
+use prelude.{
+    sin, cos, atan2, sqrt, pi,
+    absFloat, minInt, maxInt, clampInt, minFloat, maxFloat, clampFloat, clamp01,
+    jsRound, floorMod, isNanFloat, isInfFloat,
+    optOr, optIsSome, listIsEmpty, listHead, listLast, listNthOr,
+    listFind, listFindIndex, listFilter, listTake, listSumFloat, intRange,
+    utf8Trim, utf8CharCount
+}
+use ordmap.mapLookupOr
+use protocol.{
+    CombatResult, ResHit, ResDodge, ResParry, ResEffect, combatResEq,
+    CombatHit, MkCombatHit, CombatEvt
+}
+use pose.{
+    CombatStyle, StyleFist, StyleSword,
+    VisualProfile,
+    SvgPose, MkSvgPose, PoseLibrary,
+    svgSwordLength, svgPose, shiftPose, reachWith
+}
+use catalog.{
+    PinPoint, PinHand, PinFoot, PinBlade,
+    TargetReaction, ReactHit, ReactDodge, ReactParry, ReactEffect, ReactNone, reactEq,
+    FrameHold, PoseKey, MkPoseKey,
+    OffsetEase, EaseCut, EaseOut, easeEq, OffsetKey, MkOffsetKey,
+    ApproachDef, KeyPosesDef, Choreography, MkChoreography,
+    StagingProfile, ActionDef, ActionCatalog,
+    stagingFor, battleActionFor, idleActionIdForStyle, reactionActionIdForStyle, isTravelMotion
+}
+
+pub data BattleSide {
+    SidePlayer,
+    SideEnemy,
+}
+
+pub def sideEq(a: BattleSide, b: BattleSide): Bool = match (a, b) {
+    (SidePlayer, SidePlayer) -> true,
+    (SideEnemy, SideEnemy) -> true,
+    _ -> false,
+}
+
+pub def battleSideText(s: BattleSide): String = match s {
+    SidePlayer -> "player",
+    SideEnemy -> "enemy",
+}
+
+pub def parseBattleSide(raw: String): BattleSide =
+    if (raw == "enemy") SideEnemy else SidePlayer
+
+pub def sideHome(s: BattleSide): Float = match s {
+    SidePlayer -> -230.0,
+    SideEnemy -> 230.0,
+}
+
+pub data ActorVisual {
+    MkActorVisual {
+        avActionId: String,
+        avProfile: VisualProfile,
+        avStyle: CombatStyle,
+        avFrames: List FrameHold,
+        avKeyPoses: Option KeyPosesDef,
+    },
+}
+
+pub data ResolvedHit {
+    MkResolvedHit {
+        rhAtMs: Float,
+        rhHitStopMs: Float,
+        rhDamage: Option Int,
+        rhHeal: Option Int,
+        rhFloatText: String,
+        rhResult: CombatResult,
+        rhReaction: TargetReaction,
+        rhTargetVisual: ActorVisual,
+        rhStaging: StagingProfile,
+    },
+}
+
+pub data ResolvedActor {
+    MkResolvedActor {
+        raSide: BattleSide,
+        raVisual: ActorVisual,
+        raMotion: String,
+        raApproach: Option ApproachDef,
+        raPoseKeys: List PoseKey,
+        raOffsetKeys: List OffsetKey,
+        raActionDelayMs: Float,
+    },
+}
+
+pub data ResolvedTarget {
+    MkResolvedTarget {
+        rtSide: BattleSide,
+        rtVisual: ActorVisual,
+        rtReaction: TargetReaction,
+    },
+}
+
+pub data ResolvedTimeline {
+    MkResolvedTimeline {
+        tlId: Int,
+        tlKind: String,
+        tlActorSide: BattleSide,
+        tlTargetSide: BattleSide,
+        tlDurationMs: Float,
+        tlImpactAtMs: Float,
+        tlHits: List ResolvedHit,
+        tlStaging: StagingProfile,
+        tlLabel: String,
+        tlChoreography: Choreography,
+        tlActor: ResolvedActor,
+        tlTarget: ResolvedTarget,
+        tlResult: CombatResult,
+        tlDamage: Option Int,
+        tlHeal: Option Int,
+        tlFloatText: String,
+        tlText: String,
+    },
+}
+
+pub data FigureSample {
+    MkFigureSample {
+        fsVisual: ActorVisual,
+        fsFrameId: String,
+        fsX: Float,
+        fsY: Float,
+        fsAngle: Float,
+        fsAlpha: Float,
+        fsFlash: Float,
+    },
+}
+
+pub data SceneSample {
+    MkSceneSample {
+        scPlayer: FigureSample,
+        scEnemy: FigureSample,
+        scPhase: String,
+        scCameraScale: Float,
+        scCameraX: Float,
+        scShakeY: Float,
+        scShade: Float,
+        scTrail: Float,
+        scBurst: Float,
+        scGuard: Float,
+        scAura: Float,
+        scGhost: Float,
+        scInvert: Float,
+        scAngle: Float,
+        scTextAlpha: Float,
+        scTextLift: Float,
+        scTextScale: Float,
+        scContact: (Float, Float),
+        scForce: Float,
+        scHitIndex: Int,
+        scResultAlpha: Float,
+    },
+}
+
+pub data InkParticle {
+    MkInkParticle {
+        ipX: Float,
+        ipY: Float,
+        ipVx: Float,
+        ipVy: Float,
+        ipRadius: Float,
+        ipLife: Float,
+        ipMaxLife: Float,
+        ipColor: String,
+    },
+}
+
+// ============================================================================
+// Multi-Hit Share Splitting & Clip Frame Timing
+// ============================================================================
+
+def splitShareLoop(total: Int, sumS: Float, before: Int, acc: Float, shares: List Float, outRev: List (Option Int)): List (Option Int) =
+    match shares {
+        Nil -> listRev(outRev),
+        Cons(s, rest) -> {
+            let accNext = acc + s;
+            let upTo = jsRound(intToFloat(total) * accNext / sumS);
+            let part = upTo - before;
+            splitShareLoop(total, sumS, upTo, accNext, rest, Cons(Some(part), outRev))
+        },
+    }
+
+pub def splitByShare(mTotal: Option Int, shares: List Float): List (Option Int) = match mTotal {
+    None -> listMap(shares, (_) -> None),
+    Some(total) -> {
+        let sumS = maxFloat(0.000001, listSumFloat(shares));
+        splitShareLoop(total, sumS, 0, 0.0, shares, Nil)
+    },
+}
+
+def clipImpactOffsetMs(frames: List FrameHold, impactIdx: Int, playbackMs: Float): Float = {
+    let totalHold = maxFloat(1.0, listSumFloat(listMap(frames, (f) -> f.fhHoldMs)));
+    let beforeHold = listSumFloat(listMap(listTake(frames, maxInt(0, impactIdx)), (f) -> f.fhHoldMs));
+    beforeHold * playbackMs / totalHold
+}
+
+def clipFrameLoop(acc: Float, scaledT: Float, fs: List FrameHold): String = match fs {
+    Nil -> "idle",
+    Cons(f, Nil) -> f.fhFrameId,
+    Cons(f, rest) -> {
+        let accNext = acc + f.fhHoldMs;
+        if (scaledT < accNext) f.fhFrameId else clipFrameLoop(accNext, scaledT, rest)
+    },
+}
+
+def clipFrameAt(frames: List FrameHold, elapsed: Float, totalDur: Float): String =
+    if (listIsEmpty(frames)) "idle"
+    else {
+        let rawSum = maxFloat(1.0, listSumFloat(listMap(frames, (f) -> f.fhHoldMs)));
+        let scaledT = maxFloat(0.0, minFloat(rawSum, elapsed * rawSum / maxFloat(1.0, totalDur)));
+        clipFrameLoop(0.0, scaledT, frames)
+    }
+
+def visualForAction(cat: ActionCatalog, aid: String, prof: VisualProfile, fallbackStyle: CombatStyle): ActorVisual = {
+    let a = battleActionFor(cat, aid, fallbackStyle);
+    MkActorVisual {
+        avActionId: a.adId,
+        avProfile: prof,
+        avStyle: a.adStyle,
+        avFrames: a.adFrames,
+        avKeyPoses: a.adKeyPoses,
+    }
+}
+
+pub def idleVisual(cat: ActionCatalog, style: CombatStyle, prof: VisualProfile): ActorVisual =
+    visualForAction(cat, idleActionIdForStyle(style), prof, style)
+
+def reactionVisual(cat: ActionCatalog, react: TargetReaction, prof: VisualProfile, style: CombatStyle): ActorVisual =
+    if (reactEq(react, ReactEffect) || reactEq(react, ReactNone)) idleVisual(cat, style, prof)
+    else visualForAction(cat, reactionActionIdForStyle(react, style), prof, style)
+
+def floatTextOf(res: CombatResult, mDmg: Option Int, mHeal: Option Int): String =
+    match mDmg {
+        Some(d) if (d > 0) -> "-" + intToStr(d),
+        _ -> match mHeal {
+            Some(h) if (h > 0) -> "+" + intToStr(h),
+            _ -> match res {
+                ResDodge -> "闪",
+                ResParry -> "架",
+                _ -> "",
+            },
+        },
+    }
+
+def resultReaction(res: CombatResult): TargetReaction = match res {
+    ResHit -> ReactHit,
+    ResDodge -> ReactDodge,
+    ResParry -> ReactParry,
+    ResEffect -> ReactEffect,
+}
+
+// ============================================================================
+// Combat & Settlement Timeline Resolution
+// ============================================================================
+
+def resolvePoseKeys(
+    action: ActionDef,
+    choreo: Choreography,
+    hits: List ResolvedHit,
+    delayMs: Float,
+    scale: Float
+): List PoseKey =
+    if (action.adActorMotion == "focus") Nil
+    else if (!listIsEmpty(action.adPoseTrack)) {
+        let travels = isTravelMotion(action.adActorMotion);
+        let retreatPose = match action.adKeyPoses {
+            Some(kp) -> optOr(kp.kpRetreat, "retreat"),
+            None -> "retreat",
+        };
+        let retreatKey = MkPoseKey { pkAtMs: choreo.chRecoverAtMs, pkPose: retreatPose, pkPin: None, pkReach: None, pkContactY: None };
+        let idleKey = MkPoseKey { pkAtMs: choreo.chRestAtMs, pkPose: "idle", pkPin: None, pkReach: None, pkContactY: None };
+        let track = listMap(action.adPoseTrack, (pk) -> MkPoseKey {
+            pkAtMs: delayMs + pk.pkAtMs * scale,
+            pkPose: pk.pkPose,
+            pkPin: pk.pkPin,
+            pkReach: pk.pkReach,
+            pkContactY: pk.pkContactY,
+        });
+        if (travels) {
+            listAppend(listFilter(track, (k) -> k.pkAtMs < retreatKey.pkAtMs), [retreatKey, idleKey])
+        } else track
+    } else match action.adKeyPoses {
+        Some(kp) -> match (kp.kpPrepare, kp.kpReachWith) {
+            (Some(prep), Some(reachPin)) -> {
+                let travels = isTravelMotion(action.adActorMotion);
+                let retreatKey = MkPoseKey { pkAtMs: choreo.chRecoverAtMs, pkPose: optOr(kp.kpRetreat, "retreat"), pkPin: None, pkReach: None, pkContactY: None };
+                let idleKey = MkPoseKey { pkAtMs: choreo.chRestAtMs, pkPose: "idle", pkPin: None, pkReach: None, pkContactY: None };
+                let contactPose = optOr(kp.kpContact, "punch_strike");
+                let midKeys =
+                    if (travels) [retreatKey]
+                    else match (kp.kpFinish, listLast(hits)) {
+                        (Some(fin), Some(lastH)) -> [MkPoseKey {
+                            pkAtMs: lastH.rhAtMs + lastH.rhHitStopMs,
+                            pkPose: fin,
+                            pkPin: None,
+                            pkReach: None,
+                            pkContactY: None,
+                        }],
+                        _ -> Nil,
+                    };
+                let headKeys = [
+                    MkPoseKey { pkAtMs: delayMs, pkPose: prep, pkPin: None, pkReach: None, pkContactY: None },
+                    MkPoseKey { pkAtMs: choreo.chLaunchAtMs, pkPose: contactPose, pkPin: Some(reachPin), pkReach: None, pkContactY: None }
+                ];
+                listAppend(headKeys, listAppend(midKeys, [idleKey]))
+            },
+            _ -> Nil,
+        },
+        None -> Nil,
+    }
+
+pub def resolveCombatTimeline(
+    cat: ActionCatalog,
+    ev: CombatEvt,
+    tid: Int,
+    actorSide: BattleSide,
+    targetSide: BattleSide,
+    logTxt: String,
+    actorProf: VisualProfile,
+    targetProf: VisualProfile,
+    actorStyle: CombatStyle,
+    targetStyle: CombatStyle
+): ResolvedTimeline = {
+    let action = battleActionFor(cat, ev.ceActionId, actorStyle);
+    let actorVis = MkActorVisual {
+        avActionId: action.adId,
+        avProfile: actorProf,
+        avStyle: action.adStyle,
+        avFrames: action.adFrames,
+        avKeyPoses: action.adKeyPoses,
+    };
+    let actionDur = match ev.ceDurationMs {
+        Some(d) if (d > 0.0 && !isNanFloat(d) && !isInfFloat(d)) -> intToFloat(jsRound(d)),
+        _ -> action.adDurationMs,
+    };
+    let mApproach = if (ev.ceKind == "effect_tick") None else action.adApproach;
+    let apDur = match mApproach { Some(ap) -> ap.apDurationMs, None -> 0.0 };
+    let delayMs = apDur * actionDur / maxFloat(1.0, action.adDurationMs);
+    let scale = actionDur / maxFloat(1.0, action.adDurationMs);
+    let c0 = action.adChoreography;
+
+    let rawHits: List (Float, Float, Float, Option Value) =
+        if (!listIsEmpty(action.adHits)) {
+            listMap(action.adHits, (h) -> (delayMs + h.hdAtMs * scale, h.hdHitStopMs * scale, h.hdShare, h.hdStaging))
+        } else {
+            [(delayMs + clipImpactOffsetMs(action.adFrames, action.adImpactFrame, actionDur), c0.chHitStopMs * scale, 1.0, None)]
+        };
+
+    let rawCount = listLen(rawHits);
+    let hasOutcomes = listLen(ev.ceHits) == rawCount;
+    let shares = listMap(rawHits, (rh) -> match rh { (_, _, sh, _) -> sh });
+    let dmgParts = if (hasOutcomes) listMap(ev.ceHits, (ch) -> ch.chDamage) else splitByShare(ev.ceDamage, shares);
+    let healParts = if (hasOutcomes) listMap(ev.ceHits, (ch) -> ch.chHeal) else splitByShare(ev.ceHeal, shares);
+
+    let hits = listMap(intRange(0, rawCount - 1), (idx) -> {
+        let (atT, stopT, _, hStg) = listNthOr(rawHits, idx, (0.0, 0.0, 1.0, None));
+        let res =
+            if (hasOutcomes) {
+                match listNthOr(ev.ceHits, idx, MkCombatHit { chResult: ev.ceResult, chDamage: None, chHeal: None }) {
+                    ch -> ch.chResult,
+                }
+            } else ev.ceResult;
+        let react = mapLookupOr(action.adTargetReaction, res, resultReaction(res));
+        let stg = stagingFor(cat, c0.chWeight, [action.adStaging, ev.ceStagingOverride, hStg]);
+        let dmg = listNthOr(dmgParts, idx, None);
+        let hl = listNthOr(healParts, idx, None);
+        MkResolvedHit {
+            rhAtMs: atT,
+            rhHitStopMs: stopT,
+            rhDamage: dmg,
+            rhHeal: hl,
+            rhFloatText: floatTextOf(res, dmg, hl),
+            rhResult: res,
+            rhReaction: react,
+            rhTargetVisual: reactionVisual(cat, react, targetProf, targetStyle),
+            rhStaging: stg,
+        }
+    });
+
+    let fallbackHit = MkResolvedHit {
+        rhAtMs: delayMs, rhHitStopMs: 0.0, rhDamage: None, rhHeal: None,
+        rhFloatText: "", rhResult: ev.ceResult, rhReaction: ReactNone,
+        rhTargetVisual: idleVisual(cat, targetStyle, targetProf),
+        rhStaging: stagingFor(cat, "light", Nil),
+    };
+    let firstHit = optOr(listHead(hits), fallbackHit);
+    let choreo = MkChoreography {
+        chLaunchAtMs: delayMs + c0.chLaunchAtMs * scale,
+        chHitStopMs: firstHit.rhHitStopMs,
+        chRecoverAtMs: delayMs + c0.chRecoverAtMs * scale,
+        chRestAtMs: delayMs + c0.chRestAtMs * scale,
+        chReach: c0.chReach,
+        chContactY: c0.chContactY,
+        chWeight: c0.chWeight,
+    };
+
+    let poseKeys = resolvePoseKeys(action, choreo, hits, delayMs, scale);
+    let offsetKeys = listMap(action.adOffsetTrack, (ok) -> MkOffsetKey {
+        okAtMs: delayMs + ok.okAtMs * scale,
+        okX: ok.okX,
+        okY: ok.okY,
+        okAngle: ok.okAngle,
+        okEase: ok.okEase,
+    });
+
+    let lbl = match ev.ceLabel {
+        Some(l) if (strLen(utf8Trim(l)) > 0) -> utf8Trim(l),
+        _ -> {
+            let st = utf8Trim(ev.ceText);
+            if (ev.ceMsgKind == "script" && strLen(st) > 0 && utf8CharCount(st) <= 12) st
+            else action.adLabel
+        },
+    };
+
+    MkResolvedTimeline {
+        tlId: tid,
+        tlKind: ev.ceKind,
+        tlActorSide: actorSide,
+        tlTargetSide: targetSide,
+        tlDurationMs: actionDur + delayMs,
+        tlImpactAtMs: firstHit.rhAtMs,
+        tlHits: hits,
+        tlStaging: stagingFor(cat, c0.chWeight, [action.adStaging, ev.ceStagingOverride]),
+        tlLabel: lbl,
+        tlChoreography: choreo,
+        tlActor: MkResolvedActor {
+            raSide: actorSide,
+            raVisual: actorVis,
+            raMotion: action.adActorMotion,
+            raApproach: mApproach,
+            raPoseKeys: poseKeys,
+            raOffsetKeys: offsetKeys,
+            raActionDelayMs: delayMs,
+        },
+        tlTarget: MkResolvedTarget {
+            rtSide: targetSide,
+            rtVisual: firstHit.rhTargetVisual,
+            rtReaction: firstHit.rhReaction,
+        },
+        tlResult: firstHit.rhResult,
+        tlDamage: ev.ceDamage,
+        tlHeal: ev.ceHeal,
+        tlFloatText: floatTextOf(ev.ceResult, ev.ceDamage, ev.ceHeal),
+        tlText: logTxt,
+    }
+}
+
+pub def resolveSettlementTimeline(
+    cat: ActionCatalog,
+    tid: Int,
+    actorSide: BattleSide,
+    targetSide: BattleSide,
+    txt: String,
+    actorProf: VisualProfile,
+    targetProf: VisualProfile,
+    actorStyle: CombatStyle,
+    targetStyle: CombatStyle
+): ResolvedTimeline = {
+    let aVis = idleVisual(cat, actorStyle, actorProf);
+    let tVis = idleVisual(cat, targetStyle, targetProf);
+    let stg = stagingFor(cat, "quiet", Nil);
+    let hit = MkResolvedHit {
+        rhAtMs: 0.0, rhHitStopMs: 0.0, rhDamage: None, rhHeal: None,
+        rhFloatText: "", rhResult: ResEffect, rhReaction: ReactNone,
+        rhTargetVisual: tVis, rhStaging: stg,
+    };
+    MkResolvedTimeline {
+        tlId: tid,
+        tlKind: "settlement",
+        tlActorSide: actorSide,
+        tlTargetSide: targetSide,
+        tlDurationMs: 900.0,
+        tlImpactAtMs: 0.0,
+        tlHits: [hit],
+        tlStaging: stg,
+        tlLabel: if (sideEq(actorSide, SidePlayer)) "胜" else "败",
+        tlChoreography: MkChoreography {
+            chLaunchAtMs: 0.0, chHitStopMs: 0.0, chRecoverAtMs: 0.0, chRestAtMs: 900.0,
+            chReach: 0.0, chContactY: 100.0, chWeight: "quiet",
+        },
+        tlActor: MkResolvedActor {
+            raSide: actorSide, raVisual: aVis, raMotion: "none",
+            raApproach: None, raPoseKeys: Nil, raOffsetKeys: Nil, raActionDelayMs: 0.0,
+        },
+        tlTarget: MkResolvedTarget { rtSide: targetSide, rtVisual: tVis, rtReaction: ReactNone },
+        tlResult: ResEffect,
+        tlDamage: None,
+        tlHeal: None,
+        tlFloatText: "",
+        tlText: txt,
+    }
+}
+
+// ============================================================================
+// Timeline Queries, IK Pose Pinning (`sampleSvgPose`) & Stage Director
+// ============================================================================
+
+pub def visualTimeAt(tl: ResolvedTimeline, t: Float): Float =
+    match listFind(tl.tlHits, (h) -> t >= h.rhAtMs && t < h.rhAtMs + h.rhHitStopMs) {
+        Some(h) -> h.rhAtMs,
+        None -> t,
+    }
+
+def hitIndexLoop(hs: List ResolvedHit, t: Float, idx: Int, acc: Int): Int = match hs {
+    Nil -> acc,
+    Cons(h, rest) -> hitIndexLoop(rest, t, idx + 1, if (t >= h.rhAtMs) idx else acc),
+}
+
+pub def hitIndexAt(tl: ResolvedTimeline, t: Float): Int =
+    hitIndexLoop(tl.tlHits, t, 0, -1)
+
+def poseKeyAt(keys: List PoseKey, t: Float): Option PoseKey =
+    std.list.listFold(keys, None, (acc, k) -> if (t >= k.pkAtMs) Some(k) else acc)
+
+pub def reachPointAt(tl: ResolvedTimeline, t: Float): PinPoint = {
+    let keys = tl.tlActor.raPoseKeys;
+    let curPin = match poseKeyAt(keys, t) { Some(k) -> k.pkPin, None -> None };
+    match curPin {
+        Some(p) -> p,
+        None -> match listFind(keys, (k) -> k.pkAtMs > t && optIsSome(k.pkPin)) {
+            Some(nk) -> optOr(nk.pkPin, PinHand),
+            None -> match listFind(listRev(keys), (k) -> optIsSome(k.pkPin)) {
+                Some(lk) -> optOr(lk.pkPin, PinHand),
+                None -> PinHand,
+            },
+        },
+    }
+}
+
+def reactionStartAt(tl: ResolvedTimeline, hit: ResolvedHit): Float = {
+    let launch = tl.tlActor.raActionDelayMs;
+    match hit.rhReaction {
+        ReactDodge -> maxFloat(launch, hit.rhAtMs - hit.rhStaging.spReactDodge.rlLeadMs),
+        ReactParry -> maxFloat(launch, hit.rhAtMs - hit.rhStaging.spReactParry.rlLeadMs),
+        _ -> hit.rhAtMs,
+    }
+}
+
+def activeReactionLoop(
+    tl: ResolvedTimeline,
+    hs: List ResolvedHit,
+    t: Float,
+    idx: Int,
+    acc: Option (ResolvedHit, Int, Float)
+): Option (ResolvedHit, Int, Float) = match hs {
+    Nil -> acc,
+    Cons(hit, rest) -> {
+        let sAt = reactionStartAt(tl, hit);
+        let nextAcc =
+            if (t < sAt) acc
+            else match acc {
+                Some((prevHit, prevIdx, prevStart))
+                    if (prevIdx == idx - 1 && reactEq(prevHit.rhReaction, hit.rhReaction)) ->
+                        Some((hit, idx, prevStart)),
+                _ -> Some((hit, idx, sAt)),
+            };
+        activeReactionLoop(tl, rest, t, idx + 1, nextAcc)
+    },
+}
+
+def activeReactionAt(tl: ResolvedTimeline, t: Float): Option (ResolvedHit, Int, Float) =
+    activeReactionLoop(tl, tl.tlHits, t, 0, None)
+
+def poseKeyEq(a: PoseKey, b: PoseKey): Bool =
+    a.pkAtMs == b.pkAtMs && a.pkPose == b.pkPose
+
+def hitForPinnedKey(tl: ResolvedTimeline, key: PoseKey): ResolvedHit = {
+    let pinned = listFilter(tl.tlActor.raPoseKeys, (k) -> optIsSome(k.pkPin));
+    let idx = optOr(listFindIndex(pinned, (k) -> poseKeyEq(k, key)), 0);
+    let hs = tl.tlHits;
+    let clamped = clampInt(0, maxInt(0, listLen(hs) - 1), idx);
+    listNthOr(hs, clamped, optOr(listHead(hs), MkResolvedHit {
+        rhAtMs: 0.0, rhHitStopMs: 0.0, rhDamage: None, rhHeal: None,
+        rhFloatText: "", rhResult: ResHit, rhReaction: ReactHit,
+        rhTargetVisual: tl.tlTarget.rtVisual, rhStaging: tl.tlStaging,
+    }))
+}
+
+def easeOut(v: Float): Float = {
+    let u = 1.0 - v;
+    1.0 - u * u * u
+}
+
+def offsetIdxLoop(ks: List OffsetKey, t: Float, i: Int, acc: Int): Int = match ks {
+    Nil -> acc,
+    Cons(k, rest) -> offsetIdxLoop(rest, t, i + 1, if (t >= k.okAtMs) i else acc),
+}
+
+pub def actorOffsetAt(tl: ResolvedTimeline, t: Float): (Float, Float, Float) = {
+    let keys = tl.tlActor.raOffsetKeys;
+    match keys {
+        Nil -> (0.0, 0.0, 0.0),
+        Cons(k0, _) ->
+            if (t < k0.okAtMs) (0.0, 0.0, 0.0)
+            else {
+                let n = listLen(keys);
+                let idx = offsetIdxLoop(keys, t, 0, 0);
+                let fromK = listNthOr(keys, idx, k0);
+                let fx = fromK.okX;
+                let fy = fromK.okY;
+                let fa = fromK.okAngle;
+                if (idx + 1 >= n) (fx, fy, fa)
+                else {
+                    let nextK = listNthOr(keys, idx + 1, fromK);
+                    if (easeEq(nextK.okEase, EaseCut)) (fx, fy, fa)
+                    else {
+                        let raw = clamp01((t - fromK.okAtMs) / maxFloat(1.0, nextK.okAtMs - fromK.okAtMs));
+                        let p = if (easeEq(nextK.okEase, EaseOut)) easeOut(raw) else raw;
+                        (
+                            fx + (nextK.okX - fx) * p,
+                            fy + (nextK.okY - fy) * p,
+                            fa + (nextK.okAngle - fa) * p
+                        )
+                    }
+                }
+            },
+    }
+}
+
+def keyedPose(lib: PoseLibrary, key: PoseKey, tl: ResolvedTimeline, style: CombatStyle, t: Float): SvgPose = {
+    let pose = svgPose(lib, key.pkPose, style);
+    match key.pkPin {
+        None -> pose,
+        Some(pin) -> {
+            let c = tl.tlChoreography;
+            let hit = hitForPinnedKey(tl, key);
+            let (ox, oy, _) = actorOffsetAt(tl, t);
+            let standoff = if (combatResEq(hit.rhResult, ResParry)) hit.rhStaging.spReactParry.rlStandoff else 0.0;
+            let reachX = optOr(key.pkReach, c.chReach) - standoff - ox;
+            let targetY = optOr(key.pkContactY, c.chContactY) - 176.0 - oy;
+            match pin {
+                PinFoot -> reachWith(pose, false, (reachX, targetY)),
+                PinHand -> reachWith(pose, true, (reachX, targetY)),
+                PinBlade -> {
+                    let (hx, hy) = pose.spHand;
+                    let dy = targetY - hy;
+                    let swLen = svgSwordLength();
+                    if (absFloat(dy) < swLen - 0.5) {
+                        let dx = sqrt(swLen * swLen - dy * dy);
+                        let shifted = shiftPose(pose, reachX - dx - hx, 0.0);
+                        MkSvgPose {
+                            spNeck: shifted.spNeck, spHead: shifted.spHead, spShoulder: shifted.spShoulder, spHip: shifted.spHip,
+                            spBackElbow: shifted.spBackElbow, spBackHand: shifted.spBackHand,
+                            spElbow: shifted.spElbow, spHand: shifted.spHand,
+                            spBackKnee: shifted.spBackKnee, spBackFoot: shifted.spBackFoot,
+                            spKnee: shifted.spKnee, spFoot: shifted.spFoot,
+                            spTassel: shifted.spTassel,
+                            spBlade: atan2(dy, dx) * 180.0 / pi(),
+                            spFootPlanted: shifted.spFootPlanted, spBackFootPlanted: shifted.spBackFootPlanted,
+                            spHands: shifted.spHands, spBones: shifted.spBones,
+                        }
+                    } else {
+                        let rad = pose.spBlade * pi() / 180.0;
+                        reachWith(pose, true, (reachX - cos(rad) * swLen, targetY - sin(rad) * swLen))
+                    }
+                },
+            }
+        },
+    }
+}
+
+pub def sampleSvgPose(
+    lib: PoseLibrary,
+    mTl: Option ResolvedTimeline,
+    side: BattleSide,
+    elapsed: Float,
+    style: CombatStyle,
+    frameId: String,
+    reduced: Bool
+): SvgPose = {
+    let idleP = svgPose(lib, "idle", style);
+    match mTl {
+        None -> idleP,
+        Some(tl) ->
+            if (tl.tlKind == "settlement" || tl.tlKind == "effect_tick") idleP
+            else if (reduced) {
+                let arrival = tl.tlActor.raActionDelayMs;
+                if (sideEq(side, tl.tlActor.raSide) && elapsed < arrival) idleP
+                else svgPose(lib, frameId, style)
+            } else {
+                let c = tl.tlChoreography;
+                let arrival = tl.tlActor.raActionDelayMs;
+                let t = visualTimeAt(tl, elapsed);
+                if (!sideEq(side, tl.tlActor.raSide)) {
+                    match activeReactionAt(tl, t) {
+                        None -> idleP,
+                        Some((hit, _, _)) ->
+                            if (reactEq(hit.rhReaction, ReactNone) || reactEq(hit.rhReaction, ReactEffect) || t >= c.chRestAtMs) idleP
+                            else {
+                                let look = match hit.rhReaction {
+                                    ReactDodge -> hit.rhStaging.spReactDodge,
+                                    ReactParry -> hit.rhStaging.spReactParry,
+                                    _ -> hit.rhStaging.spReactHit,
+                                };
+                                let fallbackFrame = match hit.rhTargetVisual.avFrames {
+                                    Cons(f, _) -> f.fhFrameId,
+                                    Nil -> "hurt",
+                                };
+                                svgPose(lib, optOr(look.rlPose, fallbackFrame), style)
+                            },
+                    }
+                } else if (tl.tlActor.raMotion == "focus") {
+                    if (t < c.chLaunchAtMs || t >= c.chRestAtMs) idleP
+                    else {
+                        let fPose = match tl.tlActor.raVisual.avKeyPoses {
+                            Some(kp) -> optOr(kp.kpContact, "guard"),
+                            None -> "guard",
+                        };
+                        svgPose(lib, fPose, style)
+                    }
+                } else {
+                    let keys = tl.tlActor.raPoseKeys;
+                    if (listIsEmpty(keys)) svgPose(lib, frameId, style)
+                    else if (t < arrival && optIsSome(tl.tlActor.raApproach)) {
+                        let apPose = match tl.tlActor.raApproach {
+                            Some(ap) -> ap.apPose,
+                            None -> "approach",
+                        };
+                        svgPose(lib, apPose, style)
+                    } else {
+                        let defaultKey = optOr(listHead(keys), MkPoseKey { pkAtMs: 0.0, pkPose: frameId, pkPin: None, pkReach: None, pkContactY: None });
+                        keyedPose(lib, optOr(poseKeyAt(keys, t), defaultKey), tl, style, t)
+                    }
+                }
+            },
+    }
+}
+
+// ============================================================================
+// Stage Director (`sampleBattleScene`) & Ink Hit Particles
+// ============================================================================
+
+def prog(t: Float, a: Float, b: Float): Float =
+    clamp01((t - a) / maxFloat(1.0, b - a))
+
+def smooth01(v: Float): Float = v * v * (3.0 - 2.0 * v)
+
+def dashIn(p: Float): Float = {
+    let u = clamp01(p);
+    1.0 - (1.0 - u) * (1.0 - u)
+}
+
+def dashOut(p: Float): Float = smooth01(clamp01(p))
+
+def mkIdleFig(vis: ActorVisual): FigureSample = {
+    let fid = match vis.avFrames { Cons(f, _) -> f.fhFrameId, Nil -> "idle" };
+    MkFigureSample {
+        fsVisual: vis,
+        fsFrameId: fid,
+        fsX: 0.0,
+        fsY: 0.0,
+        fsAngle: 0.0,
+        fsAlpha: 1.0,
+        fsFlash: 0.0,
+    }
+}
+
+def withFigFlash(f: FigureSample, fl: Float): FigureSample = MkFigureSample {
+    fsVisual: f.fsVisual, fsFrameId: f.fsFrameId,
+    fsX: f.fsX, fsY: f.fsY, fsAngle: f.fsAngle, fsAlpha: f.fsAlpha, fsFlash: fl,
+}
+
+def zeroFigMove(f: FigureSample): FigureSample = MkFigureSample {
+    fsVisual: f.fsVisual, fsFrameId: f.fsFrameId,
+    fsX: 0.0, fsY: 0.0, fsAngle: 0.0, fsAlpha: f.fsAlpha, fsFlash: f.fsFlash,
+}
+
+pub def sampleBattleScene(
+    mTl: Option ResolvedTimeline,
+    elapsedMs: Float,
+    idleP: ActorVisual,
+    idleE: ActorVisual,
+    reducedMotion: Bool
+): SceneSample = {
+    let baseP = mkIdleFig(idleP);
+    let baseE = mkIdleFig(idleE);
+    let base = MkSceneSample {
+        scPlayer: baseP,
+        scEnemy: baseE,
+        scPhase: "idle",
+        scCameraScale: 1.0,
+        scCameraX: 0.0,
+        scShakeY: 0.0,
+        scShade: 0.0,
+        scTrail: 0.0,
+        scBurst: 0.0,
+        scGuard: 0.0,
+        scAura: 0.0,
+        scGhost: 0.0,
+        scInvert: 0.0,
+        scAngle: 0.0,
+        scTextAlpha: 0.0,
+        scTextLift: 0.0,
+        scTextScale: 1.0,
+        scContact: (0.0, -70.0),
+        scForce: 0.0,
+        scHitIndex: -1,
+        scResultAlpha: 0.0,
+    };
+    match mTl {
+        None -> base,
+        Some(tl) -> {
+            let t = clampFloat(0.0, tl.tlDurationMs, elapsedMs);
+            if (tl.tlKind == "settlement") {
+                let rAlpha = easeOut(prog(t, 0.0, 180.0)) * (1.0 - prog(t, tl.tlDurationMs - 160.0, tl.tlDurationMs));
+                let fadeAmt = if (reducedMotion) 0.0 else easeOut(prog(t, 80.0, 480.0));
+                let modLoser = (fig: FigureSample) -> MkFigureSample {
+                    fsVisual: fig.fsVisual, fsFrameId: fig.fsFrameId,
+                    fsX: fig.fsX, fsY: fadeAmt * 5.0, fsAngle: fig.fsAngle,
+                    fsAlpha: 1.0 - fadeAmt * 0.7, fsFlash: fig.fsFlash,
+                };
+                let (plFig, enFig) =
+                    if (sideEq(tl.tlTarget.rtSide, SidePlayer)) (modLoser(baseP), baseE)
+                    else (baseP, modLoser(baseE));
+                MkSceneSample {
+                    scPlayer: plFig, scEnemy: enFig, scPhase: "settlement",
+                    scCameraScale: 1.0, scCameraX: 0.0, scShakeY: 0.0,
+                    scShade: rAlpha * 0.38, scTrail: 0.0, scBurst: 0.0, scGuard: 0.0,
+                    scAura: 0.0, scGhost: 0.0, scInvert: 0.0, scAngle: 0.0,
+                    scTextAlpha: 0.0, scTextLift: 0.0, scTextScale: 1.0,
+                    scContact: (0.0, -70.0), scForce: 0.0, scHitIndex: -1, scResultAlpha: rAlpha,
+                }
+            } else {
+                let c = tl.tlChoreography;
+                let stg = tl.tlStaging;
+                let arrival = tl.tlActor.raActionDelayMs;
+                let impact = tl.tlImpactAtMs;
+                let holdEnd = impact + c.chHitStopMs;
+                let vTime = visualTimeAt(tl, t);
+                let hIdx = hitIndexAt(tl, t);
+                let defaultHit = optOr(listHead(tl.tlHits), MkResolvedHit {
+                    rhAtMs: 0.0, rhHitStopMs: 0.0, rhDamage: None, rhHeal: None,
+                    rhFloatText: "", rhResult: tl.tlResult, rhReaction: tl.tlTarget.rtReaction,
+                    rhTargetVisual: tl.tlTarget.rtVisual, rhStaging: stg,
+                });
+                let curHit = listNthOr(tl.tlHits, maxInt(0, hIdx), defaultHit);
+                let hitHoldEnd = curHit.rhAtMs + curHit.rhHitStopMs;
+                let finalHit = optOr(listLast(tl.tlHits), curHit);
+                let actorIsPlayer = sideEq(tl.tlActor.raSide, SidePlayer);
+                let targetIsPlayer = sideEq(tl.tlTarget.rtSide, SidePlayer);
+                let dir = if (actorIsPlayer) 1.0 else -1.0;
+                let tDir = if (targetIsPlayer) -1.0 else 1.0;
+                let attack = isTravelMotion(tl.tlActor.raMotion);
+                let strikes = attack || tl.tlActor.raMotion == "ranged";
+                let quiet = tl.tlKind == "effect_tick";
+                let retreat = prog(vTime, c.chRecoverAtMs, c.chRestAtMs);
+                let recovery = smooth01(retreat);
+                let envelope = if (quiet) 0.0 else easeOut(prog(vTime, 0.0, maxFloat(1.0, c.chLaunchAtMs))) * (1.0 - recovery);
+                let phaseTxt =
+                    if (t < arrival) "approach"
+                    else if (t < c.chLaunchAtMs) "prepare"
+                    else if (t < impact) "strike"
+                    else if (t < c.chRecoverAtMs) "impact"
+                    else if (t < c.chRestAtMs) "recover"
+                    else "idle";
+
+                let actorInit = if (actorIsPlayer) baseP else baseE;
+                let actorVis = if (quiet) actorInit.fsVisual else tl.tlActor.raVisual;
+                let actorFrame =
+                    if (quiet) actorInit.fsFrameId
+                    else match (t < arrival, tl.tlActor.raApproach) {
+                        (true, Some(ap)) -> ap.apPose,
+                        _ -> clipFrameAt(actorVis.avFrames, maxFloat(0.0, vTime - arrival), tl.tlDurationMs - arrival),
+                    };
+
+                let (dashX, dashY) =
+                    if (attack) {
+                        let travel = maxFloat(8.0, sideHome(SideEnemy) - sideHome(SidePlayer) - c.chReach);
+                        let d = prog(vTime, 0.0, arrival);
+                        let liftH = match tl.tlActor.raApproach { Some(ap) -> ap.apLift, None -> 0.0 };
+                        let arc = (p: Float) -> if (p <= 0.0 || p >= 1.0) 0.0 else sin(pi() * p);
+                        (
+                            dir * travel * dashIn(d) * (1.0 - dashOut(retreat)),
+                            -liftH * arc(d) - liftH * 0.6 * arc(retreat)
+                        )
+                    } else (0.0, 0.0);
+
+                let (offX, offY, offAng) =
+                    if (!quiet && !listIsEmpty(tl.tlActor.raOffsetKeys)) actorOffsetAt(tl, vTime)
+                    else (0.0, 0.0, 0.0);
+
+                let actorFig = MkFigureSample {
+                    fsVisual: actorVis,
+                    fsFrameId: actorFrame,
+                    fsX: dashX + dir * offX,
+                    fsY: dashY + offY,
+                    fsAngle: dir * offAng,
+                    fsAlpha: actorInit.fsAlpha,
+                    fsFlash: actorInit.fsFlash,
+                };
+
+                let targetInit = if (targetIsPlayer) baseP else baseE;
+                let (targetMoved, ghostVal) =
+                    if (quiet || actorIsPlayer == targetIsPlayer) (targetInit, 0.0)
+                    else match activeReactionAt(tl, t) {
+                        Some((rHit, _, startAt))
+                            if (t < c.chRestAtMs && !reactEq(rHit.rhReaction, ReactNone) && !reactEq(rHit.rhReaction, ReactEffect)) -> {
+                                let rxn = rHit.rhReaction;
+                                let look = match rxn {
+                                    ReactDodge -> rHit.rhStaging.spReactDodge,
+                                    ReactParry -> rHit.rhStaging.spReactParry,
+                                    _ -> rHit.rhStaging.spReactHit,
+                                };
+                                let tVis = rHit.rhTargetVisual;
+                                let tFid = match tVis.avFrames { Cons(f, _) -> f.fhFrameId, Nil -> "hurt" };
+                                let rTime =
+                                    if (reactEq(rxn, ReactHit)) rHit.rhAtMs + maxFloat(0.0, t - rHit.rhAtMs - rHit.rhHitStopMs)
+                                    else vTime;
+                                let onset =
+                                    if (reactEq(rxn, ReactHit)) 1.0
+                                    else easeOut(prog(rTime, startAt, startAt + look.rlOnsetMs));
+                                let amount = onset * (1.0 - recovery);
+                                let rHoldEnd = rHit.rhAtMs + rHit.rhHitStopMs;
+                                let stagger =
+                                    if (reactEq(rxn, ReactHit)) look.rlSnap + (1.0 - look.rlSnap) * easeOut(prog(t, rHoldEnd, rHoldEnd + 200.0))
+                                    else 1.0;
+                                let tx = tDir * look.rlPush * amount * stagger;
+                                let ty =
+                                    if (reactEq(rxn, ReactHit) && look.rlLift > 0.0) -look.rlLift * amount
+                                    else if (reactEq(rxn, ReactDodge) && look.rlHop > 0.0) {
+                                        let jmp = prog(vTime, startAt, startAt + 300.0);
+                                        if (jmp > 0.0 && jmp < 1.0) -look.rlHop * sin(pi() * jmp) * (1.0 - recovery) else 0.0
+                                    } else 0.0;
+                                let tang = tDir * (if (reactEq(rxn, ReactHit)) look.rlTilt else 0.0) * amount;
+                                let gh = if (reactEq(rxn, ReactDodge)) look.rlGhost * amount else 0.0;
+                                (MkFigureSample {
+                                    fsVisual: tVis, fsFrameId: tFid,
+                                    fsX: tx, fsY: ty, fsAngle: tang,
+                                    fsAlpha: targetInit.fsAlpha, fsFlash: targetInit.fsFlash,
+                                }, gh)
+                            },
+                        _ -> (targetInit, 0.0),
+                    };
+
+                let (tAlpha, tLift, tScale, burstV, guardV, auraV, tFlash, camX, shkY) =
+                    if (t < impact) {
+                        (0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+                    } else {
+                        let fbTime = if (vTime == curHit.rhAtMs) 0.0 else vTime - hitHoldEnd;
+                        let fall = minFloat(curHit.rhStaging.spFallMs, maxFloat(1.0, tl.tlDurationMs - hitHoldEnd));
+                        let fb = 1.0 - easeOut(clamp01((vTime - hitHoldEnd) / maxFloat(1.0, fall)));
+                        let textEnd = minFloat(tl.tlDurationMs, maxFloat(finalHit.rhAtMs + 340.0, c.chRestAtMs));
+                        let ta = 1.0 - smooth01(prog(t, maxFloat(finalHit.rhAtMs + 190.0, textEnd - 190.0), textEnd));
+                        let tlft = 26.0 * easeOut(prog(vTime, holdEnd, textEnd));
+                        let tsc = 0.84 + 0.16 * easeOut(prog(vTime, curHit.rhAtMs, curHit.rhAtMs + 120.0));
+                        let bv = if (combatResEq(curHit.rhResult, ResHit)) fb else 0.0;
+                        let fl = if (combatResEq(curHit.rhResult, ResHit)) fb * curHit.rhStaging.spFlash else 0.0;
+                        let gv = if (combatResEq(curHit.rhResult, ResParry)) fb else 0.0;
+                        let av = if (optIsSome(tl.tlHeal) || tl.tlActor.raMotion == "focus") (1.0 - recovery) * 0.65 else 0.0;
+                        let cam = curHit.rhStaging.spCamera;
+                        let dec = fb * fb;
+                        let cx =
+                            if (!quiet && !reducedMotion) {
+                                dir * cam.csKick * dec * cos(maxFloat(0.0, fbTime) * 0.045)
+                                    + dir * cam.csKick * dec * cos(maxFloat(0.0, fbTime) * 0.11) * cam.csRebound
+                            } else 0.0;
+                        let sy =
+                            if (!quiet && !reducedMotion) -cam.csKick * cam.csLift * dec * cos(maxFloat(0.0, fbTime) * 0.05)
+                            else 0.0;
+                        (ta, tlft, tsc, bv, gv, av, fl, cx, sy)
+                    };
+
+                let targetFinal = withFigFlash(targetMoved, tFlash);
+                let (plFig, enFig) =
+                    if (actorIsPlayer && targetIsPlayer) (withFigFlash(actorFig, tFlash), baseE)
+                    else if (!actorIsPlayer && !targetIsPlayer) (baseP, withFigFlash(actorFig, tFlash))
+                    else if (actorIsPlayer) (actorFig, targetFinal)
+                    else (targetFinal, actorFig);
+
+                let leadMs = stg.spTrail.tsLeadMs;
+                let fadeMs = stg.spTrail.tsFadeMs;
+                let trailV =
+                    if (!attack) 0.0
+                    else match listFind(listRev(tl.tlHits), (h) -> t >= h.rhAtMs - leadMs && t < h.rhAtMs + h.rhHitStopMs + fadeMs) {
+                        None -> 0.0,
+                        Some(th) -> {
+                            let endT = th.rhAtMs + th.rhHitStopMs;
+                            if (t < th.rhAtMs) prog(t, th.rhAtMs - leadMs, th.rhAtMs)
+                            else 1.0 - easeOut(prog(vTime, endT, endT + fadeMs))
+                        },
+                    };
+
+                let hasHitStopNow = match listFind(tl.tlHits, (h) -> h.rhHitStopMs > 0.0 && t >= h.rhAtMs && t < h.rhAtMs + h.rhHitStopMs) {
+                    Some(_) -> true,
+                    None -> false,
+                };
+                let invertV = if (!quiet && !reducedMotion && hasHitStopNow) 1.0 else 0.0;
+                let stageAng =
+                    if (quiet || t >= c.chRestAtMs) 0.0
+                    else stg.spTilt * sin(pi() * prog(t, 0.0, maxFloat(1.0, c.chRestAtMs)));
+                let cutIn = if (quiet) 0.0 else prog(vTime, c.chLaunchAtMs, impact);
+                let camScale = 1.0 + (if (cutIn >= 1.0) 1.0 else envelope * 0.35) * stg.spCamera.csZoom;
+                let shadeV = envelope * stg.spShade + invertV * 0.25;
+
+                let rawSample = MkSceneSample {
+                    scPlayer: plFig,
+                    scEnemy: enFig,
+                    scPhase: phaseTxt,
+                    scCameraScale: camScale,
+                    scCameraX: camX,
+                    scShakeY: shkY,
+                    scShade: shadeV,
+                    scTrail: trailV,
+                    scBurst: burstV,
+                    scGuard: guardV,
+                    scAura: auraV,
+                    scGhost: ghostVal,
+                    scInvert: invertV,
+                    scAngle: stageAng,
+                    scTextAlpha: tAlpha,
+                    scTextLift: tLift,
+                    scTextScale: tScale,
+                    scContact: (sideHome(tl.tlTarget.rtSide), if (strikes) c.chContactY - 176.0 else -70.0),
+                    scForce: if (quiet || !strikes) 0.0 else stg.spForce,
+                    scHitIndex: hIdx,
+                    scResultAlpha: 0.0,
+                };
+
+                if (reducedMotion) {
+                    MkSceneSample {
+                        scPlayer: zeroFigMove(rawSample.scPlayer),
+                        scEnemy: zeroFigMove(rawSample.scEnemy),
+                        scPhase: rawSample.scPhase,
+                        scCameraScale: 1.0,
+                        scCameraX: 0.0,
+                        scShakeY: 0.0,
+                        scShade: rawSample.scShade,
+                        scTrail: 0.0,
+                        scBurst: rawSample.scBurst * 0.4,
+                        scGuard: rawSample.scGuard,
+                        scAura: rawSample.scAura,
+                        scGhost: 0.0,
+                        scInvert: 0.0,
+                        scAngle: 0.0,
+                        scTextAlpha: rawSample.scTextAlpha,
+                        scTextLift: 0.0,
+                        scTextScale: 1.0,
+                        scContact: rawSample.scContact,
+                        scForce: rawSample.scForce,
+                        scHitIndex: rawSample.scHitIndex,
+                        scResultAlpha: rawSample.scResultAlpha,
+                    }
+                } else rawSample
+            }
+        },
+    }
+}
+
+pub def spawnHitParticles(
+    impactPt: (Float, Float),
+    actorSide: BattleSide,
+    res: CombatResult,
+    force: Float,
+    seed0: Int
+): List InkParticle = {
+    let (ix, iy) = impactPt;
+    let dir = if (sideEq(actorSide, SidePlayer)) 1.0 else -1.0;
+    let isHeavy = force >= 0.85;
+    let count = match res {
+        ResDodge -> 6,
+        ResParry -> 16,
+        ResEffect -> 10,
+        ResHit -> if (isHeavy) 26 else 16,
+    };
+    listMap(intRange(1, count), (i) -> {
+        let h1 = intToFloat(floorMod(seed0 * 1103515245 + i * 7919 + 12345, 1000)) / 1000.0;
+        let h2 = intToFloat(floorMod(seed0 * 48271 + i * 104729 + 54321, 1000)) / 1000.0;
+        let ang = (-0.9 + h1 * 1.8) + (if (dir > 0.0) 0.0 else pi());
+        let spd = 85.0 + h2 * (if (isHeavy) 280.0 else 185.0);
+        let col = match res {
+            ResParry -> if (i % 2 == 0) "#b37c24" else "#d9a94e",
+            ResDodge -> "#2b594b",
+            ResEffect -> "#386944",
+            ResHit ->
+                if (i % 4 == 0) "#a32c22"
+                else if (i % 3 == 0) "#4a4035"
+                else "#1e1a16",
+        };
+        MkInkParticle {
+            ipX: ix,
+            ipY: iy + (h1 - 0.5) * 16.0,
+            ipVx: cos(ang) * spd,
+            ipVy: sin(ang) * spd - 45.0,
+            ipRadius: 2.0 + h2 * (if (isHeavy) 4.8 else 3.4),
+            ipLife: 0.0,
+            ipMaxLife: 0.30 + h1 * 0.34,
+            ipColor: col,
+        }
+    })
+}

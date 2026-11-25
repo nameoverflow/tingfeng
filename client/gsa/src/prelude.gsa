@@ -1,0 +1,638 @@
+// Functional Prelude, Math FFI, UTF-8 Layout, and Zero-Alloc Canvas Tape Primitives (`prelude`).
+
+use std.option.{Option, Some, None}
+use std.result.{Result, Ok, Err}
+use std.list.{listRev, listAppend, listLen, listNth}
+use std.buf.{StringBuf, bufNew, bufPushByte, bufPushStr, bufPushInt, bufToString}
+use std.str.{strTrim, strSplitChar}
+use std.codec.{Value, VInt, VFloat}
+pub use std.control.{
+    Functor, fmap,
+    Applicative, pure, ap,
+    Monad, (>>=),
+    MonadState, get, put, modify,
+    (<$>), (<*>), voidM
+}
+
+// ============================================================================
+// Portable IEEE-754 Math Externs (`libm` on native, `env.Math.*` on wasm32)
+// ============================================================================
+
+extern "sin" def c_sin(x: Float): Float
+extern "cos" def c_cos(x: Float): Float
+extern "acos" def c_acos(x: Float): Float
+extern "atan2" def c_atan2(y: Float, x: Float): Float
+extern "sqrt" def c_sqrt(x: Float): Float
+extern "exp" def c_exp(x: Float): Float
+
+pub def sin(x: Float): Float = c_sin(x)
+pub def cos(x: Float): Float = c_cos(x)
+pub def acos(x: Float): Float = c_acos(x)
+pub def atan2(y: Float, x: Float): Float = c_atan2(y, x)
+pub def sqrt(x: Float): Float = c_sqrt(x)
+pub def exp(x: Float): Float = c_exp(x)
+
+pub def pi(): Float = 3.141592653589793
+
+pub def degToRad(deg: Float): Float = deg * pi() / 180.0
+
+// ============================================================================
+// Total Ordering (`Ord`), `Semigroup`, `Monoid`, and `MonadWriter`
+// ============================================================================
+
+pub data Ordering {
+    Lt,
+    EqOrd,
+    Gt,
+}
+
+pub concept Ord a {
+    def compare(x: a, y: a): Ordering
+}
+
+instance Ord Int {
+    def compare(a, b) = if (a < b) Lt else if (a > b) Gt else EqOrd
+}
+
+instance Ord Int64 {
+    def compare(a, b) = if (a < b) Lt else if (a > b) Gt else EqOrd
+}
+
+instance Ord Float {
+    def compare(a, b) = if (a < b) Lt else if (a > b) Gt else EqOrd
+}
+
+instance Ord Bool {
+    def compare(a, b) = match (a, b) {
+        (false, true) -> Lt,
+        (true, false) -> Gt,
+        _ -> EqOrd,
+    }
+}
+
+def compareStrBytes(a: String, b: String, idx: Int, na: Int, nb: Int): Ordering =
+    if (idx >= na && idx >= nb) EqOrd
+    else if (idx >= na) Lt
+    else if (idx >= nb) Gt
+    else {
+        let ba = strByteAt(a, idx) & 255;
+        let bb = strByteAt(b, idx) & 255;
+        if (ba < bb) Lt
+        else if (ba > bb) Gt
+        else compareStrBytes(a, b, idx + 1, na, nb)
+    }
+
+instance Ord String {
+    def compare(a, b) =
+        if (a == b) EqOrd
+        else compareStrBytes(a, b, 0, strLen(a), strLen(b))
+}
+
+instance (Ord a, Ord b) => Ord (a, b) {
+    def compare(p1, p2) = match (p1, p2) {
+        ((a1, b1), (a2, b2)) -> match compare(a1, a2) {
+            EqOrd -> compare(b1, b2),
+            other -> other,
+        },
+    }
+}
+
+pub concept Semigroup a {
+    def (<+>)(x: a, y: a): a
+}
+
+pub concept Monoid a : Semigroup a {
+    def empty(): a
+}
+
+instance Semigroup (List a) {
+    def (<+>)(xs, ys) = listAppend(xs, ys)
+}
+
+instance Monoid (List a) {
+    def empty() = Nil
+}
+
+pub def mconcat(xs): forall a. (Monoid a) => List a -> a = match xs {
+    Nil -> empty(),
+    Cons(h, t) -> h <+> mconcat(t),
+}
+
+pub def foldMapList(xs, f): forall a m. (Monoid m) => (List a, a -> m) -> m = match xs {
+    Nil -> empty(),
+    Cons(h, t) -> f(h) <+> foldMapList(t, f),
+}
+
+pub concept MonadWriter w m : Monad m | m -> w {
+    def tell(out: w): m Void
+}
+
+pub def (*>>)(ma: m a, mb: m b): m b =
+    ma >>= (_) -> mb
+
+pub def whenM(cond: Bool, action: () -> m Void): m Void =
+    if (cond) action() else pure(())
+
+pub def forEachM(xs: List a, f: a -> m Void): m Void = match xs {
+    Nil -> pure(()),
+    Cons(h, t) -> f(h) >>= (_) -> forEachM(t, f),
+}
+
+// ============================================================================
+// Numeric, Rounding, Division & IEEE-754 Helpers
+// ============================================================================
+
+pub def absInt(x: Int): Int = if (x < 0) -x else x
+pub def minInt(a: Int, b: Int): Int = if (a < b) a else b
+pub def maxInt(a: Int, b: Int): Int = if (a > b) a else b
+pub def clampInt(lo: Int, hi: Int, x: Int): Int = maxInt(lo, minInt(hi, x))
+
+pub def absFloat(x: Float): Float = if (x < 0.0) -x else x
+pub def minFloat(a: Float, b: Float): Float = if (a < b) a else b
+pub def maxFloat(a: Float, b: Float): Float = if (a > b) a else b
+pub def clampFloat(lo: Float, hi: Float, x: Float): Float = maxFloat(lo, minFloat(hi, x))
+pub def clamp01(x: Float): Float = clampFloat(0.0, 1.0, x)
+
+pub def isNanFloat(x: Float): Bool = {
+    let bits = floatToBits64(x);
+    let expMask = intToI64(2047) << 52;
+    let fracMask = (intToI64(1) << 52) - intToI64(1);
+    (bits & expMask) == expMask && (bits & fracMask) != intToI64(0)
+}
+
+pub def isInfFloat(x: Float): Bool = {
+    let bits = floatToBits64(x);
+    let expMask = intToI64(2047) << 52;
+    let fracMask = (intToI64(1) << 52) - intToI64(1);
+    (bits & expMask) == expMask && (bits & fracMask) == intToI64(0)
+}
+
+pub def floorDiv(a: Int, b: Int): Int = {
+    let q = a / b;
+    let r = a % b;
+    if (r != 0 && ((r < 0 && b > 0) || (r > 0 && b < 0))) q - 1
+    else q
+}
+
+pub def floorMod(a: Int, b: Int): Int = {
+    let r = a % b;
+    if (r != 0 && ((r < 0 && b > 0) || (r > 0 && b < 0))) r + b
+    else r
+}
+
+pub def floorInt(x: Float): Int = {
+    let t = floatToInt(x);
+    if (intToFloat(t) > x) t - 1 else t
+}
+
+pub def ceilInt(x: Float): Int = {
+    let t = floatToInt(x);
+    if (intToFloat(t) < x) t + 1 else t
+}
+
+// Haskell `round` (round half to even)
+pub def roundInt(x: Float): Int = {
+    let f = floorInt(x);
+    let diff = x - intToFloat(f);
+    if (diff < 0.5) f
+    else if (diff > 0.5) f + 1
+    else if ((f & 1) == 0) f
+    else f + 1
+}
+
+// JavaScript `Math.round` (`floor(x + 0.5)`)
+pub def jsRound(x: Float): Int = floorInt(x + 0.5)
+
+// Non-negative floating-point modulo (`Data.Fixed.mod'` for positive modulus)
+pub def fmodPos(x: Float, m: Float): Float =
+    if (m <= 0.0) 0.0
+    else {
+        let q = floorInt(x / m);
+        let r = x - intToFloat(q) * m;
+        if (r < 0.0) r + m
+        else if (r >= m) r - m
+        else r
+    }
+
+pub def numVal(f: Float): Value =
+    if (isNanFloat(f) || isInfFloat(f)) VInt(intToI64(0))
+    else if (f >= -2147483000.0 && f <= 2147483000.0 && intToFloat(roundInt(f)) == f) {
+        VInt(intToI64(roundInt(f)))
+    } else {
+        VFloat(if (f >= 0.0) f + 0.0000005 else f - 0.0000005)
+    }
+
+// ============================================================================
+// Option & List Utilities
+// ============================================================================
+
+pub def optOr(opt: Option a, fallback: a): a = match opt {
+    Some(x) -> x,
+    None -> fallback,
+}
+
+pub def optIsSome(opt: Option a): Bool = match opt {
+    Some(_) -> true,
+    None -> false,
+}
+
+pub def optIsNone(opt: Option a): Bool = match opt {
+    Some(_) -> false,
+    None -> true,
+}
+
+pub def listIsEmpty(xs: List a): Bool = match xs {
+    Nil -> true,
+    _ -> false,
+}
+
+pub def listHead(xs: List a): Option a = match xs {
+    Nil -> None,
+    Cons(h, _) -> Some(h),
+}
+
+pub def listLast(xs: List a): Option a = match xs {
+    Nil -> None,
+    Cons(h, Nil) -> Some(h),
+    Cons(_, t) -> listLast(t),
+}
+
+pub def listNthOr(xs: List a, idx: Int, fallback: a): a = match listNth(xs, idx) {
+    Some(x) -> x,
+    None -> fallback,
+}
+
+pub def listFind(xs: List a, pred: a -> Bool): Option a = match xs {
+    Nil -> None,
+    Cons(h, t) -> if (pred(h)) Some(h) else listFind(t, pred),
+}
+
+def findIndexLoop(xs: List a, pred: a -> Bool, idx: Int): Option Int = match xs {
+    Nil -> None,
+    Cons(h, t) -> if (pred(h)) Some(idx) else findIndexLoop(t, pred, idx + 1),
+}
+
+pub def listFindIndex(xs: List a, pred: a -> Bool): Option Int =
+    findIndexLoop(xs, pred, 0)
+
+def filterLoop(xs: List a, pred: a -> Bool, acc: List a): List a = match xs {
+    Nil -> listRev(acc),
+    Cons(h, t) -> filterLoop(t, pred, if (pred(h)) Cons(h, acc) else acc),
+}
+
+pub def listFilter(xs: List a, pred: a -> Bool): List a =
+    filterLoop(xs, pred, Nil)
+
+def filterMapLoop(xs: List a, f: a -> Option b, acc: List b): List b = match xs {
+    Nil -> listRev(acc),
+    Cons(h, t) -> match f(h) {
+        Some(y) -> filterMapLoop(t, f, Cons(y, acc)),
+        None -> filterMapLoop(t, f, acc),
+    },
+}
+
+pub def listFilterMap(xs: List a, f: a -> Option b): List b =
+    filterMapLoop(xs, f, Nil)
+
+def concatMapLoop(xs: List a, f: a -> List b, accRev: List b): List b = match xs {
+    Nil -> listRev(accRev),
+    Cons(h, t) -> {
+        let cur = cellNew(f(h));
+        let acc = cellNew(accRev);
+        while (match cellGet(cur) { Nil -> false, _ -> true }) {
+            match cellGet(cur) {
+                Cons(y, r) -> {
+                    cellSet(acc, Cons(y, cellGet(acc)));
+                    cellSet(cur, r)
+                },
+                Nil -> (),
+            }
+        };
+        concatMapLoop(t, f, cellGet(acc))
+    },
+}
+
+pub def listConcatMap(xs: List a, f: a -> List b): List b =
+    concatMapLoop(xs, f, Nil)
+
+def takeLoop(xs: List a, n: Int, acc: List a): List a =
+    if (n <= 0) listRev(acc)
+    else match xs {
+        Nil -> listRev(acc),
+        Cons(h, t) -> takeLoop(t, n - 1, Cons(h, acc)),
+    }
+
+pub def listTake(xs: List a, n: Int): List a = takeLoop(xs, n, Nil)
+
+pub def listDrop(xs: List a, n: Int): List a =
+    if (n <= 0) xs
+    else match xs {
+        Nil -> Nil,
+        Cons(_, t) -> listDrop(t, n - 1),
+    }
+
+pub def listAll(xs: List a, pred: a -> Bool): Bool = match xs {
+    Nil -> true,
+    Cons(h, t) -> if (pred(h)) listAll(t, pred) else false,
+}
+
+pub def listSumFloat(xs: List Float): Float =
+    std.list.listFold(xs, 0.0, (acc, x) -> acc + x)
+
+pub def listContainsStr(xs: List String, target: String): Bool = match xs {
+    Nil -> false,
+    Cons(h, t) -> if (h == target) true else listContainsStr(t, target),
+}
+
+def zipWithLoop(xs: List a, ys: List b, f: (a, b) -> c, acc: List c): List c = match (xs, ys) {
+    (Cons(x, xr), Cons(y, yr)) -> zipWithLoop(xr, yr, f, Cons(f(x, y), acc)),
+    _ -> listRev(acc),
+}
+
+pub def listZipWith(xs: List a, ys: List b, f: (a, b) -> c): List c =
+    zipWithLoop(xs, ys, f, Nil)
+
+def rangeLoop(cur: Int, hi: Int, acc: List Int): List Int =
+    if (cur > hi) listRev(acc)
+    else rangeLoop(cur + 1, hi, Cons(cur, acc))
+
+pub def intRange(lo: Int, hi: Int): List Int =
+    rangeLoop(lo, hi, Nil)
+
+// ============================================================================
+// UTF-8 Codepoint Decoding, CJK Width Measurement & Word Wrapping
+// ============================================================================
+
+// Decodes one UTF-8 codepoint at byte `idx`, returning `(codepoint, nextByteIdx)`.
+pub def utf8DecodeAt(s: String, idx: Int): (Int, Int) = {
+    let n = strLen(s);
+    let b0 = strByteAt(s, idx) & 255;
+    if (b0 < 128) {
+        (b0, idx + 1)
+    } else if ((b0 & 224) == 192 && idx + 1 < n) {
+        let b1 = strByteAt(s, idx + 1) & 63;
+        (((b0 & 31) << 6) | b1, idx + 2)
+    } else if ((b0 & 240) == 224 && idx + 2 < n) {
+        let b1 = strByteAt(s, idx + 1) & 63;
+        let b2 = strByteAt(s, idx + 2) & 63;
+        (((b0 & 15) << 12) | (b1 << 6) | b2, idx + 3)
+    } else if ((b0 & 248) == 240 && idx + 3 < n) {
+        let b1 = strByteAt(s, idx + 1) & 63;
+        let b2 = strByteAt(s, idx + 2) & 63;
+        let b3 = strByteAt(s, idx + 3) & 63;
+        (((b0 & 7) << 18) | (b1 << 12) | (b2 << 6) | b3, idx + 4)
+    } else {
+        (b0, idx + 1)
+    }
+}
+
+pub def isUnicodeSpace(cp: Int): Bool =
+    cp == 32 || (cp >= 9 && cp <= 13) || cp == 160 || cp == 12288 || cp == 65279
+
+pub def utf8Trim(s: String): String = {
+    let n = strLen(s);
+    if (n == 0) ""
+    else {
+        let start = cellNew(0);
+        let scanningStart = cellNew(true);
+        while (cellGet(start) < n && cellGet(scanningStart)) {
+            let (cp, nextIdx) = utf8DecodeAt(s, cellGet(start));
+            if (isUnicodeSpace(cp)) cellSet(start, nextIdx)
+            else cellSet(scanningStart, false)
+        };
+        let st = cellGet(start);
+        if (st >= n) ""
+        else {
+            let cur = cellNew(st);
+            let lastNonSpaceEnd = cellNew(st);
+            while (cellGet(cur) < n) {
+                let (cp, nextIdx) = utf8DecodeAt(s, cellGet(cur));
+                if (!isUnicodeSpace(cp)) cellSet(lastNonSpaceEnd, nextIdx) else ();
+                cellSet(cur, nextIdx)
+            };
+            let ed = cellGet(lastNonSpaceEnd);
+            if (st == 0 && ed == n) s
+            else ptrSliceFromStr(s, st, ed - st)
+        }
+    }
+}
+
+pub def utf8CharCount(s: String): Int = {
+    let n = strLen(s);
+    let count = cellNew(0);
+    let i = cellNew(0);
+    while (cellGet(i) < n) {
+        let b = strByteAt(s, cellGet(i)) & 255;
+        if ((b & 192) != 128) {
+            cellSet(count, cellGet(count) + 1)
+        } else ();
+        cellSet(i, cellGet(i) + 1)
+    };
+    cellGet(count)
+}
+
+pub def utf8FoldCodepoints(s: String, init: a, step: (a, Int) -> a): a = {
+    let n = strLen(s);
+    let cur = cellNew(0);
+    let acc = cellNew(init);
+    while (cellGet(cur) < n) {
+        let (cp, nextIdx) = utf8DecodeAt(s, cellGet(cur));
+        cellSet(acc, step(cellGet(acc), cp));
+        cellSet(cur, nextIdx)
+    };
+    cellGet(acc)
+}
+
+pub def charWidthFactorCp(cp: Int): Float =
+    if (cp > 11903) 1.02
+    else if (cp == 32 || cp == 105 || cp == 108 || cp == 49 || cp == 46 || cp == 44 || cp == 58) 0.36
+    else if (cp >= 65 && cp <= 90) 0.68
+    else 0.56
+
+pub def textWidth(sz: Float, txt: String): Float =
+    utf8FoldCodepoints(txt, 0.0, (acc, cp) -> acc + charWidthFactorCp(cp) * sz)
+
+pub def truncateText(maxW: Float, sz: Float, txt: String): String =
+    if (textWidth(sz, txt) <= maxW) txt
+    else {
+        let limit = maxFloat(8.0, maxW - sz * 0.9);
+        let n = strLen(txt);
+        let cur = cellNew(0);
+        let w = cellNew(0.0);
+        let cut = cellNew(-1);
+        while (cellGet(cur) < n && cellGet(cut) < 0) {
+            let idx = cellGet(cur);
+            let (cp, nextIdx) = utf8DecodeAt(txt, idx);
+            let cw = charWidthFactorCp(cp) * sz;
+            if (cellGet(w) + cw > limit) {
+                cellSet(cut, idx)
+            } else {
+                cellSet(w, cellGet(w) + cw);
+                cellSet(cur, nextIdx)
+            }
+        };
+        if (cellGet(cut) < 0) txt
+        else ptrSliceFromStr(txt, 0, cellGet(cut)) + "…"
+    }
+
+def wrapParagraph(limit: Float, sz: Float, p: String): List String = {
+    let n = strLen(p);
+    if (n == 0) [""]
+    else {
+        let cur = cellNew(0);
+        let lineStart = cellNew(0);
+        let w = cellNew(0.0);
+        let linesRev = cellNew(Nil);
+        while (cellGet(cur) < n) {
+            let idx = cellGet(cur);
+            let (cp, nextIdx) = utf8DecodeAt(p, idx);
+            let cw = charWidthFactorCp(cp) * sz;
+            let st = cellGet(lineStart);
+            if (cellGet(w) + cw > limit && idx > st) {
+                cellSet(linesRev, Cons(ptrSliceFromStr(p, st, idx - st), cellGet(linesRev)));
+                cellSet(lineStart, idx);
+                cellSet(w, cw);
+                cellSet(cur, nextIdx)
+            } else {
+                cellSet(w, cellGet(w) + cw);
+                cellSet(cur, nextIdx)
+            }
+        };
+        let st = cellGet(lineStart);
+        cellSet(linesRev, Cons(ptrSliceFromStr(p, st, n - st), cellGet(linesRev)));
+        listRev(cellGet(linesRev))
+    }
+}
+
+pub def wrapText(maxW: Float, sz: Float, raw: String): List String = {
+    let limit = maxFloat(sz * 2.0, maxW);
+    listConcatMap(strSplitChar(raw, '\n'), (p) -> wrapParagraph(limit, sz, p))
+}
+
+// ============================================================================
+// ASCII & Substring Manipulation
+// ============================================================================
+
+pub def strToLowerAscii(s: String): String = {
+    let n = strLen(s);
+    let hasUpper = cellNew(false);
+    let k = cellNew(0);
+    while (cellGet(k) < n && !cellGet(hasUpper)) {
+        let c = strByteAt(s, cellGet(k));
+        if (c >= 65 && c <= 90) cellSet(hasUpper, true) else ();
+        cellSet(k, cellGet(k) + 1)
+    };
+    if (!cellGet(hasUpper)) s
+    else {
+        let b = bufNew();
+        let i = cellNew(0);
+        while (cellGet(i) < n) {
+            let c = strByteAt(s, cellGet(i));
+            bufPushByte(b, if (c >= 65 && c <= 90) c + 32 else c);
+            cellSet(i, cellGet(i) + 1)
+        };
+        bufToString(b)
+    }
+}
+
+def matchesAt(hay: String, needle: String, start: Int, nlen: Int): Bool = {
+    let i = cellNew(0);
+    let ok = cellNew(true);
+    while (cellGet(i) < nlen && cellGet(ok)) {
+        let k = cellGet(i);
+        if (strByteAt(hay, start + k) != strByteAt(needle, k)) cellSet(ok, false) else ();
+        cellSet(i, k + 1)
+    };
+    cellGet(ok)
+}
+
+pub def strContains(haystack: String, needle: String): Bool = {
+    let hl = strLen(haystack);
+    let nl = strLen(needle);
+    if (nl == 0) true
+    else if (nl > hl) false
+    else {
+        let limit = hl - nl;
+        let i = cellNew(0);
+        let found = cellNew(false);
+        while (cellGet(i) <= limit && !cellGet(found)) {
+            if (matchesAt(haystack, needle, cellGet(i), nl)) cellSet(found, true)
+            else cellSet(i, cellGet(i) + 1)
+        };
+        cellGet(found)
+    }
+}
+
+pub def strReplace(haystack: String, needle: String, replacement: String): String = {
+    let hl = strLen(haystack);
+    let nl = strLen(needle);
+    if (nl == 0 || nl > hl || !strContains(haystack, needle)) haystack
+    else {
+        let b = bufNew();
+        let limit = hl - nl;
+        let i = cellNew(0);
+        while (cellGet(i) < hl) {
+            let cur = cellGet(i);
+            if (cur <= limit && matchesAt(haystack, needle, cur, nl)) {
+                bufPushStr(b, replacement);
+                cellSet(i, cur + nl)
+            } else {
+                bufPushByte(b, strByteAt(haystack, cur));
+                cellSet(i, cur + 1)
+            }
+        };
+        bufToString(b)
+    }
+}
+
+pub def parseIntOr(raw: String, fallback: Int): Int =
+    match std.str.parseInt(strTrim(raw)) {
+        Ok(n) -> n,
+        Err(_) -> fallback,
+    }
+
+// ============================================================================
+// Zero-Allocation Canvas2D Command Tape Formatting (`StringBuf`)
+// ============================================================================
+
+pub def bufPushF1(b: StringBuf, v: Float): Void = {
+    let n = roundInt(v * 10.0);
+    if (n < 0) bufPushByte(b, 45) else ();
+    let a = if (n < 0) -n else n;
+    bufPushInt(b, a / 10);
+    bufPushByte(b, 46);
+    bufPushByte(b, 48 + (a % 10))
+}
+
+pub def bufPushF2(b: StringBuf, v: Float): Void = {
+    let n = roundInt(v * 100.0);
+    if (n < 0) bufPushByte(b, 45) else ();
+    let a = if (n < 0) -n else n;
+    let q = a / 100;
+    let r = a % 100;
+    bufPushInt(b, q);
+    bufPushByte(b, 46);
+    bufPushByte(b, 48 + (r / 10));
+    bufPushByte(b, 48 + (r % 10))
+}
+
+pub def bufPushSanitized(b: StringBuf, txt: String): Void = {
+    let n = strLen(txt);
+    let needsClean = cellNew(false);
+    let k = cellNew(0);
+    while (cellGet(k) < n && !cellGet(needsClean)) {
+        let c = strByteAt(txt, cellGet(k));
+        if (c == 124 || c == 10 || c == 13) cellSet(needsClean, true) else ();
+        cellSet(k, cellGet(k) + 1)
+    };
+    if (!cellGet(needsClean)) {
+        bufPushStr(b, txt)
+    } else {
+        let i = cellNew(0);
+        while (cellGet(i) < n) {
+            let c = strByteAt(txt, cellGet(i));
+            bufPushByte(b, if (c == 124 || c == 10 || c == 13) 32 else c);
+            cellSet(i, cellGet(i) + 1)
+        }
+    }
+}

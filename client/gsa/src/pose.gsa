@@ -1,0 +1,1076 @@
+// Xuan-Paper Ink Silhouette Pose Library, 2-Bone Analytic IK, and Organic Ribbon Geometry (`pose`).
+
+use std.option.{Option, Some, None}
+use std.result.{Result, Ok, Err}
+use std.list.{listLen, listRev, listAppend, listMap}
+use std.codec.{Value, VNull, VStr, VArr, VObj}
+use std.json.parse
+use prelude.{
+    Ord, Ordering, compare,
+    sin, cos, acos, atan2, sqrt, degToRad,
+    absFloat, minInt, maxInt, clampInt, minFloat, maxFloat, clampFloat, fmodPos,
+    optOr, listContainsStr, listNthOr, listConcatMap, intRange
+}
+use ordmap.{OrdMap, mapEmpty, mapLookup, mapLookupOr, mapKeys, mapFromList}
+use protocol.{vLookup, vFloat, fStr, fFloat, fFloatOr}
+
+pub data HandShape {
+    HandFist,
+    HandPalm,
+    HandFinger,
+}
+
+pub data CombatStyle {
+    StyleFist,
+    StyleSword,
+}
+
+def styleRank(s: CombatStyle): Int = match s {
+    StyleFist -> 0,
+    StyleSword -> 1,
+}
+
+pub def styleEq(a: CombatStyle, b: CombatStyle): Bool = styleRank(a) == styleRank(b)
+
+instance Ord CombatStyle {
+    def compare(a, b) = compare(styleRank(a), styleRank(b))
+}
+
+pub def combatStyleText(s: CombatStyle): String = match s {
+    StyleFist -> "fist",
+    StyleSword -> "sword",
+}
+
+pub def parseCombatStyle(raw: String): CombatStyle =
+    if (raw == "sword") StyleSword else StyleFist
+
+pub data VisualProfile {
+    ProfileMale,
+    ProfileFemale,
+}
+
+pub def profileEq(a: VisualProfile, b: VisualProfile): Bool = match (a, b) {
+    (ProfileMale, ProfileMale) -> true,
+    (ProfileFemale, ProfileFemale) -> true,
+    _ -> false,
+}
+
+pub def visualProfileText(p: VisualProfile): String = match p {
+    ProfileMale -> "male",
+    ProfileFemale -> "female",
+}
+
+pub def parseVisualProfile(raw: String): VisualProfile =
+    if (raw == "female") ProfileFemale else ProfileMale
+
+pub data LookStyle {
+    LookMaiden,
+    LookPonytail,
+}
+
+pub def lookEq(a: LookStyle, b: LookStyle): Bool = match (a, b) {
+    (LookMaiden, LookMaiden) -> true,
+    (LookPonytail, LookPonytail) -> true,
+    _ -> false,
+}
+
+pub data Bones {
+    MkBones {
+        bTorso: Float,
+        bNeck: Float,
+        bHeadRadius: Float,
+        bUpperArm: Float,
+        bForearm: Float,
+        bThigh: Float,
+        bShin: Float,
+    },
+}
+
+pub data PoseParams {
+    MkPoseParams {
+        ppHip: (Float, Float),
+        ppTorso: Float,
+        ppHead: Float,
+        ppArm: (Float, Float),
+        ppBackArm: (Float, Float),
+        ppFoot: (Float, Float),
+        ppBackFoot: (Float, Float),
+        ppKnees: (Float, Float),
+        ppBlade: Float,
+        ppTassel: (Float, Float),
+        ppHands: (HandShape, HandShape),
+    },
+}
+
+data PartialParams {
+    MkPartialParams {
+        pmHip: Option (Float, Float),
+        pmTorso: Option Float,
+        pmHead: Option Float,
+        pmArm: Option (Float, Float),
+        pmBackArm: Option (Float, Float),
+        pmFoot: Option (Float, Float),
+        pmBackFoot: Option (Float, Float),
+        pmKnees: Option (Float, Float),
+        pmBlade: Option Float,
+        pmTassel: Option (Float, Float),
+        pmHands: Option (HandShape, HandShape),
+    },
+}
+
+def emptyPartial(): PartialParams = MkPartialParams {
+    pmHip: None,
+    pmTorso: None,
+    pmHead: None,
+    pmArm: None,
+    pmBackArm: None,
+    pmFoot: None,
+    pmBackFoot: None,
+    pmKnees: None,
+    pmBlade: None,
+    pmTassel: None,
+    pmHands: None,
+}
+
+def applyPartial(p: PartialParams, base: PoseParams): PoseParams = MkPoseParams {
+    ppHip: optOr(p.pmHip, base.ppHip),
+    ppTorso: optOr(p.pmTorso, base.ppTorso),
+    ppHead: optOr(p.pmHead, base.ppHead),
+    ppArm: optOr(p.pmArm, base.ppArm),
+    ppBackArm: optOr(p.pmBackArm, base.ppBackArm),
+    ppFoot: optOr(p.pmFoot, base.ppFoot),
+    ppBackFoot: optOr(p.pmBackFoot, base.ppBackFoot),
+    ppKnees: optOr(p.pmKnees, base.ppKnees),
+    ppBlade: optOr(p.pmBlade, base.ppBlade),
+    ppTassel: optOr(p.pmTassel, base.ppTassel),
+    ppHands: optOr(p.pmHands, base.ppHands),
+}
+
+data PoseDef {
+    MkPoseDef {
+        pdExtends: Option String,
+        pdBlend: Option (String, String, Float),
+        pdSet: PartialParams,
+        pdRigs: OrdMap CombatStyle PartialParams,
+    },
+}
+
+pub data PoseLibrary {
+    MkPoseLibrary {
+        plBones: Bones,
+        plPoseOrder: List String,
+        plResolved: OrdMap (CombatStyle, String) PoseParams,
+    },
+}
+
+pub def allPoseIds(lib: PoseLibrary): List String = lib.plPoseOrder
+
+pub data SvgPose {
+    MkSvgPose {
+        spNeck: (Float, Float),
+        spHead: (Float, Float),
+        spShoulder: (Float, Float),
+        spHip: (Float, Float),
+        spBackElbow: (Float, Float),
+        spBackHand: (Float, Float),
+        spElbow: (Float, Float),
+        spHand: (Float, Float),
+        spBackKnee: (Float, Float),
+        spBackFoot: (Float, Float),
+        spKnee: (Float, Float),
+        spFoot: (Float, Float),
+        spTassel: (Float, Float),
+        spBlade: Float,
+        spFootPlanted: Bool,
+        spBackFootPlanted: Bool,
+        spHands: (HandShape, HandShape),
+        spBones: Bones,
+    },
+}
+
+pub data ShapePrim {
+    SCircle(Float, Float, Float, Option String, Float),
+    SPoly(List (Float, Float), Option String, Float),
+}
+
+pub data JoinPatch {
+    MkJoinPatch {
+        jpAt: (Float, Float),
+        jpRadius: Float,
+        jpShapes: List ShapePrim,
+    },
+}
+
+pub data ActorPart {
+    MkActorPart {
+        apKey: String,
+        apShapes: List ShapePrim,
+        apJoins: List JoinPatch,
+    },
+}
+
+pub def svgSwordLength(): Float = 72.0
+def ankleHeight(): Float = 5.0
+def shoulderDrop(): Float = 8.0
+
+def dirVec(deg: Float): (Float, Float) = {
+    let r = degToRad(deg);
+    (cos(r), sin(r))
+}
+
+def ptAdd(a: (Float, Float), b: (Float, Float), k: Float): (Float, Float) = match (a, b) {
+    ((ax, ay), (bx, by)) -> (ax + bx * k, ay + by * k),
+}
+
+def ptSub(a: (Float, Float), b: (Float, Float)): (Float, Float) = match (a, b) {
+    ((ax, ay), (bx, by)) -> (ax - bx, ay - by),
+}
+
+def ptLen(p: (Float, Float)): Float = match p {
+    (x, y) -> {
+        let d = sqrt(x * x + y * y);
+        if (d < 0.000001) 1.0 else d
+    },
+}
+
+def ptUnit(v: (Float, Float)): (Float, Float) = match v {
+    (x, y) -> {
+        let l = ptLen(v);
+        (x / l, y / l)
+    },
+}
+
+def ptRot(p: (Float, Float), deg: Float): (Float, Float) = match p {
+    (x, y) -> {
+        let r = degToRad(deg);
+        let c = cos(r);
+        let s = sin(r);
+        (x * c - y * s, x * s + y * c)
+    },
+}
+
+def lerp(a: Float, b: Float, t: Float): Float = a + (b - a) * t
+
+def lerpAngle(a: Float, b: Float, t: Float): Float = {
+    let diff = fmodPos(b - a + 540.0, 360.0) - 180.0;
+    a + diff * t
+}
+
+def blendParams(a: PoseParams, b: PoseParams, amt: Float): PoseParams =
+    if (amt <= 0.0) a
+    else if (amt >= 1.0) b
+    else {
+        let pt = (p1: (Float, Float), p2: (Float, Float)) -> match (p1, p2) {
+            ((x1, y1), (x2, y2)) -> (lerp(x1, x2, amt), lerp(y1, y2, amt)),
+        };
+        let angPair = (p1: (Float, Float), p2: (Float, Float)) -> match (p1, p2) {
+            ((u1, f1), (u2, f2)) -> (lerpAngle(u1, u2, amt), lerpAngle(f1, f2, amt)),
+        };
+        MkPoseParams {
+            ppHip: pt(a.ppHip, b.ppHip),
+            ppTorso: lerpAngle(a.ppTorso, b.ppTorso, amt),
+            ppHead: lerpAngle(a.ppHead, b.ppHead, amt),
+            ppArm: angPair(a.ppArm, b.ppArm),
+            ppBackArm: angPair(a.ppBackArm, b.ppBackArm),
+            ppFoot: pt(a.ppFoot, b.ppFoot),
+            ppBackFoot: pt(a.ppBackFoot, b.ppBackFoot),
+            ppKnees: if (amt < 0.5) a.ppKnees else b.ppKnees,
+            ppBlade: lerpAngle(a.ppBlade, b.ppBlade, amt),
+            ppTassel: pt(a.ppTassel, b.ppTassel),
+            ppHands: if (amt < 0.5) a.ppHands else b.ppHands,
+        }
+    }
+
+def solveTwoBone(root: (Float, Float), target: (Float, Float), a: Float, b: Float, bend: Float): ((Float, Float), (Float, Float)) =
+    match (root, target) {
+        ((rx, ry), (tx, ty)) -> {
+            let dx = tx - rx;
+            let dy = ty - ry;
+            let rawD = sqrt(dx * dx + dy * dy);
+            let d = maxFloat(absFloat(a - b) + 0.01, minFloat(a + b - 0.01, rawD));
+            let theta = atan2(dy, dx);
+            let cosAlpha = clampFloat(-1.0, 1.0, (a * a + d * d - b * b) / (2.0 * a * d));
+            let alpha = acos(cosAlpha);
+            let sgn = if (bend < 0.0) -1.0 else 1.0;
+            let jointAng = theta - sgn * alpha;
+            let joint = (rx + cos(jointAng) * a, ry + sin(jointAng) * a);
+            let endPt = (rx + cos(theta) * d, ry + sin(theta) * d);
+            (joint, endPt)
+        },
+    }
+
+def bendOf(root: (Float, Float), joint: (Float, Float), endPt: (Float, Float)): Float =
+    match (root, joint, endPt) {
+        ((rx, ry), (jx, jy), (ex, ey)) -> {
+            let cross = (ex - rx) * (jy - ry) - (ey - ry) * (jx - rx);
+            if (cross < 0.0) 1.0 else -1.0
+        },
+    }
+
+def isPlanted(f: (Float, Float)): Bool = match f {
+    (_, fy) -> fy > -4.0,
+}
+
+def ankleOf(f: (Float, Float)): (Float, Float) = match f {
+    (fx, fy) -> if (isPlanted(f)) (fx, fy - ankleHeight()) else f,
+}
+
+def sinkHip(hip: (Float, Float), ankle: (Float, Float), reach: Float): (Float, Float) =
+    match (hip, ankle) {
+        ((hx, hy), (fx, fy)) -> {
+            let dx = fx - hx;
+            if (absFloat(dx) < reach) (hx, maxFloat(hy, fy - sqrt(reach * reach - dx * dx)))
+            else (hx, hy)
+        },
+    }
+
+def poseFromParams(b: Bones, params: PoseParams): SvgPose = {
+    let reach = b.bThigh + b.bShin - 0.5;
+    let frontAnkle = ankleOf(params.ppFoot);
+    let backAnkle = ankleOf(params.ppBackFoot);
+    let hip = sinkHip(sinkHip(params.ppHip, frontAnkle, reach), backAnkle, reach);
+    let neck = ptAdd(hip, dirVec(params.ppTorso), b.bTorso);
+    let shoulder = ptAdd(neck, dirVec(params.ppTorso), -shoulderDrop());
+    let headPt = ptAdd(neck, dirVec(params.ppHead), b.bNeck + b.bHeadRadius);
+    let (armU, armF) = params.ppArm;
+    let (bArmU, bArmF) = params.ppBackArm;
+    let elbow = ptAdd(shoulder, dirVec(armU), b.bUpperArm);
+    let handPt = ptAdd(elbow, dirVec(armF), b.bForearm);
+    let backElbow = ptAdd(shoulder, dirVec(bArmU), b.bUpperArm);
+    let backHand = ptAdd(backElbow, dirVec(bArmF), b.bForearm);
+    let (kFront, kBack) = params.ppKnees;
+    let (frontKnee, frontEnd) = solveTwoBone(hip, frontAnkle, b.bThigh, b.bShin, kFront);
+    let (backKnee, backEnd) = solveTwoBone(hip, backAnkle, b.bThigh, b.bShin, kBack);
+    MkSvgPose {
+        spNeck: neck,
+        spHead: headPt,
+        spShoulder: shoulder,
+        spHip: hip,
+        spBackElbow: backElbow,
+        spBackHand: backHand,
+        spElbow: elbow,
+        spHand: handPt,
+        spBackKnee: backKnee,
+        spBackFoot: backEnd,
+        spKnee: frontKnee,
+        spFoot: frontEnd,
+        spTassel: params.ppTassel,
+        spBlade: params.ppBlade,
+        spFootPlanted: isPlanted(params.ppFoot),
+        spBackFootPlanted: isPlanted(params.ppBackFoot),
+        spHands: params.ppHands,
+        spBones: b,
+    }
+}
+
+// ============================================================================
+// JSON Pose Library Parsing & Inheritance/Blend Resolution
+// ============================================================================
+
+def defaultBaseParams(): PoseParams = MkPoseParams {
+    ppHip: (-4.0, -56.0),
+    ppTorso: -84.0,
+    ppHead: -86.0,
+    ppArm: (30.0, -20.0),
+    ppBackArm: (62.0, -22.0),
+    ppFoot: (26.0, 0.0),
+    ppBackFoot: (-30.0, 0.0),
+    ppKnees: (1.0, 1.0),
+    ppBlade: -40.0,
+    ppTassel: (-20.0, -10.0),
+    ppHands: (HandFist, HandFist),
+}
+
+def decodeFloatPair(v: Value): Option (Float, Float) = match v {
+    VArr(Cons(a, Cons(b, Nil))) -> match (vFloat(a), vFloat(b)) {
+        (Some(x), Some(y)) -> Some((x, y)),
+        _ -> None,
+    },
+    _ -> None,
+}
+
+def decodeHand(v: Value): Option HandShape = match v {
+    VStr("palm") -> Some(HandPalm),
+    VStr("finger") -> Some(HandFinger),
+    VStr(_) -> Some(HandFist),
+    _ -> None,
+}
+
+def decodeHandPair(v: Value): Option (HandShape, HandShape) = match v {
+    VArr(Cons(a, Cons(b, Nil))) -> match (decodeHand(a), decodeHand(b)) {
+        (Some(h1), Some(h2)) -> Some((h1, h2)),
+        _ -> None,
+    },
+    _ -> None,
+}
+
+def decodeBones(v: Value): Result Bones String = match v {
+    VObj(fs) -> Ok(MkBones {
+        bTorso: fFloatOr(fs, "torso", 42.0),
+        bNeck: fFloatOr(fs, "neck", -1.0),
+        bHeadRadius: fFloatOr(fs, "headRadius", 15.0),
+        bUpperArm: fFloatOr(fs, "upperArm", 26.0),
+        bForearm: fFloatOr(fs, "forearm", 24.0),
+        bThigh: fFloatOr(fs, "thigh", 34.0),
+        bShin: fFloatOr(fs, "shin", 33.0),
+    }),
+    _ -> Err("Invalid bones object"),
+}
+
+def optFieldPair(fs: List (String, Value), key: String): Option (Float, Float) =
+    match vLookup(fs, key) {
+        Some(v) -> decodeFloatPair(v),
+        None -> None,
+    }
+
+def decodePartial(v: Value): PartialParams = match v {
+    VObj(fs) -> MkPartialParams {
+        pmHip: optFieldPair(fs, "hip"),
+        pmTorso: fFloat(fs, "torso"),
+        pmHead: fFloat(fs, "head"),
+        pmArm: optFieldPair(fs, "arm"),
+        pmBackArm: optFieldPair(fs, "backArm"),
+        pmFoot: optFieldPair(fs, "foot"),
+        pmBackFoot: optFieldPair(fs, "backFoot"),
+        pmKnees: optFieldPair(fs, "knees"),
+        pmBlade: fFloat(fs, "blade"),
+        pmTassel: optFieldPair(fs, "tassel"),
+        pmHands: match vLookup(fs, "hands") { Some(hv) -> decodeHandPair(hv), None -> None },
+    },
+    _ -> emptyPartial(),
+}
+
+def decodeRigsMap(v: Value): OrdMap CombatStyle PartialParams = match v {
+    VObj(rfs) -> {
+        let fp = match vLookup(rfs, "fist") { Some(fv) -> decodePartial(fv), None -> emptyPartial() };
+        let sp = match vLookup(rfs, "sword") { Some(sv) -> decodePartial(sv), None -> emptyPartial() };
+        mapFromList([(StyleFist, fp), (StyleSword, sp)])
+    },
+    _ -> mapEmpty(),
+}
+
+def decodePoseDef(v: Value): PoseDef = match v {
+    VObj(fs) -> {
+        let setP = match vLookup(fs, "set") { Some(sv) -> decodePartial(sv), None -> emptyPartial() };
+        let rigsP = match vLookup(fs, "rigs") { Some(rv) -> decodeRigsMap(rv), None -> mapEmpty() };
+        let blendSpec = match vLookup(fs, "blend") {
+            Some(VObj(bfs)) -> match (fStr(bfs, "from"), fStr(bfs, "to"), fFloat(bfs, "amount")) {
+                (Some(fId), Some(tId), Some(amt)) -> Some((fId, tId, amt)),
+                _ -> None,
+            },
+            _ -> None,
+        };
+        MkPoseDef {
+            pdExtends: fStr(fs, "extends"),
+            pdBlend: blendSpec,
+            pdSet: setP,
+            pdRigs: rigsP,
+        }
+    },
+    _ -> MkPoseDef { pdExtends: None, pdBlend: None, pdSet: emptyPartial(), pdRigs: mapEmpty() },
+}
+
+def resolveOnePose(
+    posesDefs: OrdMap String PoseDef,
+    rigsMap: OrdMap CombatStyle PartialParams,
+    baseParams: PoseParams,
+    rig: CombatStyle,
+    pid: String,
+    trail: List String
+): PoseParams =
+    if (listContainsStr(trail, pid)) baseParams
+    else match mapLookup(posesDefs, pid) {
+        None -> applyPartial(mapLookupOr(rigsMap, rig, emptyPartial()), baseParams),
+        Some(pdef) -> {
+            let nextTrail = Cons(pid, trail);
+            let start = match pdef.pdBlend {
+                Some((fId, tId, amt)) -> blendParams(
+                    resolveOnePose(posesDefs, rigsMap, baseParams, rig, fId, nextTrail),
+                    resolveOnePose(posesDefs, rigsMap, baseParams, rig, tId, nextTrail),
+                    amt
+                ),
+                None -> match pdef.pdExtends {
+                    Some(extId) -> resolveOnePose(posesDefs, rigsMap, baseParams, rig, extId, nextTrail),
+                    None -> applyPartial(mapLookupOr(rigsMap, rig, emptyPartial()), baseParams),
+                },
+            };
+            let withSet = applyPartial(pdef.pdSet, start);
+            applyPartial(mapLookupOr(pdef.pdRigs, rig, emptyPartial()), withSet)
+        },
+    }
+
+pub def parsePoseLibrary(raw: String): Result PoseLibrary String = {
+    let root = parse(raw)?;
+    match root {
+        VObj(fs) -> {
+            let bonesVal = match vLookup(fs, "bones") {
+                Some(v) -> v,
+                None -> { let _ = Err("Missing bones")?; VNull },
+            };
+            let bones = decodeBones(bonesVal)?;
+            let baseVal = match vLookup(fs, "base") {
+                Some(v) -> v,
+                None -> { let _ = Err("Missing base")?; VNull },
+            };
+            let baseParams = applyPartial(decodePartial(baseVal), defaultBaseParams());
+            let rigsMap = match vLookup(fs, "rigs") {
+                Some(rv) -> decodeRigsMap(rv),
+                None -> mapEmpty(),
+            };
+            let posesDefs = match vLookup(fs, "poses") {
+                Some(VObj(pfs)) -> mapFromList(listMap(pfs, (p) -> match p { (k, v) -> (k, decodePoseDef(v)) })),
+                _ -> { let _ = Err("Missing poses map")?; mapEmpty() },
+            };
+            let pids = mapKeys(posesDefs);
+            let fistPairs = listMap(pids, (pid) -> ((StyleFist, pid), resolveOnePose(posesDefs, rigsMap, baseParams, StyleFist, pid, Nil)));
+            let swordPairs = listMap(pids, (pid) -> ((StyleSword, pid), resolveOnePose(posesDefs, rigsMap, baseParams, StyleSword, pid, Nil)));
+            Ok(MkPoseLibrary {
+                plBones: bones,
+                plPoseOrder: pids,
+                plResolved: mapFromList(listAppend(fistPairs, swordPairs)),
+            })
+        },
+        _ -> Err("svg-poses.json root is not an object"),
+    }
+}
+
+def lookupParams(lib: PoseLibrary, rig: CombatStyle, pid: String): PoseParams =
+    match mapLookup(lib.plResolved, (rig, pid)) {
+        Some(p) -> p,
+        None -> mapLookupOr(lib.plResolved, (rig, "idle"), defaultBaseParams()),
+    }
+
+pub def svgPose(lib: PoseLibrary, pid: String, rig: CombatStyle): SvgPose =
+    poseFromParams(lib.plBones, lookupParams(lib, rig, pid))
+
+pub def blendPose(lib: PoseLibrary, fromId: String, toId: String, amt: Float, rig: CombatStyle): SvgPose =
+    poseFromParams(lib.plBones, blendParams(lookupParams(lib, rig, fromId), lookupParams(lib, rig, toId), amt))
+
+pub def shiftPose(p: SvgPose, dx: Float, dy: Float): SvgPose = {
+    let mv = (pt: (Float, Float)) -> match pt { (x, y) -> (x + dx, y + dy) };
+    MkSvgPose {
+        spNeck: mv(p.spNeck),
+        spHead: mv(p.spHead),
+        spShoulder: mv(p.spShoulder),
+        spHip: mv(p.spHip),
+        spBackElbow: mv(p.spBackElbow),
+        spBackHand: mv(p.spBackHand),
+        spElbow: mv(p.spElbow),
+        spHand: mv(p.spHand),
+        spBackKnee: mv(p.spBackKnee),
+        spBackFoot: mv(p.spBackFoot),
+        spKnee: mv(p.spKnee),
+        spFoot: mv(p.spFoot),
+        spTassel: mv(p.spTassel),
+        spBlade: p.spBlade,
+        spFootPlanted: p.spFootPlanted,
+        spBackFootPlanted: p.spBackFootPlanted,
+        spHands: p.spHands,
+        spBones: p.spBones,
+    }
+}
+
+pub def reachWith(pose: SvgPose, isHand: Bool, target: (Float, Float)): SvgPose =
+    match target {
+        (tx, ty) -> {
+            let b = pose.spBones;
+            let (root0, joint0, end0, lenA, lenB) =
+                if (isHand) (pose.spShoulder, pose.spElbow, pose.spHand, b.bUpperArm, b.bForearm)
+                else (pose.spHip, pose.spKnee, pose.spFoot, b.bThigh, b.bShin);
+            let bend = bendOf(root0, joint0, end0);
+            let maxLen = lenA + lenB - 0.5;
+            let (rx0, ry0) = root0;
+            let dx = tx - rx0;
+            let dy = ty - ry0;
+            let dist = sqrt(dx * dx + dy * dy);
+            let shifted =
+                if (dist > maxLen && absFloat(dy) < maxLen) {
+                    let sgn = if (dx < 0.0) -1.0 else 1.0;
+                    shiftPose(pose, dx - sgn * sqrt(maxLen * maxLen - dy * dy), 0.0)
+                } else pose;
+            let newRoot = if (isHand) shifted.spShoulder else shifted.spHip;
+            let (jSolved, eSolved) = solveTwoBone(newRoot, target, lenA, lenB, bend);
+            if (isHand) {
+                MkSvgPose {
+                    spNeck: shifted.spNeck, spHead: shifted.spHead, spShoulder: shifted.spShoulder, spHip: shifted.spHip,
+                    spBackElbow: shifted.spBackElbow, spBackHand: shifted.spBackHand,
+                    spElbow: jSolved, spHand: eSolved,
+                    spBackKnee: shifted.spBackKnee, spBackFoot: shifted.spBackFoot,
+                    spKnee: shifted.spKnee, spFoot: shifted.spFoot,
+                    spTassel: shifted.spTassel, spBlade: shifted.spBlade,
+                    spFootPlanted: shifted.spFootPlanted, spBackFootPlanted: shifted.spBackFootPlanted,
+                    spHands: shifted.spHands, spBones: shifted.spBones,
+                }
+            } else {
+                MkSvgPose {
+                    spNeck: shifted.spNeck, spHead: shifted.spHead, spShoulder: shifted.spShoulder, spHip: shifted.spHip,
+                    spBackElbow: shifted.spBackElbow, spBackHand: shifted.spBackHand,
+                    spElbow: shifted.spElbow, spHand: shifted.spHand,
+                    spBackKnee: shifted.spBackKnee, spBackFoot: shifted.spBackFoot,
+                    spKnee: jSolved, spFoot: eSolved,
+                    spTassel: shifted.spTassel, spBlade: shifted.spBlade,
+                    spFootPlanted: false, spBackFootPlanted: shifted.spBackFootPlanted,
+                    spHands: shifted.spHands, spBones: shifted.spBones,
+                }
+            }
+        },
+    }
+
+pub def swordTipOf(p: SvgPose): (Float, Float) =
+    ptAdd(p.spHand, dirVec(p.spBlade), svgSwordLength())
+
+// ============================================================================
+// Organic Ink-Wash Silhouette Geometry (`buildActorParts`)
+// ============================================================================
+
+def smoothStep(t: Float): Float = t * t * (3.0 - 2.0 * t)
+
+def sCircle(c: (Float, Float), r: Float): ShapePrim = match c {
+    (x, y) -> SCircle(x, y, r, None, 1.0),
+}
+
+def sPoly(pts: List (Float, Float)): ShapePrim = SPoly(pts, None, 1.0)
+
+def taperPts(a: (Float, Float), b: (Float, Float), ra: Float, rb: Float): List (Float, Float) = {
+    let d = ptSub(b, a);
+    let (dx, dy) = d;
+    let l = ptLen(d);
+    let ux = dx / l;
+    let uy = dy / l;
+    let nx = -uy;
+    let ny = ux;
+    let s = clampFloat(-0.95, 0.95, (ra - rb) / l);
+    let c = sqrt(1.0 - s * s);
+    let m1 = (nx * c + ux * s, ny * c + uy * s);
+    let m2 = (-nx * c + ux * s, -ny * c + uy * s);
+    let onCircle = (o: (Float, Float), m: (Float, Float), r: Float) -> match (o, m) {
+        ((ox, oy), (mx, my)) -> (ox + mx * r, oy + my * r),
+    };
+    [onCircle(a, m1, ra), onCircle(b, m1, rb), onCircle(b, m2, rb), onCircle(a, m2, ra)]
+}
+
+def closedCurvePts(pts: List (Float, Float)): List (Float, Float) = {
+    let n = listLen(pts);
+    if (n < 3) pts
+    else {
+        let arr = arrayNew(n, (0.0, 0.0));
+        let cur = cellNew(pts);
+        let idx = cellNew(0);
+        while (match cellGet(cur) { Nil -> false, _ -> true }) {
+            match cellGet(cur) {
+                Cons(p, rest) -> {
+                    arraySet(arr, cellGet(idx), p);
+                    cellSet(idx, cellGet(idx) + 1);
+                    cellSet(cur, rest)
+                },
+                Nil -> (),
+            }
+        };
+        let atIdx = (i: Int) -> arrayGet(arr, ((i + n) % n + n) % n);
+        listConcatMap(intRange(0, n - 1), (i) -> {
+            let (x0, y0) = atIdx(i - 1);
+            let (x1, y1) = atIdx(i);
+            let (x2, y2) = atIdx(i + 1);
+            let (x3, y3) = atIdx(i + 2);
+            let c1x = x1 + (x2 - x0) / 6.0;
+            let c1y = y1 + (y2 - y0) / 6.0;
+            let c2x = x2 - (x3 - x1) / 6.0;
+            let c2y = y2 - (y3 - y1) / 6.0;
+            listMap([0, 1, 2, 3, 4, 5], (k) -> {
+                let t = intToFloat(k) / 6.0;
+                let u = 1.0 - t;
+                let u2 = u * u;
+                let t2 = t * t;
+                (
+                    u2 * u * x1 + 3.0 * u2 * t * c1x + 3.0 * u * t2 * c2x + t2 * t * x2,
+                    u2 * u * y1 + 3.0 * u2 * t * c1y + 3.0 * u * t2 * c2y + t2 * t * y2
+                )
+            })
+        })
+    }
+}
+
+def catmull(q0: Float, q1: Float, q2: Float, q3: Float, t: Float): Float = {
+    let t2 = t * t;
+    let t3 = t2 * t;
+    0.5 * (2.0 * q1 + (q2 - q0) * t + (2.0 * q0 - 5.0 * q1 + 4.0 * q2 - q3) * t2 + (3.0 * q1 - q0 - 3.0 * q2 + q3) * t3)
+}
+
+def ribbonPts(pts: List (Float, Float), leftW: List Float, rightW: List Float): List (Float, Float) = {
+    let n = listLen(pts);
+    if (n < 2) pts
+    else {
+        let nl = listLen(leftW);
+        let nr = listLen(rightW);
+        let atPt = (i: Int) -> listNthOr(pts, clampInt(0, n - 1, i), (0.0, 0.0));
+        let atL = (i: Int) -> listNthOr(leftW, clampInt(0, nl - 1, i), 1.0);
+        let atR = (i: Int) -> listNthOr(rightW, clampInt(0, nr - 1, i), 1.0);
+        let segs = listConcatMap(intRange(0, n - 2), (i) -> {
+            let (x0, y0) = atPt(i - 1);
+            let (x1, y1) = atPt(i);
+            let (x2, y2) = atPt(i + 1);
+            let (x3, y3) = atPt(i + 2);
+            let l0 = atL(i);
+            let l1 = atL(i + 1);
+            let r0 = atR(i);
+            let r1 = atR(i + 1);
+            listMap([0, 1, 2, 3, 4, 5, 6, 7], (k) -> {
+                let t = intToFloat(k) / 8.0;
+                let e = smoothStep(t);
+                (
+                    (catmull(x0, x1, x2, x3, t), catmull(y0, y1, y2, y3, t)),
+                    l0 + (l1 - l0) * e,
+                    r0 + (r1 - r0) * e
+                )
+            })
+        });
+        let samples = listAppend(segs, [(atPt(n - 1), atL(n - 1), atR(n - 1))]);
+        let m = listLen(samples);
+        let sampArr = arrayNew(m, ((0.0, 0.0), 1.0, 1.0));
+        let cur = cellNew(samples);
+        let si = cellNew(0);
+        while (match cellGet(cur) { Nil -> false, _ -> true }) {
+            match cellGet(cur) {
+                Cons(s, rest) -> {
+                    arraySet(sampArr, cellGet(si), s);
+                    cellSet(si, cellGet(si) + 1);
+                    cellSet(cur, rest)
+                },
+                Nil -> (),
+            }
+        };
+        let centerAt = (j: Int) -> {
+            let (cp, _, _) = arrayGet(sampArr, clampInt(0, m - 1, j));
+            cp
+        };
+        let leftRev = cellNew(Nil);
+        let rightAcc = cellNew(Nil);
+        let idx = cellNew(0);
+        while (cellGet(idx) < m) {
+            let k = cellGet(idx);
+            let ((px, py), hl, hr) = arrayGet(sampArr, k);
+            let (dx, dy) = ptUnit(ptSub(centerAt(k + 1), centerAt(k - 1)));
+            cellSet(leftRev, Cons((px - dy * hl, py + dx * hl), cellGet(leftRev)));
+            cellSet(rightAcc, Cons((px + dy * hr, py - dx * hr), cellGet(rightAcc)));
+            cellSet(idx, k + 1)
+        };
+        listAppend(listRev(cellGet(leftRev)), cellGet(rightAcc))
+    }
+}
+
+data LimbProfile {
+    MkLimbProfile(List Float, List Float, List Float),
+}
+
+def thighProf(): LimbProfile = MkLimbProfile([0.0, 0.4, 1.0], [10.2, 9.4, 6.8], [10.2, 10.8, 6.8])
+def shinProf(): LimbProfile = MkLimbProfile([0.0, 0.32, 0.78, 1.0], [6.8, 8.1, 5.0, 4.1], [6.8, 6.4, 4.6, 4.1])
+def upperArmProf(): LimbProfile = MkLimbProfile([0.0, 0.35, 1.0], [8.2, 7.2, 5.4], [8.2, 7.4, 5.4])
+def forearmProf(): LimbProfile = MkLimbProfile([0.0, 0.3, 1.0], [5.6, 6.0, 3.7], [5.6, 5.7, 3.7])
+
+def organicLimb(a: (Float, Float), b: (Float, Float), prof: LimbProfile, k: Float): List ShapePrim =
+    match (a, b, prof) {
+        ((ax, ay), (bx, by), MkLimbProfile(ts, ls, rs)) -> {
+            let pts = listMap(ts, (t) -> (ax + (bx - ax) * t, ay + (by - ay) * t));
+            let lsScaled = listMap(ls, (w) -> w * k);
+            let rsScaled = listMap(rs, (w) -> w * k);
+            let rStart = match (lsScaled, rsScaled) {
+                (Cons(l0, _), Cons(r0, _)) -> maxFloat(l0, r0),
+                _ -> 6.0,
+            };
+            let nL = listLen(lsScaled);
+            let nR = listLen(rsScaled);
+            let rEnd = minFloat(listNthOr(lsScaled, nL - 1, 4.0), listNthOr(rsScaled, nR - 1, 4.0));
+            [sPoly(ribbonPts(pts, lsScaled, rsScaled)), sCircle(a, rStart), sCircle(b, rEnd)]
+        },
+    }
+
+def handShapes(elbow: (Float, Float), wrist: (Float, Float), shape: HandShape, k: Float): List ShapePrim = {
+    let dir = ptUnit(ptSub(wrist, elbow));
+    let (_, ryNeg) = ptRot(dir, -90.0);
+    let (_, ryPos) = ptRot(dir, 90.0);
+    let upSide = if (ryNeg <= ryPos) -1.0 else 1.0;
+    let bend = (deg: Float) -> ptRot(dir, deg * upSide);
+    match shape {
+        HandFinger -> {
+            let c = ptAdd(wrist, dir, 3.4 * k);
+            let n = ptRot(dir, 90.0);
+            let w = 4.2 * k;
+            let h = 4.4 * k;
+            let pts = [
+                ptAdd(ptAdd(c, dir, -h), n, w * 0.8),
+                ptAdd(ptAdd(c, dir, h * 0.7), n, w),
+                ptAdd(ptAdd(c, dir, h), n, 0.0),
+                ptAdd(ptAdd(c, dir, h * 0.7), n, -w),
+                ptAdd(ptAdd(c, dir, -h), n, -w * 0.8)
+            ];
+            [sPoly(closedCurvePts(pts))]
+        },
+        HandPalm -> {
+            let f = bend(28.0);
+            let n = ptRot(f, 90.0 * upSide);
+            let base = ptAdd(wrist, dir, 1.5);
+            let mid = ptAdd(base, f, 6.0 * k);
+            let tip = ptAdd(base, f, 11.0 * k);
+            let outline = [
+                ptAdd(base, n, 3.4 * k),
+                ptAdd(mid, n, 3.4 * k),
+                ptAdd(tip, n, 2.3 * k),
+                ptAdd(tip, f, 1.8 * k),
+                ptAdd(tip, n, -2.3 * k),
+                ptAdd(mid, n, -3.2 * k),
+                ptAdd(base, n, -3.2 * k)
+            ];
+            let thumb = taperPts(ptAdd(base, f, 2.0 * k), ptAdd(ptAdd(base, f, 4.0 * k), n, 5.0 * k), 1.8 * k, 1.3 * k);
+            [sPoly(closedCurvePts(outline)), sPoly(thumb)]
+        },
+        HandFist -> {
+            let c = ptAdd(wrist, dir, 3.6 * k);
+            let n = ptRot(dir, 90.0);
+            let w = 4.8 * k;
+            let h = 4.6 * k;
+            let pts = [
+                ptAdd(ptAdd(c, dir, -h), n, w * 0.8),
+                ptAdd(ptAdd(c, dir, h * 0.7), n, w),
+                ptAdd(ptAdd(c, dir, h), n, 0.0),
+                ptAdd(ptAdd(c, dir, h * 0.7), n, -w),
+                ptAdd(ptAdd(c, dir, -h), n, -w * 0.8)
+            ];
+            [sPoly(closedCurvePts(pts))]
+        },
+    }
+}
+
+def footShapes(knee: (Float, Float), ankle: (Float, Float), planted: Bool, k: Float): List ShapePrim = {
+    let (fx, fy) = if (planted) (1.0, 0.0) else ptUnit(ptRot(ptUnit(ptSub(ankle, knee)), -18.0));
+    let ux = fy;
+    let uy = -fx;
+    let (gx, gy) = ptAdd(ankle, (ux, uy), -ankleHeight());
+    let mkPt = (x: Float, h: Float) -> (gx + fx * x * k + ux * h, gy + fy * x * k + uy * h);
+    let shoe = [
+        mkPt(-5.0, 0.6),
+        mkPt(-5.6, 3.4),
+        mkPt(-3.6, 7.0),
+        mkPt(2.6, 6.6),
+        mkPt(8.0, 3.6),
+        mkPt(13.0, 1.5),
+        mkPt(13.8, 0.4),
+        mkPt(4.0, -0.2)
+    ];
+    [sCircle(ankle, 4.1 * k), sPoly(closedCurvePts(shoe))]
+}
+
+def headShape(center: (Float, Float), up: (Float, Float), r: Float): ShapePrim =
+    match (center, up) {
+        ((cx, cy), (ux, uy)) -> {
+            let fx = uy;
+            let fy = -ux;
+            let rawPts = [
+                (0.08, 1.0),
+                (-0.62, 0.84),
+                (-0.98, 0.3),
+                (-0.92, -0.32),
+                (-0.52, -0.78),
+                (0.12, -0.98),
+                (0.58, -0.8),
+                (0.84, -0.36),
+                (0.9, 0.2),
+                (0.66, 0.74)
+            ];
+            let pts = listMap(rawPts, (p) -> match p {
+                (x, y) -> (cx + fx * x * r + ux * y * r, cy + fy * x * r + uy * y * r),
+            });
+            sPoly(closedCurvePts(pts))
+        },
+    }
+
+def rotatedPoly(origin: (Float, Float), deg: Float, pts: List (Float, Float)): List (Float, Float) =
+    match origin {
+        (ox, oy) -> {
+            let r = degToRad(deg);
+            let c = cos(r);
+            let s = sin(r);
+            listMap(pts, (p) -> match p {
+                (x, y) -> (ox + x * c - y * s, oy + x * s + y * c),
+            })
+        },
+    }
+
+def swingWave(phase: Float, lag: Float): Float =
+    sin(phase / 300.0 - lag) + sin(phase / 170.0 - lag * 1.6) * 0.4
+
+pub def buildActorParts(
+    p: SvgPose,
+    style: CombatStyle,
+    profile: VisualProfile,
+    look: LookStyle,
+    flow: (Float, Float),
+    hairPhase: Float
+): List ActorPart = {
+    let (flowX, flowY) = flow;
+    let isFemale = profileEq(profile, ProfileFemale);
+    let maiden = isFemale && lookEq(look, LookMaiden);
+    let k = if (maiden) 0.86 else 1.0;
+    let b = p.spBones;
+    let headR = b.bHeadRadius - (if (maiden) 1.2 else 0.0);
+    let torsoAxis = ptUnit(ptSub(p.spNeck, p.spHip));
+    let chest = ptAdd(p.spNeck, torsoAxis, -10.0);
+    let waist = ptAdd(p.spHip, torsoAxis, 14.0);
+    let bladeDir = dirVec(p.spBlade);
+    let pommel = ptAdd(p.spHand, bladeDir, -9.0);
+    let tasselVec = ptSub(p.spTassel, pommel);
+    let tasselEnd = ptAdd(pommel, ptUnit(tasselVec), minFloat(ptLen(tasselVec), 20.0));
+    let headUp = ptUnit(ptSub(p.spHead, p.spNeck));
+    let (ux, uy) = headUp;
+    let bx = uy;
+    let by = -ux;
+    let headBack = (bx, by);
+    let headC = if (maiden) ptAdd(p.spHead, headUp, -1.2) else p.spHead;
+    let (hcx, hcy) = headC;
+    let root = ptAdd(ptAdd(p.spHead, headUp, headR * 0.5), headBack, headR * 0.62);
+    let (rx, ry) = root;
+    let (handF, handB) = p.spHands;
+
+    let backLegShapes = listAppend(
+        organicLimb(p.spHip, p.spBackKnee, thighProf(), k),
+        listAppend(
+            organicLimb(p.spBackKnee, p.spBackFoot, shinProf(), k),
+            footShapes(p.spBackKnee, p.spBackFoot, p.spBackFootPlanted, k)
+        )
+    );
+    let backArmShapes = listAppend(
+        organicLimb(p.spShoulder, p.spBackElbow, upperArmProf(), k),
+        listAppend(
+            organicLimb(p.spBackElbow, p.spBackHand, forearmProf(), k),
+            handShapes(p.spBackElbow, p.spBackHand, handB, k)
+        )
+    );
+
+    let chestR = if (maiden) 11.4 else 13.5;
+    let waistR = if (maiden) 8.6 else 10.6;
+    let pelvisR = if (maiden) 11.0 else 11.5;
+    let bodyShapes = [
+        sPoly(ribbonPts([chest, waist, p.spHip], [chestR, waistR, pelvisR], [chestR, waistR, pelvisR])),
+        sCircle(chest, chestR),
+        sCircle(p.spHip, pelvisR),
+        sPoly(taperPts(p.spNeck, headC, 8.0 * k, 8.0 * k)),
+        headShape(headC, headUp, headR)
+    ];
+
+    let frontLegShapes = listAppend(
+        organicLimb(p.spHip, p.spKnee, thighProf(), k),
+        listAppend(
+            organicLimb(p.spKnee, p.spFoot, shinProf(), k),
+            footShapes(p.spKnee, p.spFoot, p.spFootPlanted, k)
+        )
+    );
+
+    let swordShapes =
+        if (styleEq(style, StyleSword)) {
+            let l = svgSwordLength();
+            [
+                SPoly(taperPts(pommel, tasselEnd, 1.6, 1.2), None, 0.85),
+                sPoly(rotatedPoly(p.spHand, p.spBlade, [(-9.0, -2.0), (5.0, -2.0), (5.0, 2.0), (-9.0, 2.0)])),
+                sPoly(rotatedPoly(p.spHand, p.spBlade, [(4.0, -7.0), (7.0, -7.0), (7.0, 7.0), (4.0, 7.0)])),
+                SPoly(rotatedPoly(p.spHand, p.spBlade, [(7.0, -2.0), (l - 8.0, -2.0), (l, 0.0), (l - 8.0, 2.0), (7.0, 2.0)]), Some("#4a575b"), 1.0)
+            ]
+        } else Nil;
+
+    let frontArmShapes = listAppend(
+        organicLimb(p.spShoulder, p.spElbow, upperArmProf(), k),
+        listAppend(
+            organicLimb(p.spElbow, p.spHand, forearmProf(), k),
+            listAppend(
+                swordShapes,
+                handShapes(p.spElbow, p.spHand, if (styleEq(style, StyleSword)) HandFist else handF, k)
+            )
+        )
+    );
+
+    let (mHairPart, extraBodyJoins) =
+        if (!isFemale) {
+            (None, Nil)
+        } else if (maiden) {
+            let sway1 = swingWave(hairPhase, 0.4) * 2.5;
+            let sway2 = swingWave(hairPhase, 1.1) * 6.0;
+            let onFace = (u: Float, bk: Float) -> (hcx + ux * headR * u + bx * headR * bk, hcy + uy * headR * u + by * headR * bk);
+            let bun = onFace(0.5, 0.98);
+            let bunTop = onFace(0.82, 0.72);
+            let pinDir = ptUnit((ux * 0.3 + bx * 0.95, uy * 0.3 + by * 0.95));
+            let looseRoot = onFace(0.05, 0.86);
+            let (lrx, lry) = looseRoot;
+            let hPt = (bk: Float, down: Float, f: Float, sw: Float) ->
+                (lrx + bx * (bk + sw) + flowX * f, lry + by * (bk + sw) + down + flowY * f);
+            let hShapes = [
+                sPoly(ribbonPts([hPt(8.0, 8.0, 0.2, 0.0), hPt(14.0, 18.0, 0.9, sway1), hPt(19.0, 28.0, 1.5, sway1 * 1.5)], [1.6, 1.2, 0.3], [1.6, 1.2, 0.3])),
+                sPoly(ribbonPts([ptAdd(looseRoot, headBack, 2.0), hPt(10.0, 14.0, 0.3, sway1 * 0.5), hPt(15.0, 38.0, 1.1, sway1 * 1.2), hPt(13.0, 55.0, 1.8, sway2 * 1.3)], [2.8, 2.8, 2.0, 0.3], [2.8, 2.8, 2.0, 0.3])),
+                sPoly(ribbonPts([hPt(1.0, 4.0, 0.0, 0.0), hPt(3.0, 26.0, 0.5, sway1 * 0.8), hPt(1.0, 50.0, 1.2, sway2 * 0.9), hPt(-2.0, 68.0, 1.7, sway2 * 1.1)], [2.2, 2.0, 1.4, 0.3], [2.2, 2.0, 1.4, 0.3])),
+                sPoly(ribbonPts([looseRoot, hPt(6.0, 10.0, 0.2, 0.0), hPt(9.0, 32.0, 0.8, sway1), hPt(5.0, 61.0, 1.5, sway2)], [4.2, 4.6, 3.4, 0.4], [4.2, 4.6, 3.4, 0.4])),
+                sPoly(taperPts(ptAdd(bun, pinDir, -9.0), ptAdd(bun, pinDir, 15.0), 1.5, 0.6)),
+                sCircle(bun, 6.8),
+                sCircle(bunTop, 4.6)
+            ];
+            let hb = listAppend(hShapes, bodyShapes);
+            (
+                Some(MkActorPart { apKey: "hair", apShapes: hShapes, apJoins: Nil }),
+                [
+                    MkJoinPatch { jpAt: looseRoot, jpRadius: 10.0, jpShapes: hb },
+                    MkJoinPatch { jpAt: bun, jpRadius: 8.0, jpShapes: hb }
+                ]
+            )
+        } else {
+            let sway1 = swingWave(hairPhase, 0.4) * 2.5;
+            let sway2 = swingWave(hairPhase, 1.1) * 6.0;
+            let onHead = (u: Float, bk: Float) -> (rx + ux * u + bx * bk, ry + uy * u + by * bk);
+            let hanging = (bk: Float, down: Float, f: Float, sw: Float) ->
+                (rx + bx * bk + flowX * f + sw, ry + by * bk + down + flowY * f);
+            let apex = onHead(4.0, 9.0);
+            let hShapes = [
+                sPoly(ribbonPts([hanging(22.0, 14.0, 0.45, sway1), hanging(27.0, 36.0, 1.0, sway1 * 1.2), hanging(26.0, 54.0, 1.7, sway2 * 1.25)], [3.4, 2.6, 0.5], [3.4, 2.6, 0.5])),
+                sPoly(ribbonPts([onHead(-2.0, -1.0), apex, hanging(21.0, 8.0, 0.3, sway1 * 0.4), hanging(22.0, 34.0, 0.9, sway1), hanging(15.0, 64.0, 1.6, sway2)], [3.6, 5.2, 6.4, 5.0, 0.6], [3.6, 5.2, 6.4, 5.0, 0.6])),
+                sCircle(onHead(1.0, 1.0), 4.6)
+            ];
+            (
+                Some(MkActorPart { apKey: "hair", apShapes: hShapes, apJoins: Nil }),
+                [MkJoinPatch { jpAt: root, jpRadius: 8.0, jpShapes: listAppend(hShapes, bodyShapes) }]
+            )
+        };
+
+    let baseBodyJoins = [
+        MkJoinPatch { jpAt: p.spHip, jpRadius: 10.5 * k + 10.0, jpShapes: listAppend(backLegShapes, bodyShapes) },
+        MkJoinPatch { jpAt: p.spShoulder, jpRadius: 8.4 * k + 8.0, jpShapes: listAppend(backArmShapes, bodyShapes) }
+    ];
+    let bodyPart = MkActorPart {
+        apKey: "body",
+        apShapes: bodyShapes,
+        apJoins: listAppend(baseBodyJoins, extraBodyJoins),
+    };
+    let frontLegPart = MkActorPart {
+        apKey: "front-leg",
+        apShapes: frontLegShapes,
+        apJoins: [MkJoinPatch {
+            jpAt: p.spHip,
+            jpRadius: 10.5 * k + 10.0,
+            jpShapes: listAppend(backLegShapes, listAppend(bodyShapes, frontLegShapes)),
+        }],
+    };
+    let frontArmPart = MkActorPart {
+        apKey: "front-arm",
+        apShapes: frontArmShapes,
+        apJoins: [MkJoinPatch {
+            jpAt: p.spShoulder,
+            jpRadius: 8.4 * k + 8.0,
+            jpShapes: listAppend(backArmShapes, listAppend(bodyShapes, frontArmShapes)),
+        }],
+    };
+    let coreParts = [
+        MkActorPart { apKey: "back-leg", apShapes: backLegShapes, apJoins: Nil },
+        MkActorPart { apKey: "back-arm", apShapes: backArmShapes, apJoins: Nil },
+        bodyPart,
+        frontLegPart,
+        frontArmPart
+    ];
+    match mHairPart {
+        Some(hp) -> Cons(hp, coreParts),
+        None -> coreParts,
+    }
+}

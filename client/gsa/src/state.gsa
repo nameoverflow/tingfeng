@@ -1,0 +1,2801 @@
+// Pure Functional Client State Machine (`state`), built on Geisha's `std.control`
+// `MonadState ClientModel` + `MonadWriter (List ClientCmd)` effect combinators
+// and cohesive domain sub-records.
+
+use std.option.{Option, Some, None}
+use std.list.{listLen, listAppend, listMap, listRev}
+use std.str.{intToStr, strStartsWith, strEndsWith, strJoin, strSplitChar}
+use std.codec.{Value, VNull, object, (:=)}
+use std.json.stringify
+use prelude.{
+    Functor, fmap, (<$>),
+    Applicative, pure, ap, (<*>),
+    Monad, (>>=), (*>>), whenM, forEachM,
+    MonadState, get, put, modify,
+    MonadWriter, tell,
+    Semigroup, (<+>), Monoid, empty, mconcat,
+    exp, absFloat, minInt, maxInt, clampInt, minFloat, maxFloat, clampFloat, clamp01,
+    floorInt, ceilInt, roundInt, floorDiv, floorMod, numVal, parseIntOr,
+    optOr, optIsSome, optIsNone, listIsEmpty, listHead, listLast, listNthOr,
+    listFind, listFilter, listFilterMap, listDrop, intRange,
+    utf8Trim, utf8FoldCodepoints, strContains
+}
+use ordmap.{OrdMap, mapEmpty, mapLookup, mapInsert, mapElems}
+use i18n.{Locale, Zh, En, isZh, parseLocale, tr, trParams, formatSystemMsg, formatErrorMsg}
+use protocol.{
+    Direction, North, South, East, West, dirEq, parseDirection, directionGridDelta,
+    PlayerAction, ActGo, ActTalk, ActAttack, ActPerform, ActPractice, ActLearn,
+    ActStudy, ActResearch, ActMeditate, ActEnable, ActBuy, ActUse, ActSay, ActOther,
+    CreationBonus, emptyBonus, CreationOption, CreationConfig, CreationChoice, MkCreationChoice,
+    RoomChar, RoomExit, MapRoom, MapOverview, MkMapOverview,
+    EffectInfo, ActiveSkillInfo, CombatantInfo, MkCombatantInfo, BattleSnap, MkBattleSnap,
+    CombatResult, ResHit, ResDodge, ResParry, ResEffect, combatResEq, parseCombatResult,
+    CombatEvt, MkCombatEvt, SkillFailReason, FailNeedAp, FailNeedQi, FailCooldown, FailMissingStatus, FailUnavailable,
+    BusyInfo, PlayerStatsInfo, MkPlayerStatsInfo, ArtInfo, InvItem, RewardInfo, QuestItem,
+    ServerMsg, SmMove, SmView, SmMapOverview, SmAttack, SmCombatEvent, SmCombatSettlement,
+    SmBattleState, SmActiveSkillFailure, SmDialogue, SmStory, SmStorySequence, SmStoryDelay,
+    SmStoryTransition, SmSay, SmUseItem, SmPlayerStats, SmInventory, SmArts, SmQuests,
+    SmReward, SmCreationConfig, SmSystem, SmError, SmIgnored,
+    encodePlayerAction
+}
+use pose.{
+    CombatStyle, StyleFist, StyleSword, combatStyleText, parseCombatStyle,
+    VisualProfile, ProfileMale, ProfileFemale, parseVisualProfile,
+    LookStyle, LookMaiden, LookPonytail, lookEq,
+    PoseLibrary
+}
+use catalog.{ActionDef, ActionCatalog, battleActionFor, isTravelMotion}
+use battle.{
+    BattleSide, SidePlayer, SideEnemy, sideEq, parseBattleSide, sideHome,
+    ActorVisual, ResolvedHit, MkResolvedHit, ResolvedTimeline, InkParticle, MkInkParticle,
+    resolveCombatTimeline, resolveSettlementTimeline, sampleBattleScene, spawnHitParticles
+}
+
+// ============================================================================
+// Page Modes, Hitboxes, Scroll Zones & Outbound Host Commands
+// ============================================================================
+
+pub data AppPage {
+    PageGame,
+    PageBattleLab,
+    PagePoseSheet,
+}
+
+pub def pageEq(a: AppPage, b: AppPage): Bool = match (a, b) {
+    (PageGame, PageGame) -> true,
+    (PageBattleLab, PageBattleLab) -> true,
+    (PagePoseSheet, PagePoseSheet) -> true,
+    _ -> false,
+}
+
+pub data LogLine {
+    MkLogLine { llId: Int, llKind: String, llText: String },
+}
+
+pub data HitTarget {
+    HitExit(Direction),
+    HitNpc(String),
+    HitResetCam,
+    HitUi(String, String, String),
+    HitFocusInput(String),
+    HitLab(String, String, String, String, Float),
+    HitLabScrub(Float, Float),
+    HitSwallow,
+}
+
+pub def hitTargetEq(a: HitTarget, b: HitTarget): Bool = match (a, b) {
+    (HitExit(d1), HitExit(d2)) -> dirEq(d1, d2),
+    (HitNpc(x), HitNpc(y)) -> x == y,
+    (HitResetCam, HitResetCam) -> true,
+    (HitUi(k1, a1, b1), HitUi(k2, a2, b2)) -> k1 == k2 && a1 == a2 && b1 == b2,
+    (HitFocusInput(x), HitFocusInput(y)) -> x == y,
+    (HitLab(c1, x1, y1, z1, n1), HitLab(c2, x2, y2, z2, n2)) ->
+        c1 == c2 && x1 == x2 && y1 == y2 && z1 == z2 && n1 == n2,
+    (HitLabScrub(x1, w1), HitLabScrub(x2, w2)) -> x1 == x2 && w1 == w2,
+    (HitSwallow, HitSwallow) -> true,
+    _ -> false,
+}
+
+pub def optHitEq(a: Option HitTarget, b: Option HitTarget): Bool = match (a, b) {
+    (None, None) -> true,
+    (Some(x), Some(y)) -> hitTargetEq(x, y),
+    _ -> false,
+}
+
+pub data CanvasHitbox {
+    MkCanvasHitbox {
+        chX: Float,
+        chY: Float,
+        chW: Float,
+        chH: Float,
+        chTarget: HitTarget,
+        chCursor: String,
+    },
+}
+
+pub data ScrollTarget {
+    ScrollLog,
+    ScrollDrawer,
+    ScrollOnboard,
+    ScrollNpc,
+}
+
+pub data ScrollZone {
+    MkScrollZone {
+        szX: Float,
+        szY: Float,
+        szW: Float,
+        szH: Float,
+        szTarget: ScrollTarget,
+    },
+}
+
+pub data ClientCmd {
+    CmdSendWs(String),
+    CmdConnectWs(String, String, Option CreationChoice),
+    CmdOpenConfigWs,
+    CmdSetCursor(String),
+    CmdPlaySfx(String),
+    CmdSaveLocal(String, String),
+    CmdFocusInput(String, String, Float, Float, Float, Float),
+    CmdBlurInput,
+}
+
+pub data PresentationState {
+    MkPresentationState {
+        prPlayerHp: Int,
+        prEnemyHp: Int,
+        prPlayerQi: Int,
+        prEnemyQi: Int,
+        prPlayerEffects: List EffectInfo,
+        prEnemyEffects: List EffectInfo,
+    },
+}
+
+pub data QueuedBattle {
+    QCombat(CombatEvt, Option PresentationState),
+    QSettlement(String, String, Bool),
+}
+
+// ============================================================================
+// Cohesive Domain Sub-Records Composing `ClientModel`
+// ============================================================================
+
+pub data ViewportState {
+    MkViewportState {
+        vpPage: AppPage,
+        vpLocale: Locale,
+        vpReducedMotion: Bool,
+        vpDocHidden: Bool,
+        vpSoundOn: Bool,
+        vpLookStyle: LookStyle,
+        vpWidth: Float,
+        vpHeight: Float,
+        vpClockMs: Float,
+        vpLastSyncTickMs: Float,
+        vpWasmStepMs: Float,
+        vpDrawCmdCount: Int,
+    },
+}
+
+pub data AuthState {
+    MkAuthState {
+        auConnected: Bool,
+        auConnecting: Bool,
+        auUsername: String,
+        auLastError: Option String,
+        auLoginMode: String,
+        auCreateStep: Int,
+        auCreationCfg: Option CreationConfig,
+        auCreateChoice: CreationChoice,
+        auDevReset: Bool,
+    },
+}
+
+pub data WorldView {
+    MkWorldView {
+        wvRoomName: String,
+        wvRoomDesc: String,
+        wvRoomChars: List RoomChar,
+        wvRoomExits: List RoomExit,
+        wvMapOverview: Option MapOverview,
+        wvMapCache: OrdMap String MapOverview,
+        wvRequestedInit: Bool,
+        wvStoryActive: Bool,
+        wvStoryQueue: List ServerMsg,
+        wvStoryDelayRemMs: Float,
+        wvTransitionBanner: Option (String, Float),
+    },
+}
+
+pub data HeroSheets {
+    MkHeroSheets {
+        hsStats: PlayerStatsInfo,
+        hsStatsSyncedAtMs: Float,
+        hsMoney: Int,
+        hsInventory: List InvItem,
+        hsArts: List ArtInfo,
+        hsQuests: List QuestItem,
+    },
+}
+
+pub data CameraState {
+    MkCameraState {
+        camX: Float,
+        camY: Float,
+        targetCamX: Float,
+        targetCamY: Float,
+        panX: Float,
+        panY: Float,
+        mapZoom: Float,
+    },
+}
+
+pub data BattleStateView {
+    MkBattleStateView {
+        btInBattle: Bool,
+        btSnap: Option BattleSnap,
+        btCooldownSyncedMs: Float,
+        btActionLockUntilMs: Float,
+        btPresentation: Option PresentationState,
+        btPreEventSnap: Option PresentationState,
+        btActiveTimeline: Option ResolvedTimeline,
+        btTimelineElapsedMs: Float,
+        btAppliedHits: Int,
+        btNextTimelineId: Int,
+        btQueue: List QueuedBattle,
+    },
+}
+
+pub data BattleFxState {
+    MkBattleFxState {
+        fxPlayerHpTrail: Float,
+        fxEnemyHpTrail: Float,
+        fxPlayerApAnim: Float,
+        fxEnemyApAnim: Float,
+        fxPlayerHitFlashMs: Float,
+        fxEnemyHitFlashMs: Float,
+        fxParticles: List InkParticle,
+        fxShockPos: (Float, Float),
+        fxShockAge: Float,
+        fxShockPower: Float,
+    },
+}
+
+pub data LabControls {
+    MkLabControls {
+        labPaused: Bool,
+        labSpeed: Float,
+        labActionIdx: Int,
+        labOutcomeIdx: Int,
+        labSideIdx: Int,
+    },
+}
+
+pub data UiChrome {
+    MkUiChrome {
+        uiLogs: List LogLine,
+        uiNextLogId: Int,
+        uiUnreadLogs: Int,
+        uiDesktopDrawer: String,
+        uiCharSubTab: String,
+        uiMobileTab: String,
+        uiSelectedNpc: Option String,
+        uiFocusedInput: Option String,
+        uiSayDraft: String,
+        uiDirty: Bool,
+    },
+}
+
+pub data ScrollHitState {
+    MkScrollHitState {
+        shLogScroll: Float,
+        shLogMaxScroll: Float,
+        shLogStickBottom: Bool,
+        shDrawerScroll: Float,
+        shDrawerMaxScroll: Float,
+        shOnboardScroll: Float,
+        shOnboardMaxScroll: Float,
+        shNpcScroll: Float,
+        shNpcMaxScroll: Float,
+        shHovered: Option HitTarget,
+        shHitboxes: List CanvasHitbox,
+        shScrollZones: List ScrollZone,
+    },
+}
+
+pub data ClientModel {
+    MkClientModel {
+        cmPoseLib: PoseLibrary,
+        cmCatalog: ActionCatalog,
+        cmVp: ViewportState,
+        cmAuth: AuthState,
+        cmWorld: WorldView,
+        cmHero: HeroSheets,
+        cmCam: CameraState,
+        cmBattle: BattleStateView,
+        cmFx: BattleFxState,
+        cmLab: LabControls,
+        cmUi: UiChrome,
+        cmScroll: ScrollHitState,
+    },
+}
+
+// Sub-record update helpers on `ClientModel` (zero 70-field boilerplate!)
+
+pub def withVp(m: ClientModel, vp: ViewportState): ClientModel = MkClientModel {
+    cmPoseLib: m.cmPoseLib, cmCatalog: m.cmCatalog, cmVp: vp, cmAuth: m.cmAuth,
+    cmWorld: m.cmWorld, cmHero: m.cmHero, cmCam: m.cmCam, cmBattle: m.cmBattle,
+    cmFx: m.cmFx, cmLab: m.cmLab, cmUi: m.cmUi, cmScroll: m.cmScroll,
+}
+
+pub def withAuth(m: ClientModel, au: AuthState): ClientModel = MkClientModel {
+    cmPoseLib: m.cmPoseLib, cmCatalog: m.cmCatalog, cmVp: m.cmVp, cmAuth: au,
+    cmWorld: m.cmWorld, cmHero: m.cmHero, cmCam: m.cmCam, cmBattle: m.cmBattle,
+    cmFx: m.cmFx, cmLab: m.cmLab, cmUi: m.cmUi, cmScroll: m.cmScroll,
+}
+
+pub def withWorld(m: ClientModel, wv: WorldView): ClientModel = MkClientModel {
+    cmPoseLib: m.cmPoseLib, cmCatalog: m.cmCatalog, cmVp: m.cmVp, cmAuth: m.cmAuth,
+    cmWorld: wv, cmHero: m.cmHero, cmCam: m.cmCam, cmBattle: m.cmBattle,
+    cmFx: m.cmFx, cmLab: m.cmLab, cmUi: m.cmUi, cmScroll: m.cmScroll,
+}
+
+pub def withHero(m: ClientModel, hs: HeroSheets): ClientModel = MkClientModel {
+    cmPoseLib: m.cmPoseLib, cmCatalog: m.cmCatalog, cmVp: m.cmVp, cmAuth: m.cmAuth,
+    cmWorld: m.cmWorld, cmHero: hs, cmCam: m.cmCam, cmBattle: m.cmBattle,
+    cmFx: m.cmFx, cmLab: m.cmLab, cmUi: m.cmUi, cmScroll: m.cmScroll,
+}
+
+pub def withCam(m: ClientModel, cam: CameraState): ClientModel = MkClientModel {
+    cmPoseLib: m.cmPoseLib, cmCatalog: m.cmCatalog, cmVp: m.cmVp, cmAuth: m.cmAuth,
+    cmWorld: m.cmWorld, cmHero: m.cmHero, cmCam: cam, cmBattle: m.cmBattle,
+    cmFx: m.cmFx, cmLab: m.cmLab, cmUi: m.cmUi, cmScroll: m.cmScroll,
+}
+
+pub def withBattle(m: ClientModel, bt: BattleStateView): ClientModel = MkClientModel {
+    cmPoseLib: m.cmPoseLib, cmCatalog: m.cmCatalog, cmVp: m.cmVp, cmAuth: m.cmAuth,
+    cmWorld: m.cmWorld, cmHero: m.cmHero, cmCam: m.cmCam, cmBattle: bt,
+    cmFx: m.cmFx, cmLab: m.cmLab, cmUi: m.cmUi, cmScroll: m.cmScroll,
+}
+
+pub def withFx(m: ClientModel, fx: BattleFxState): ClientModel = MkClientModel {
+    cmPoseLib: m.cmPoseLib, cmCatalog: m.cmCatalog, cmVp: m.cmVp, cmAuth: m.cmAuth,
+    cmWorld: m.cmWorld, cmHero: m.cmHero, cmCam: m.cmCam, cmBattle: m.cmBattle,
+    cmFx: fx, cmLab: m.cmLab, cmUi: m.cmUi, cmScroll: m.cmScroll,
+}
+
+pub def withLab(m: ClientModel, lb: LabControls): ClientModel = MkClientModel {
+    cmPoseLib: m.cmPoseLib, cmCatalog: m.cmCatalog, cmVp: m.cmVp, cmAuth: m.cmAuth,
+    cmWorld: m.cmWorld, cmHero: m.cmHero, cmCam: m.cmCam, cmBattle: m.cmBattle,
+    cmFx: m.cmFx, cmLab: lb, cmUi: m.cmUi, cmScroll: m.cmScroll,
+}
+
+pub def withUi(m: ClientModel, ui: UiChrome): ClientModel = MkClientModel {
+    cmPoseLib: m.cmPoseLib, cmCatalog: m.cmCatalog, cmVp: m.cmVp, cmAuth: m.cmAuth,
+    cmWorld: m.cmWorld, cmHero: m.cmHero, cmCam: m.cmCam, cmBattle: m.cmBattle,
+    cmFx: m.cmFx, cmLab: m.cmLab, cmUi: ui, cmScroll: m.cmScroll,
+}
+
+pub def withScroll(m: ClientModel, sh: ScrollHitState): ClientModel = MkClientModel {
+    cmPoseLib: m.cmPoseLib, cmCatalog: m.cmCatalog, cmVp: m.cmVp, cmAuth: m.cmAuth,
+    cmWorld: m.cmWorld, cmHero: m.cmHero, cmCam: m.cmCam, cmBattle: m.cmBattle,
+    cmFx: m.cmFx, cmLab: m.cmLab, cmUi: m.cmUi, cmScroll: sh,
+}
+
+pub def markDirty(m: ClientModel): ClientModel = {
+    let u = m.cmUi;
+    if (u.uiDirty) m
+    else withUi(m, MkUiChrome {
+        uiLogs: u.uiLogs, uiNextLogId: u.uiNextLogId, uiUnreadLogs: u.uiUnreadLogs,
+        uiDesktopDrawer: u.uiDesktopDrawer, uiCharSubTab: u.uiCharSubTab, uiMobileTab: u.uiMobileTab,
+        uiSelectedNpc: u.uiSelectedNpc, uiFocusedInput: u.uiFocusedInput, uiSayDraft: u.uiSayDraft,
+        uiDirty: true,
+    })
+}
+
+pub def clearDirty(m: ClientModel): ClientModel = {
+    let u = m.cmUi;
+    if (!u.uiDirty) m
+    else withUi(m, MkUiChrome {
+        uiLogs: u.uiLogs, uiNextLogId: u.uiNextLogId, uiUnreadLogs: u.uiUnreadLogs,
+        uiDesktopDrawer: u.uiDesktopDrawer, uiCharSubTab: u.uiCharSubTab, uiMobileTab: u.uiMobileTab,
+        uiSelectedNpc: u.uiSelectedNpc, uiFocusedInput: u.uiFocusedInput, uiSayDraft: u.uiSayDraft,
+        uiDirty: false,
+    })
+}
+
+// ============================================================================
+// Pure `ClientM a` Effect Monad (`MonadState ClientModel` + `MonadWriter (List ClientCmd)`)
+// ============================================================================
+
+pub data ClientM a {
+    MkClientM(ClientModel -> (a, ClientModel, List ClientCmd)),
+}
+
+pub def runClientM(act: ClientM a, m0: ClientModel): (ClientModel, List ClientCmd) = match act {
+    MkClientM(f) -> {
+        let (_, m1, cmds) = f(m0);
+        (m1, cmds)
+    },
+}
+
+instance Functor ClientM {
+    def fmap(g, ma) = match ma {
+        MkClientM(f) -> MkClientM((m0) -> {
+            let (a, m1, cs) = f(m0);
+            (g(a), m1, cs)
+        }),
+    }
+}
+
+instance Applicative ClientM {
+    def pure(x) = MkClientM((m) -> (x, m, Nil))
+    def ap(mf, ma) = match (mf, ma) {
+        (MkClientM(ff), MkClientM(fa)) -> MkClientM((m0) -> {
+            let (f, m1, c1) = ff(m0);
+            let (a, m2, c2) = fa(m1);
+            (f(a), m2, listAppend(c1, c2))
+        }),
+    }
+}
+
+instance Monad ClientM {
+    def (>>=)(ma, k) = match ma {
+        MkClientM(fa) -> MkClientM((m0) -> {
+            let (a, m1, c1) = fa(m0);
+            match k(a) {
+                MkClientM(fb) -> {
+                    let (b, m2, c2) = fb(m1);
+                    (b, m2, listAppend(c1, c2))
+                },
+            }
+        }),
+    }
+}
+
+instance MonadState ClientModel ClientM {
+    def get() = MkClientM((m) -> (m, m, Nil))
+    def put(m) = MkClientM((_) -> ((), m, Nil))
+}
+
+instance MonadWriter (List ClientCmd) ClientM {
+    def tell(cs) = MkClientM((m) -> ((), m, cs))
+}
+
+def emitCmd(cmd: ClientCmd): ClientM Void = tell([cmd])
+def emitCmds(cmds: List ClientCmd): ClientM Void = tell(cmds)
+
+// ============================================================================
+// Model Initialization & Constants
+// ============================================================================
+
+def apBaselineAgility(): Float = 19.0
+def apGainPerAgilitySecond(): Float = 100.0 / (2.0 * apBaselineAgility())
+def gridScaleX(): Float = 164.0
+def gridScaleY(): Float = 118.0
+
+pub def worldPosFromGrid(pos: (Int, Int)): (Float, Float) = match pos {
+    (gx, gy) -> (intToFloat(gx) * gridScaleX(), intToFloat(-gy) * gridScaleY()),
+}
+
+def defaultStats(): PlayerStatsInfo = MkPlayerStatsInfo {
+    psHp: 100,
+    psMaxHp: 100,
+    psQi: 100,
+    psMaxQi: 100,
+    psJing: 120,
+    psMaxJing: 120,
+    psAp: 0,
+    psStatus: "normal",
+    psGender: "female",
+    psAppearance: 6,
+    psAppearanceText: "",
+    psPortraitKey: "beauty-score-06",
+    psStrength: 18,
+    psAgility: 18,
+    psVitality: 18,
+    psPotential: 0,
+    psCombatExp: 0,
+    psInjuredSeconds: 0,
+    psCombatInsight: 0,
+    psBusy: None,
+}
+
+pub def initClientModel(
+    page: AppPage,
+    lib: PoseLibrary,
+    cat: ActionCatalog,
+    w: Float,
+    h: Float,
+    reduced: Bool
+): ClientModel = MkClientModel {
+    cmPoseLib: lib,
+    cmCatalog: cat,
+    cmVp: MkViewportState {
+        vpPage: page,
+        vpLocale: Zh,
+        vpReducedMotion: reduced,
+        vpDocHidden: false,
+        vpSoundOn: false,
+        vpLookStyle: LookMaiden,
+        vpWidth: maxFloat(320.0, w),
+        vpHeight: maxFloat(220.0, h),
+        vpClockMs: 0.0,
+        vpLastSyncTickMs: 0.0,
+        vpWasmStepMs: 0.06,
+        vpDrawCmdCount: 0,
+    },
+    cmAuth: MkAuthState {
+        auConnected: !pageEq(page, PageGame),
+        auConnecting: false,
+        auUsername: "",
+        auLastError: None,
+        auLoginMode: "login",
+        auCreateStep: 0,
+        auCreationCfg: None,
+        auCreateChoice: MkCreationChoice { ccGender: "female", ccOrigin: "", ccChildhood1: "", ccChildhood2: "" },
+        auDevReset: false,
+    },
+    cmWorld: MkWorldView {
+        wvRoomName: "",
+        wvRoomDesc: "",
+        wvRoomChars: Nil,
+        wvRoomExits: Nil,
+        wvMapOverview: None,
+        wvMapCache: mapEmpty(),
+        wvRequestedInit: false,
+        wvStoryActive: false,
+        wvStoryQueue: Nil,
+        wvStoryDelayRemMs: 0.0,
+        wvTransitionBanner: None,
+    },
+    cmHero: MkHeroSheets {
+        hsStats: defaultStats(),
+        hsStatsSyncedAtMs: 0.0,
+        hsMoney: 0,
+        hsInventory: Nil,
+        hsArts: Nil,
+        hsQuests: Nil,
+    },
+    cmCam: MkCameraState {
+        camX: 0.0, camY: 0.0,
+        targetCamX: 0.0, targetCamY: 0.0,
+        panX: 0.0, panY: 0.0, mapZoom: 1.0,
+    },
+    cmBattle: MkBattleStateView {
+        btInBattle: false,
+        btSnap: None,
+        btCooldownSyncedMs: 0.0,
+        btActionLockUntilMs: 0.0,
+        btPresentation: None,
+        btPreEventSnap: None,
+        btActiveTimeline: None,
+        btTimelineElapsedMs: 0.0,
+        btAppliedHits: 0,
+        btNextTimelineId: 1,
+        btQueue: Nil,
+    },
+    cmFx: MkBattleFxState {
+        fxPlayerHpTrail: 1.0,
+        fxEnemyHpTrail: 1.0,
+        fxPlayerApAnim: 0.0,
+        fxEnemyApAnim: 0.0,
+        fxPlayerHitFlashMs: 0.0,
+        fxEnemyHitFlashMs: 0.0,
+        fxParticles: Nil,
+        fxShockPos: (0.5, 0.5),
+        fxShockAge: 99.0,
+        fxShockPower: 0.0,
+    },
+    cmLab: MkLabControls {
+        labPaused: false,
+        labSpeed: 1.0,
+        labActionIdx: 0,
+        labOutcomeIdx: 0,
+        labSideIdx: 0,
+    },
+    cmUi: MkUiChrome {
+        uiLogs: Nil,
+        uiNextLogId: 1,
+        uiUnreadLogs: 0,
+        uiDesktopDrawer: "",
+        uiCharSubTab: "status",
+        uiMobileTab: "world",
+        uiSelectedNpc: None,
+        uiFocusedInput: None,
+        uiSayDraft: "",
+        uiDirty: true,
+    },
+    cmScroll: MkScrollHitState {
+        shLogScroll: 0.0,
+        shLogMaxScroll: 0.0,
+        shLogStickBottom: true,
+        shDrawerScroll: 0.0,
+        shDrawerMaxScroll: 0.0,
+        shOnboardScroll: 0.0,
+        shOnboardMaxScroll: 0.0,
+        shNpcScroll: 0.0,
+        shNpcMaxScroll: 0.0,
+        shHovered: None,
+        shHitboxes: Nil,
+        shScrollZones: Nil,
+    },
+}
+
+// ============================================================================
+// Logging, Camera Target Inference & Combat Presentation Queue
+// ============================================================================
+
+pub def pushLog(kind: String, txt: String, m: ClientModel): ClientModel =
+    if (strLen(utf8Trim(txt)) == 0) m
+    else {
+        let u = m.cmUi;
+        let lid = u.uiNextLogId;
+        let entry = MkLogLine { llId: lid, llKind: kind, llText: txt };
+        let prev = u.uiLogs;
+        let nPrev = listLen(prev);
+        let nextLogs =
+            if (nPrev >= 80) listAppend(listDrop(prev, nPrev - 79), [entry])
+            else listAppend(prev, [entry]);
+        let unread =
+            if (u.uiMobileTab == "world" || u.uiMobileTab == "log" || !m.cmAuth.auConnected) 0
+            else minInt(99, u.uiUnreadLogs + 1);
+        withUi(m, MkUiChrome {
+            uiLogs: nextLogs,
+            uiNextLogId: lid + 1,
+            uiUnreadLogs: unread,
+            uiDesktopDrawer: u.uiDesktopDrawer,
+            uiCharSubTab: u.uiCharSubTab,
+            uiMobileTab: u.uiMobileTab,
+            uiSelectedNpc: u.uiSelectedNpc,
+            uiFocusedInput: u.uiFocusedInput,
+            uiSayDraft: u.uiSayDraft,
+            uiDirty: true,
+        })
+    }
+
+def inferCurrentGrid(exits: List RoomExit): Option (Int, Int) =
+    listHead(listFilterMap(exits, (ex) -> match ex.rePos {
+        Some((px, py)) -> {
+            let (dx, dy) = directionGridDelta(ex.reDirection);
+            Some((px - dx, py - dy))
+        },
+        None -> None,
+    }))
+
+def updateCameraTarget(m: ClientModel): ClientModel = {
+    let mGrid = match m.cmWorld.wvMapOverview {
+        Some(mo) -> Some(mo.moCurrentPos),
+        None -> inferCurrentGrid(m.cmWorld.wvRoomExits),
+    };
+    let (tx, ty) = match mGrid {
+        Some(g) -> worldPosFromGrid(g),
+        None -> (0.0, 0.0),
+    };
+    let c = m.cmCam;
+    withCam(m, MkCameraState {
+        camX: c.camX, camY: c.camY,
+        targetCamX: tx, targetCamY: ty,
+        panX: c.panX, panY: c.panY, mapZoom: c.mapZoom,
+    })
+}
+
+def snapCamToTarget(m: ClientModel): ClientModel = {
+    let c = m.cmCam;
+    withCam(m, MkCameraState {
+        camX: c.targetCamX, camY: c.targetCamY,
+        targetCamX: c.targetCamX, targetCamY: c.targetCamY,
+        panX: c.panX, panY: c.panY, mapZoom: c.mapZoom,
+    })
+}
+
+def currentStylesAndProfiles(m: ClientModel): (CombatStyle, CombatStyle, VisualProfile, VisualProfile, String, String) =
+    match m.cmBattle.btSnap {
+        Some(bs) -> {
+            let p = bs.bsPlayer;
+            let e = bs.bsEnemy;
+            (
+                parseCombatStyle(p.cbStyle),
+                parseCombatStyle(e.cbStyle),
+                parseVisualProfile(p.cbGender),
+                parseVisualProfile(e.cbGender),
+                p.cbName,
+                e.cbName
+            )
+        },
+        None -> (
+            StyleFist,
+            StyleSword,
+            parseVisualProfile(m.cmHero.hsStats.psGender),
+            ProfileMale,
+            if (strLen(m.cmAuth.auUsername) == 0) "行者" else m.cmAuth.auUsername,
+            "对手"
+        ),
+    }
+
+def formatCombatLogText(loc: Locale, ev: CombatEvt): String =
+    if (ev.ceMsgKind == "effect_tick") {
+        let amt = intToStr(ev.ceEffectAmount);
+        if (ev.ceEffectKind == "hot") {
+            ev.ceText + (if (isZh(loc)) "回复 " + amt + " 点气血" else " +" + amt + " HP")
+        } else {
+            ev.ceText + (if (isZh(loc)) "造成 " + amt + " 点伤害" else " -" + amt + " HP")
+        }
+    } else if (strLen(utf8Trim(ev.ceText)) > 0) {
+        let base = utf8Trim(ev.ceText);
+        let suffix = match (ev.ceResult, ev.ceDamage, ev.ceHeal) {
+            (ResHit, Some(d), _) if (d > 0) -> "（-" + intToStr(d) + " " + tr(loc, "resource.hp") + "）",
+            (_, _, Some(h)) if (h > 0) -> "（+" + intToStr(h) + " " + tr(loc, "resource.hp") + "）",
+            (ResDodge, _, _) -> if (strContains(base, "闪")) "" else "（闪避）",
+            (ResParry, _, _) -> if (strContains(base, "架")) "" else "（招架）",
+            _ -> "",
+        };
+        base + suffix
+    } else {
+        ev.ceActorName + " → " + ev.ceTargetName
+    }
+
+def snapToPresentation(bs: BattleSnap): PresentationState = MkPresentationState {
+    prPlayerHp: bs.bsPlayer.cbHp,
+    prEnemyHp: bs.bsEnemy.cbHp,
+    prPlayerQi: bs.bsPlayer.cbQi,
+    prEnemyQi: bs.bsEnemy.cbQi,
+    prPlayerEffects: bs.bsPlayer.cbEffects,
+    prEnemyEffects: bs.bsEnemy.cbEffects,
+}
+
+def commitHitsUpToM(elapsed: Float): ClientM Void =
+    get() >>= (m0) ->
+    match m0.cmBattle.btActiveTimeline {
+        None -> pure(()),
+        Some(tl) ->
+            if (tl.tlKind == "settlement") pure(())
+            else {
+                let hits = tl.tlHits;
+                let nHits = listLen(hits);
+                let already = m0.cmBattle.btAppliedHits;
+                let dueIdx = listFilter(
+                    intRange(0, nHits - 1),
+                    (i) -> i >= already && elapsed >= (listNthOr(hits, i, MkResolvedHit {
+                        rhAtMs: 999999.0, rhHitStopMs: 0.0, rhDamage: None, rhHeal: None,
+                        rhFloatText: "", rhResult: ResHit, rhReaction: catalog.ReactNone,
+                        rhTargetVisual: tl.tlTarget.rtVisual, rhStaging: tl.tlStaging,
+                    })).rhAtMs
+                );
+                if (listIsEmpty(dueIdx)) pure(())
+                else {
+                    let pMax = match m0.cmBattle.btSnap {
+                        Some(bs) -> bs.bsPlayer.cbMaxHp,
+                        None -> m0.cmHero.hsStats.psMaxHp,
+                    };
+                    let eMax = match m0.cmBattle.btSnap {
+                        Some(bs) -> bs.bsEnemy.cbMaxHp,
+                        None -> 180,
+                    };
+                    let pr0 = optOr(m0.cmBattle.btPresentation, MkPresentationState {
+                        prPlayerHp: 100, prEnemyHp: 100, prPlayerQi: 100, prEnemyQi: 100,
+                        prPlayerEffects: Nil, prEnemyEffects: Nil,
+                    });
+                    let pr1 = std.list.listFold(dueIdx, pr0, (pr, idx) -> {
+                        let h = listNthOr(hits, idx, optOr(listHead(hits), MkResolvedHit {
+                            rhAtMs: 0.0, rhHitStopMs: 0.0, rhDamage: None, rhHeal: None,
+                            rhFloatText: "", rhResult: ResHit, rhReaction: catalog.ReactNone,
+                            rhTargetVisual: tl.tlTarget.rtVisual, rhStaging: tl.tlStaging,
+                        }));
+                        let dmg = if (combatResEq(h.rhResult, ResHit)) optOr(h.rhDamage, 0) else 0;
+                        let hl = optOr(h.rhHeal, 0);
+                        let delta = -dmg + hl;
+                        if (sideEq(tl.tlTargetSide, SidePlayer)) {
+                            MkPresentationState {
+                                prPlayerHp: clampInt(0, pMax, pr.prPlayerHp + delta),
+                                prEnemyHp: pr.prEnemyHp,
+                                prPlayerQi: pr.prPlayerQi, prEnemyQi: pr.prEnemyQi,
+                                prPlayerEffects: pr.prPlayerEffects, prEnemyEffects: pr.prEnemyEffects,
+                            }
+                        } else {
+                            MkPresentationState {
+                                prPlayerHp: pr.prPlayerHp,
+                                prEnemyHp: clampInt(0, eMax, pr.prEnemyHp + delta),
+                                prPlayerQi: pr.prPlayerQi, prEnemyQi: pr.prEnemyQi,
+                                prPlayerEffects: pr.prPlayerEffects, prEnemyEffects: pr.prEnemyEffects,
+                            }
+                        }
+                    });
+                    let lastIdx = optOr(listLast(dueIdx), already);
+                    let lastHit = listNthOr(hits, lastIdx, optOr(listHead(hits), MkResolvedHit {
+                        rhAtMs: 0.0, rhHitStopMs: 0.0, rhDamage: None, rhHeal: None,
+                        rhFloatText: "", rhResult: ResHit, rhReaction: catalog.ReactNone,
+                        rhTargetVisual: tl.tlTarget.rtVisual, rhStaging: tl.tlStaging,
+                    }));
+                    let prFinal =
+                        if (lastIdx + 1 >= nHits && listIsEmpty(m0.cmBattle.btQueue)) {
+                            match m0.cmBattle.btSnap {
+                                Some(bs) -> MkPresentationState {
+                                    prPlayerHp: pr1.prPlayerHp,
+                                    prEnemyHp: pr1.prEnemyHp,
+                                    prPlayerQi: bs.bsPlayer.cbQi,
+                                    prEnemyQi: bs.bsEnemy.cbQi,
+                                    prPlayerEffects: bs.bsPlayer.cbEffects,
+                                    prEnemyEffects: bs.bsEnemy.cbEffects,
+                                },
+                                None -> pr1,
+                            }
+                        } else pr1;
+
+                    let fx0 = m0.cmFx;
+                    let hitFlashP =
+                        if (sideEq(tl.tlTargetSide, SidePlayer) && combatResEq(lastHit.rhResult, ResHit)) 220.0
+                        else fx0.fxPlayerHitFlashMs;
+                    let hitFlashE =
+                        if (sideEq(tl.tlTargetSide, SideEnemy) && combatResEq(lastHit.rhResult, ResHit)) 220.0
+                        else fx0.fxEnemyHitFlashMs;
+
+                    let w = m0.cmVp.vpWidth;
+                    let hgt = m0.cmVp.vpHeight;
+                    let stageCx = w * 0.5;
+                    let groundY = minFloat(hgt * 0.58, hgt - 210.0);
+                    let sc = sampleBattleScene(Some(tl), elapsed, tl.tlActor.raVisual, tl.tlTarget.rtVisual, m0.cmVp.vpReducedMotion);
+                    let (cx, cy) = sc.scContact;
+                    let wx = stageCx + cx * 0.65;
+                    let wy = groundY + cy;
+                    let newParts =
+                        if (m0.cmVp.vpReducedMotion) Nil
+                        else spawnHitParticles((wx, wy), tl.tlActorSide, lastHit.rhResult, lastHit.rhStaging.spForce, roundInt(m0.cmVp.vpClockMs) + lastIdx * 31);
+
+                    let bt0 = m0.cmBattle;
+                    let m1 = markDirty(withFx(
+                        withBattle(m0, MkBattleStateView {
+                            btInBattle: bt0.btInBattle, btSnap: bt0.btSnap,
+                            btCooldownSyncedMs: bt0.btCooldownSyncedMs, btActionLockUntilMs: bt0.btActionLockUntilMs,
+                            btPresentation: Some(prFinal), btPreEventSnap: bt0.btPreEventSnap,
+                            btActiveTimeline: bt0.btActiveTimeline, btTimelineElapsedMs: bt0.btTimelineElapsedMs,
+                            btAppliedHits: lastIdx + 1, btNextTimelineId: bt0.btNextTimelineId,
+                            btQueue: bt0.btQueue,
+                        }),
+                        MkBattleFxState {
+                            fxPlayerHpTrail: fx0.fxPlayerHpTrail, fxEnemyHpTrail: fx0.fxEnemyHpTrail,
+                            fxPlayerApAnim: fx0.fxPlayerApAnim, fxEnemyApAnim: fx0.fxEnemyApAnim,
+                            fxPlayerHitFlashMs: hitFlashP, fxEnemyHitFlashMs: hitFlashE,
+                            fxParticles: listAppend(fx0.fxParticles, newParts),
+                            fxShockPos: (wx / maxFloat(1.0, w), 1.0 - wy / maxFloat(1.0, hgt)),
+                            fxShockAge: 0.0,
+                            fxShockPower: if (m0.cmVp.vpReducedMotion) 0.0 else lastHit.rhStaging.spForce,
+                        }
+                    ));
+                    put(m1) *>>
+                    whenM(m0.cmVp.vpSoundOn, () -> {
+                        let kind =
+                            if (combatResEq(lastHit.rhResult, ResParry)) "parry"
+                            else if (combatResEq(lastHit.rhResult, ResHit)) "impact"
+                            else "whoosh";
+                        emitCmd(CmdPlaySfx(kind))
+                    })
+                }
+            },
+    }
+
+def startNextBattleItemM(): ClientM Void =
+    get() >>= (m0) ->
+    let bt0 = m0.cmBattle in
+    match bt0.btQueue {
+        Nil -> {
+            let alignedPres = match bt0.btSnap {
+                Some(bs) -> Some(snapToPresentation(bs)),
+                None -> bt0.btPresentation,
+            };
+            put(markDirty(withBattle(m0, MkBattleStateView {
+                btInBattle: bt0.btInBattle, btSnap: bt0.btSnap,
+                btCooldownSyncedMs: bt0.btCooldownSyncedMs, btActionLockUntilMs: bt0.btActionLockUntilMs,
+                btPresentation: alignedPres, btPreEventSnap: bt0.btPreEventSnap,
+                btActiveTimeline: None, btTimelineElapsedMs: 0.0,
+                btAppliedHits: 0, btNextTimelineId: bt0.btNextTimelineId,
+                btQueue: Nil,
+            })))
+        },
+        Cons(item, rest) -> {
+            let (pStyle, eStyle, pProf, eProf, pName, eName) = currentStylesAndProfiles(m0);
+            let tid = bt0.btNextTimelineId;
+            match item {
+                QCombat(ev, mPreSnap) -> {
+                    let actorSide = if (ev.ceActorName == eName && ev.ceActorName != pName) SideEnemy else SidePlayer;
+                    let targetSide =
+                        if (ev.ceTargetName == pName) SidePlayer
+                        else if (ev.ceTargetName == eName) SideEnemy
+                        else if (sideEq(actorSide, SidePlayer)) SideEnemy
+                        else SidePlayer;
+                    let logTxt = formatCombatLogText(m0.cmVp.vpLocale, ev);
+                    let tl = resolveCombatTimeline(
+                        m0.cmCatalog, ev, tid, actorSide, targetSide, logTxt,
+                        if (sideEq(actorSide, SidePlayer)) pProf else eProf,
+                        if (sideEq(targetSide, SidePlayer)) pProf else eProf,
+                        if (sideEq(actorSide, SidePlayer)) pStyle else eStyle,
+                        if (sideEq(targetSide, SidePlayer)) pStyle else eStyle
+                    );
+                    let pres0 = match (bt0.btPresentation, mPreSnap) {
+                        (Some(pr), _) -> pr,
+                        (None, Some(pr)) -> pr,
+                        (None, None) -> match bt0.btSnap {
+                            Some(bs) -> snapToPresentation(bs),
+                            None -> MkPresentationState {
+                                prPlayerHp: m0.cmHero.hsStats.psHp, prEnemyHp: 100,
+                                prPlayerQi: m0.cmHero.hsStats.psQi, prEnemyQi: 100,
+                                prPlayerEffects: Nil, prEnemyEffects: Nil,
+                            },
+                        },
+                    };
+                    let fx0 = m0.cmFx;
+                    let (pApNext, eApNext) = match bt0.btSnap {
+                        Some(bs) -> (
+                            if (sideEq(actorSide, SidePlayer)) bs.bsPlayer.cbApProgress else fx0.fxPlayerApAnim,
+                            if (sideEq(actorSide, SideEnemy)) bs.bsEnemy.cbApProgress else fx0.fxEnemyApAnim
+                        ),
+                        None -> (fx0.fxPlayerApAnim, fx0.fxEnemyApAnim),
+                    };
+                    let m1 = pushLog("combat", logTxt, withFx(
+                        withBattle(m0, MkBattleStateView {
+                            btInBattle: true, btSnap: bt0.btSnap,
+                            btCooldownSyncedMs: bt0.btCooldownSyncedMs, btActionLockUntilMs: bt0.btActionLockUntilMs,
+                            btPresentation: Some(pres0), btPreEventSnap: bt0.btPreEventSnap,
+                            btActiveTimeline: Some(tl), btTimelineElapsedMs: 0.0,
+                            btAppliedHits: 0, btNextTimelineId: tid + 1,
+                            btQueue: rest,
+                        }),
+                        MkBattleFxState {
+                            fxPlayerHpTrail: fx0.fxPlayerHpTrail, fxEnemyHpTrail: fx0.fxEnemyHpTrail,
+                            fxPlayerApAnim: pApNext, fxEnemyApAnim: eApNext,
+                            fxPlayerHitFlashMs: fx0.fxPlayerHitFlashMs, fxEnemyHitFlashMs: fx0.fxEnemyHitFlashMs,
+                            fxParticles: fx0.fxParticles, fxShockPos: fx0.fxShockPos,
+                            fxShockAge: fx0.fxShockAge, fxShockPower: fx0.fxShockPower,
+                        }
+                    ));
+                    put(m1) *>>
+                    (if (m1.cmVp.vpDocHidden) {
+                        commitHitsUpToM(tl.tlDurationMs + 1.0) *>>
+                        drainImmediatelyM()
+                    } else {
+                        whenM(m1.cmVp.vpSoundOn && tl.tlKind != "effect_tick", () -> emitCmd(CmdPlaySfx("whoosh"))) *>>
+                        commitHitsUpToM(0.0)
+                    })
+                },
+                QSettlement(atk, dfd, win) -> {
+                    let actorSide = if (win) SidePlayer else SideEnemy;
+                    let targetSide = if (win) SideEnemy else SidePlayer;
+                    let enemyName = if (atk == m0.cmAuth.auUsername) dfd else atk;
+                    let txt =
+                        if (isZh(m0.cmVp.vpLocale)) (if (win) "胜。与" else "败。与") + enemyName + "的交锋已分胜负。"
+                        else (if (win) "Victory against " else "Defeat against ") + enemyName + ".";
+                    let tl = resolveSettlementTimeline(m0.cmCatalog, tid, actorSide, targetSide, txt, pProf, eProf, pStyle, eStyle);
+                    let m1 = pushLog("combat", txt, withBattle(m0, MkBattleStateView {
+                        btInBattle: bt0.btInBattle, btSnap: bt0.btSnap,
+                        btCooldownSyncedMs: bt0.btCooldownSyncedMs, btActionLockUntilMs: bt0.btActionLockUntilMs,
+                        btPresentation: bt0.btPresentation, btPreEventSnap: bt0.btPreEventSnap,
+                        btActiveTimeline: Some(tl), btTimelineElapsedMs: 0.0,
+                        btAppliedHits: 1, btNextTimelineId: tid + 1,
+                        btQueue: rest,
+                    }));
+                    put(m1) *>>
+                    whenM(m1.cmVp.vpDocHidden, () -> drainImmediatelyM())
+                },
+            }
+        },
+    }
+
+def drainImmediatelyM(): ClientM Void =
+    get() >>= (m0) ->
+    let bt0 = m0.cmBattle in
+    match bt0.btActiveTimeline {
+        None ->
+            if (listIsEmpty(bt0.btQueue)) pure(())
+            else {
+                let (m1, _) = runClientM(startNextBattleItemM(), m0);
+                put(m1) *>> drainImmediatelyM()
+            },
+        Some(tl) -> {
+            let (m1, _) = runClientM(commitHitsUpToM(tl.tlDurationMs + 1.0), m0);
+            let bt1 = m1.cmBattle;
+            let m2 =
+                if (tl.tlKind == "settlement") {
+                    markDirty(withBattle(m1, MkBattleStateView {
+                        btInBattle: false, btSnap: bt1.btSnap,
+                        btCooldownSyncedMs: bt1.btCooldownSyncedMs, btActionLockUntilMs: bt1.btActionLockUntilMs,
+                        btPresentation: None, btPreEventSnap: bt1.btPreEventSnap,
+                        btActiveTimeline: None, btTimelineElapsedMs: bt1.btTimelineElapsedMs,
+                        btAppliedHits: bt1.btAppliedHits, btNextTimelineId: bt1.btNextTimelineId,
+                        btQueue: bt1.btQueue,
+                    }))
+                } else {
+                    markDirty(withBattle(m1, MkBattleStateView {
+                        btInBattle: bt1.btInBattle, btSnap: bt1.btSnap,
+                        btCooldownSyncedMs: bt1.btCooldownSyncedMs, btActionLockUntilMs: bt1.btActionLockUntilMs,
+                        btPresentation: bt1.btPresentation, btPreEventSnap: bt1.btPreEventSnap,
+                        btActiveTimeline: None, btTimelineElapsedMs: bt1.btTimelineElapsedMs,
+                        btAppliedHits: bt1.btAppliedHits, btNextTimelineId: bt1.btNextTimelineId,
+                        btQueue: bt1.btQueue,
+                    }))
+                };
+            put(m2) *>>
+            (if (listIsEmpty(m2.cmBattle.btQueue)) pure(())
+             else {
+                 let (m3, _) = runClientM(startNextBattleItemM(), m2);
+                 put(m3) *>> drainImmediatelyM()
+             })
+        },
+    }
+
+// ============================================================================
+// Story Sequencing & Server Message Application
+// ============================================================================
+
+def isStorySequencedMsg(msg: ServerMsg): Bool = match msg {
+    SmStory(_, _) -> true,
+    SmDialogue(_, _) -> true,
+    SmStoryTransition(_, _) -> true,
+    SmStorySequence(_) -> true,
+    SmStoryDelay(_) -> true,
+    _ -> false,
+}
+
+def setWorldStoryQueue(m: ClientModel, q: List ServerMsg, remMs: Float): ClientModel = {
+    let wv = m.cmWorld;
+    withWorld(m, MkWorldView {
+        wvRoomName: wv.wvRoomName, wvRoomDesc: wv.wvRoomDesc,
+        wvRoomChars: wv.wvRoomChars, wvRoomExits: wv.wvRoomExits,
+        wvMapOverview: wv.wvMapOverview, wvMapCache: wv.wvMapCache,
+        wvRequestedInit: wv.wvRequestedInit, wvStoryActive: wv.wvStoryActive,
+        wvStoryQueue: q, wvStoryDelayRemMs: remMs, wvTransitionBanner: wv.wvTransitionBanner,
+    })
+}
+
+def applyServerMessageNowM(msg: ServerMsg): ClientM Void =
+    get() >>= (m0) ->
+    match msg {
+        SmCreationConfig(cfg) -> {
+            let defGender = match listHead(cfg.cfgGenders) { Some((g, _)) -> g, None -> "female" };
+            let defOrig = match listHead(cfg.cfgOrigins) { Some(o) -> o.coId, None -> "" };
+            let defC1 = match listHead(cfg.cfgChildhood1) { Some(o) -> o.coId, None -> "" };
+            let defC2 = match listHead(cfg.cfgChildhood2) { Some(o) -> o.coId, None -> "" };
+            let au = m0.cmAuth;
+            put(markDirty(withAuth(m0, MkAuthState {
+                auConnected: au.auConnected, auConnecting: au.auConnecting,
+                auUsername: au.auUsername, auLastError: au.auLastError,
+                auLoginMode: au.auLoginMode, auCreateStep: au.auCreateStep,
+                auCreationCfg: Some(cfg),
+                auCreateChoice: MkCreationChoice {
+                    ccGender: defGender, ccOrigin: defOrig, ccChildhood1: defC1, ccChildhood2: defC2,
+                },
+                auDevReset: au.auDevReset,
+            })))
+        },
+        SmMove(dst) -> {
+            let txt = if (isZh(m0.cmVp.vpLocale)) "你进入了【" + dst + "】。" else "Entered [" + dst + "].";
+            let c = m0.cmCam;
+            let m1 = withCam(m0, MkCameraState {
+                camX: c.camX, camY: c.camY,
+                targetCamX: c.targetCamX, targetCamY: c.targetCamY,
+                panX: 0.0, panY: 0.0, mapZoom: c.mapZoom,
+            });
+            put(pushLog("move", txt, m1))
+        },
+        SmView(rName, rDesc, chars, exits) -> {
+            let findInMo = (mo: MapOverview) -> match listFind(mo.moRooms, (r) -> r.mrRoomName == rName) {
+                Some(r) -> Some(MkMapOverview {
+                    moMapId: mo.moMapId, moMapName: mo.moMapName,
+                    moCurrentPos: r.mrPos, moRooms: mo.moRooms, moEdges: mo.moEdges,
+                }),
+                None -> None,
+            };
+            let searchCache = () -> listHead(listFilterMap(mapElems(m0.cmWorld.wvMapCache), findInMo));
+            let (nextMo, switchedMap) = match m0.cmWorld.wvMapOverview {
+                Some(mo) -> match findInMo(mo) {
+                    Some(mo2) -> (Some(mo2), false),
+                    None -> match searchCache() {
+                        Some(mo2) -> (Some(mo2), true),
+                        None -> (Some(mo), false),
+                    },
+                },
+                None -> match searchCache() {
+                    Some(mo2) -> (Some(mo2), true),
+                    None -> (None, false),
+                },
+            };
+            let wv0 = m0.cmWorld;
+            let au0 = m0.cmAuth;
+            let ui0 = m0.cmUi;
+            let mBase = markDirty(withUi(
+                withAuth(
+                    withWorld(m0, MkWorldView {
+                        wvRoomName: rName, wvRoomDesc: rDesc,
+                        wvRoomChars: chars, wvRoomExits: exits,
+                        wvMapOverview: nextMo, wvMapCache: wv0.wvMapCache,
+                        wvRequestedInit: true, wvStoryActive: wv0.wvStoryActive,
+                        wvStoryQueue: wv0.wvStoryQueue, wvStoryDelayRemMs: wv0.wvStoryDelayRemMs,
+                        wvTransitionBanner: wv0.wvTransitionBanner,
+                    }),
+                    MkAuthState {
+                        auConnected: true, auConnecting: false,
+                        auUsername: au0.auUsername, auLastError: None,
+                        auLoginMode: au0.auLoginMode, auCreateStep: au0.auCreateStep,
+                        auCreationCfg: au0.auCreationCfg, auCreateChoice: au0.auCreateChoice,
+                        auDevReset: au0.auDevReset,
+                    }
+                ),
+                MkUiChrome {
+                    uiLogs: ui0.uiLogs, uiNextLogId: ui0.uiNextLogId, uiUnreadLogs: ui0.uiUnreadLogs,
+                    uiDesktopDrawer: ui0.uiDesktopDrawer, uiCharSubTab: ui0.uiCharSubTab, uiMobileTab: ui0.uiMobileTab,
+                    uiSelectedNpc: None, uiFocusedInput: ui0.uiFocusedInput, uiSayDraft: ui0.uiSayDraft,
+                    uiDirty: true,
+                }
+            ));
+            let m1 = updateCameraTarget(mBase);
+            let m2 = if (switchedMap) snapCamToTarget(m1) else m1;
+            put(m2) *>>
+            (if (!wv0.wvRequestedInit) {
+                emitCmds([
+                    CmdSendWs(encodePlayerAction(ActOther("map"))),
+                    CmdSendWs(encodePlayerAction(ActOther("quests"))),
+                    CmdSendWs(encodePlayerAction(ActOther("inventory"))),
+                    CmdSendWs(encodePlayerAction(ActOther("arts")))
+                ])
+            } else {
+                let prevMapId = match wv0.wvMapOverview { Some(m) -> m.moMapId, None -> "" };
+                let nextMapId = match nextMo { Some(m) -> m.moMapId, None -> "" };
+                let foundRoom = match nextMo { Some(m) -> optIsSome(findInMo(m)), None -> false };
+                whenM(switchedMap || nextMapId != prevMapId || !foundRoom, () ->
+                    emitCmd(CmdSendWs(encodePlayerAction(ActOther("map"))))
+                )
+            })
+        },
+        SmMapOverview(mo) -> {
+            let prevId = match m0.cmWorld.wvMapOverview { Some(old) -> old.moMapId, None -> "" };
+            let mapChanged = optIsNone(m0.cmWorld.wvMapOverview) || prevId != mo.moMapId;
+            let wv0 = m0.cmWorld;
+            let cacheNext = mapInsert(wv0.wvMapCache, mo.moMapId, mo);
+            let m1 = updateCameraTarget(markDirty(withWorld(m0, MkWorldView {
+                wvRoomName: wv0.wvRoomName, wvRoomDesc: wv0.wvRoomDesc,
+                wvRoomChars: wv0.wvRoomChars, wvRoomExits: wv0.wvRoomExits,
+                wvMapOverview: Some(mo), wvMapCache: cacheNext,
+                wvRequestedInit: wv0.wvRequestedInit, wvStoryActive: wv0.wvStoryActive,
+                wvStoryQueue: wv0.wvStoryQueue, wvStoryDelayRemMs: wv0.wvStoryDelayRemMs,
+                wvTransitionBanner: wv0.wvTransitionBanner,
+            })));
+            put(if (mapChanged) snapCamToTarget(m1) else m1)
+        },
+        SmAttack(atk, dfd) -> {
+            let txt = atk + (if (isZh(m0.cmVp.vpLocale)) " 对 " else " attacks ") + dfd + "！";
+            let bt0 = m0.cmBattle;
+            let ui0 = m0.cmUi;
+            let m1 = pushLog("combat", txt, withUi(
+                withBattle(m0, MkBattleStateView {
+                    btInBattle: true, btSnap: bt0.btSnap,
+                    btCooldownSyncedMs: bt0.btCooldownSyncedMs, btActionLockUntilMs: bt0.btActionLockUntilMs,
+                    btPresentation: bt0.btPresentation, btPreEventSnap: bt0.btPreEventSnap,
+                    btActiveTimeline: bt0.btActiveTimeline, btTimelineElapsedMs: bt0.btTimelineElapsedMs,
+                    btAppliedHits: bt0.btAppliedHits, btNextTimelineId: bt0.btNextTimelineId,
+                    btQueue: bt0.btQueue,
+                }),
+                MkUiChrome {
+                    uiLogs: ui0.uiLogs, uiNextLogId: ui0.uiNextLogId, uiUnreadLogs: ui0.uiUnreadLogs,
+                    uiDesktopDrawer: "", uiCharSubTab: ui0.uiCharSubTab, uiMobileTab: "world",
+                    uiSelectedNpc: None, uiFocusedInput: ui0.uiFocusedInput, uiSayDraft: ui0.uiSayDraft,
+                    uiDirty: true,
+                }
+            ));
+            put(m1)
+        },
+        SmBattleState(bs) -> {
+            let p = bs.bsPlayer;
+            let e = bs.bsEnemy;
+            let bt0 = m0.cmBattle;
+            let idleQueue = optIsNone(bt0.btActiveTimeline) && listIsEmpty(bt0.btQueue);
+            let fullPres = snapToPresentation(bs);
+            let nextPres =
+                if (idleQueue) Some(fullPres)
+                else match bt0.btPresentation {
+                    Some(pr) -> Some(pr),
+                    None -> Some(fullPres),
+                };
+            let curPHp = match nextPres { Some(pr) -> pr.prPlayerHp, None -> p.cbHp };
+            let curEHp = match nextPres { Some(pr) -> pr.prEnemyHp, None -> e.cbHp };
+            let pRatio = intToFloat(curPHp) / intToFloat(maxInt(1, p.cbMaxHp));
+            let eRatio = intToFloat(curEHp) / intToFloat(maxInt(1, e.cbMaxHp));
+            let lockUntil = m0.cmVp.vpClockMs + maxFloat(0.0, bs.bsActionLock) * 1000.0;
+            let fx0 = m0.cmFx;
+            put(markDirty(withFx(
+                withBattle(m0, MkBattleStateView {
+                    btInBattle: true,
+                    btSnap: Some(bs),
+                    btCooldownSyncedMs: m0.cmVp.vpClockMs,
+                    btActionLockUntilMs: lockUntil,
+                    btPresentation: nextPres,
+                    btPreEventSnap: Some(fullPres),
+                    btActiveTimeline: bt0.btActiveTimeline,
+                    btTimelineElapsedMs: bt0.btTimelineElapsedMs,
+                    btAppliedHits: bt0.btAppliedHits,
+                    btNextTimelineId: bt0.btNextTimelineId,
+                    btQueue: bt0.btQueue,
+                }),
+                MkBattleFxState {
+                    fxPlayerHpTrail: maxFloat(fx0.fxPlayerHpTrail, pRatio),
+                    fxEnemyHpTrail: maxFloat(fx0.fxEnemyHpTrail, eRatio),
+                    fxPlayerApAnim: p.cbApProgress,
+                    fxEnemyApAnim: e.cbApProgress,
+                    fxPlayerHitFlashMs: fx0.fxPlayerHitFlashMs,
+                    fxEnemyHitFlashMs: fx0.fxEnemyHitFlashMs,
+                    fxParticles: fx0.fxParticles,
+                    fxShockPos: fx0.fxShockPos,
+                    fxShockAge: fx0.fxShockAge,
+                    fxShockPower: fx0.fxShockPower,
+                }
+            )))
+        },
+        SmCombatEvent(ev) -> {
+            let bt0 = m0.cmBattle;
+            let mQueued = withBattle(m0, MkBattleStateView {
+                btInBattle: true, btSnap: bt0.btSnap,
+                btCooldownSyncedMs: bt0.btCooldownSyncedMs, btActionLockUntilMs: bt0.btActionLockUntilMs,
+                btPresentation: bt0.btPresentation, btPreEventSnap: bt0.btPreEventSnap,
+                btActiveTimeline: bt0.btActiveTimeline, btTimelineElapsedMs: bt0.btTimelineElapsedMs,
+                btAppliedHits: bt0.btAppliedHits, btNextTimelineId: bt0.btNextTimelineId,
+                btQueue: listAppend(bt0.btQueue, [QCombat(ev, bt0.btPreEventSnap)]),
+            });
+            put(mQueued) *>>
+            (if (mQueued.cmVp.vpDocHidden) drainImmediatelyM()
+             else if (optIsSome(mQueued.cmBattle.btActiveTimeline)) modify(markDirty)
+             else startNextBattleItemM())
+        },
+        SmCombatSettlement(atk, dfd, win) -> {
+            let bt0 = m0.cmBattle;
+            let mQueued = withBattle(m0, MkBattleStateView {
+                btInBattle: bt0.btInBattle, btSnap: bt0.btSnap,
+                btCooldownSyncedMs: bt0.btCooldownSyncedMs, btActionLockUntilMs: bt0.btActionLockUntilMs,
+                btPresentation: bt0.btPresentation, btPreEventSnap: bt0.btPreEventSnap,
+                btActiveTimeline: bt0.btActiveTimeline, btTimelineElapsedMs: bt0.btTimelineElapsedMs,
+                btAppliedHits: bt0.btAppliedHits, btNextTimelineId: bt0.btNextTimelineId,
+                btQueue: listAppend(bt0.btQueue, [QSettlement(atk, dfd, win)]),
+            });
+            put(mQueued) *>>
+            (if (mQueued.cmVp.vpDocHidden) drainImmediatelyM()
+             else if (optIsSome(mQueued.cmBattle.btActiveTimeline)) modify(markDirty)
+             else startNextBattleItemM())
+        },
+        SmActiveSkillFailure(reason) -> {
+            let loc = m0.cmVp.vpLocale;
+            let txt = match reason {
+                FailNeedAp(req, cur) ->
+                    if (isZh(loc)) "行动不足：需要 " + intToStr(req) + "，当前 " + intToStr(cur) + "。"
+                    else "Need " + intToStr(req) + " AP.",
+                FailNeedQi(req, cur) ->
+                    trParams(loc, "error.not_enough_qi", [("required", intToStr(req)), ("current", intToStr(cur))]),
+                FailCooldown(s) ->
+                    if (isZh(loc)) "招式仍在冷却，还需 " + intToStr(s) + " 秒。"
+                    else "On cooldown: " + intToStr(s) + "s.",
+                FailMissingStatus(sts) ->
+                    (if (isZh(loc)) "缺少前置状态：" else "Missing status: ") + strJoin(sts, "、"),
+                FailUnavailable(sid) ->
+                    (if (isZh(loc)) "当前无法施展：" else "Unavailable: ") + sid,
+            };
+            put(pushLog("error", txt, m0))
+        },
+        SmDialogue(who, txt) -> put(pushLog("dialogue", who + "：「" + txt + "」", m0)),
+        SmStory(speaker, txt) -> {
+            let pre = if (strLen(speaker) == 0) "" else "【" + speaker + "】";
+            put(pushLog("story", pre + txt, m0))
+        },
+        SmStorySequence(active) -> {
+            let wv0 = m0.cmWorld;
+            put(markDirty(withWorld(m0, MkWorldView {
+                wvRoomName: wv0.wvRoomName, wvRoomDesc: wv0.wvRoomDesc,
+                wvRoomChars: wv0.wvRoomChars, wvRoomExits: wv0.wvRoomExits,
+                wvMapOverview: wv0.wvMapOverview, wvMapCache: wv0.wvMapCache,
+                wvRequestedInit: wv0.wvRequestedInit, wvStoryActive: active,
+                wvStoryQueue: wv0.wvStoryQueue, wvStoryDelayRemMs: wv0.wvStoryDelayRemMs,
+                wvTransitionBanner: wv0.wvTransitionBanner,
+            })))
+        },
+        SmStoryDelay(ms) ->
+            if (m0.cmVp.vpDocHidden || ms <= 0) pure(())
+            else put(setWorldStoryQueue(m0, m0.cmWorld.wvStoryQueue, intToFloat(ms))),
+        SmStoryTransition(txt, durMs) -> {
+            let wv0 = m0.cmWorld;
+            let m1 = withWorld(m0, MkWorldView {
+                wvRoomName: wv0.wvRoomName, wvRoomDesc: wv0.wvRoomDesc,
+                wvRoomChars: wv0.wvRoomChars, wvRoomExits: wv0.wvRoomExits,
+                wvMapOverview: wv0.wvMapOverview, wvMapCache: wv0.wvMapCache,
+                wvRequestedInit: wv0.wvRequestedInit, wvStoryActive: wv0.wvStoryActive,
+                wvStoryQueue: wv0.wvStoryQueue, wvStoryDelayRemMs: wv0.wvStoryDelayRemMs,
+                wvTransitionBanner: Some((txt, intToFloat(maxInt(800, durMs)))),
+            });
+            put(pushLog("story", "—— " + txt + " ——", m1))
+        },
+        SmSay(who, txt) -> put(pushLog("say", who + "：「" + txt + "」", m0)),
+        SmUseItem(_, txt) -> put(pushLog("reward", txt, m0)),
+        SmPlayerStats(st) -> {
+            let bt0 = m0.cmBattle;
+            let shouldExitBattle =
+                st.psStatus != "in_battle"
+                    && pageEq(m0.cmVp.vpPage, PageGame)
+                    && optIsNone(bt0.btActiveTimeline)
+                    && listIsEmpty(bt0.btQueue);
+            let hs0 = m0.cmHero;
+            let au0 = m0.cmAuth;
+            let m1 = markDirty(withBattle(
+                withAuth(
+                    withHero(m0, MkHeroSheets {
+                        hsStats: st,
+                        hsStatsSyncedAtMs: m0.cmVp.vpClockMs,
+                        hsMoney: hs0.hsMoney,
+                        hsInventory: hs0.hsInventory,
+                        hsArts: hs0.hsArts,
+                        hsQuests: hs0.hsQuests,
+                    }),
+                    MkAuthState {
+                        auConnected: true, auConnecting: false,
+                        auUsername: au0.auUsername, auLastError: au0.auLastError,
+                        auLoginMode: au0.auLoginMode, auCreateStep: au0.auCreateStep,
+                        auCreationCfg: au0.auCreationCfg, auCreateChoice: au0.auCreateChoice,
+                        auDevReset: au0.auDevReset,
+                    }
+                ),
+                MkBattleStateView {
+                    btInBattle: if (shouldExitBattle) false else bt0.btInBattle,
+                    btSnap: bt0.btSnap,
+                    btCooldownSyncedMs: bt0.btCooldownSyncedMs,
+                    btActionLockUntilMs: bt0.btActionLockUntilMs,
+                    btPresentation: bt0.btPresentation,
+                    btPreEventSnap: bt0.btPreEventSnap,
+                    btActiveTimeline: bt0.btActiveTimeline,
+                    btTimelineElapsedMs: bt0.btTimelineElapsedMs,
+                    btAppliedHits: bt0.btAppliedHits,
+                    btNextTimelineId: bt0.btNextTimelineId,
+                    btQueue: bt0.btQueue,
+                }
+            ));
+            put(m1)
+        },
+        SmInventory(money, items) -> {
+            let hs0 = m0.cmHero;
+            put(markDirty(withHero(m0, MkHeroSheets {
+                hsStats: hs0.hsStats, hsStatsSyncedAtMs: hs0.hsStatsSyncedAtMs,
+                hsMoney: money, hsInventory: items, hsArts: hs0.hsArts, hsQuests: hs0.hsQuests,
+            })))
+        },
+        SmArts(arts) -> {
+            let hs0 = m0.cmHero;
+            put(markDirty(withHero(m0, MkHeroSheets {
+                hsStats: hs0.hsStats, hsStatsSyncedAtMs: hs0.hsStatsSyncedAtMs,
+                hsMoney: hs0.hsMoney, hsInventory: hs0.hsInventory, hsArts: arts, hsQuests: hs0.hsQuests,
+            })))
+        },
+        SmQuests(qs) -> {
+            let hs0 = m0.cmHero;
+            put(markDirty(withHero(m0, MkHeroSheets {
+                hsStats: hs0.hsStats, hsStatsSyncedAtMs: hs0.hsStatsSyncedAtMs,
+                hsMoney: hs0.hsMoney, hsInventory: hs0.hsInventory, hsArts: hs0.hsArts, hsQuests: qs,
+            })))
+        },
+        SmReward(rs) -> {
+            let parts = listMap(rs, (r) -> r.rwName + " ×" + intToStr(r.rwAmount));
+            let txt = (if (isZh(m0.cmVp.vpLocale)) "获得奖励：" else "Reward: ") + strJoin(parts, "、");
+            put(pushLog("reward", txt, m0))
+        },
+        SmSystem(code, params) ->
+            put(pushLog("system", formatSystemMsg(m0.cmVp.vpLocale, code, params), m0)),
+        SmError(code, params) -> {
+            let txt = formatErrorMsg(m0.cmVp.vpLocale, code, params);
+            let au0 = m0.cmAuth;
+            let m1 = withAuth(m0, MkAuthState {
+                auConnected: au0.auConnected, auConnecting: false,
+                auUsername: au0.auUsername, auLastError: Some(txt),
+                auLoginMode: au0.auLoginMode, auCreateStep: au0.auCreateStep,
+                auCreationCfg: au0.auCreationCfg, auCreateChoice: au0.auCreateChoice,
+                auDevReset: au0.auDevReset,
+            });
+            put(pushLog("error", txt, m1))
+        },
+        SmIgnored(_) -> pure(()),
+    }
+
+def drainStoryQueueM(): ClientM Void =
+    get() >>= (m0) ->
+    match m0.cmWorld.wvStoryQueue {
+        Nil -> put(setWorldStoryQueue(m0, Nil, 0.0)),
+        Cons(sm, rest) -> {
+            put(setWorldStoryQueue(m0, rest, 0.0)) *>>
+            (match sm {
+                SmStoryDelay(_) -> pure(()),
+                _ -> applyServerMessageNowM(sm),
+            }) *>>
+            drainStoryQueueM()
+        },
+    }
+
+def popStoryQueueLoopM(): ClientM Void =
+    get() >>= (m) ->
+    match m.cmWorld.wvStoryQueue {
+        Nil -> pure(()),
+        Cons(SmStoryDelay(ms), rest) ->
+            if (ms > 0) put(setWorldStoryQueue(m, rest, intToFloat(ms)))
+            else put(setWorldStoryQueue(m, rest, 0.0)) *>> popStoryQueueLoopM(),
+        Cons(sm, rest) ->
+            put(setWorldStoryQueue(m, rest, 0.0)) *>>
+            applyServerMessageNowM(sm) *>>
+            get() >>= (mAfter) ->
+            if (mAfter.cmWorld.wvStoryDelayRemMs > 0.0) pure(())
+            else popStoryQueueLoopM(),
+    }
+
+def stepStoryQueueM(dtMs: Float): ClientM Void =
+    get() >>= (m0) ->
+    let rem = m0.cmWorld.wvStoryDelayRemMs in
+    if (rem <= 0.0 && listIsEmpty(m0.cmWorld.wvStoryQueue)) pure(())
+    else if (rem > dtMs) put(setWorldStoryQueue(m0, m0.cmWorld.wvStoryQueue, rem - dtMs))
+    else put(setWorldStoryQueue(m0, m0.cmWorld.wvStoryQueue, 0.0)) *>> popStoryQueueLoopM()
+
+pub def applyServerMessage(msg: ServerMsg, m0: ClientModel): (ClientModel, List ClientCmd) =
+    if (!m0.cmVp.vpDocHidden
+        && isStorySequencedMsg(msg)
+        && (m0.cmWorld.wvStoryDelayRemMs > 0.0 || !listIsEmpty(m0.cmWorld.wvStoryQueue))) {
+        (setWorldStoryQueue(m0, listAppend(m0.cmWorld.wvStoryQueue, [msg]), m0.cmWorld.wvStoryDelayRemMs), Nil)
+    } else {
+        runClientM(applyServerMessageNowM(msg), m0)
+    }
+
+pub def setDocumentHidden(hidden: Bool, m0: ClientModel): ClientModel = {
+    let vp0 = m0.cmVp;
+    let m1 = markDirty(withVp(m0, MkViewportState {
+        vpPage: vp0.vpPage, vpLocale: vp0.vpLocale, vpReducedMotion: vp0.vpReducedMotion,
+        vpDocHidden: hidden, vpSoundOn: vp0.vpSoundOn, vpLookStyle: vp0.vpLookStyle,
+        vpWidth: vp0.vpWidth, vpHeight: vp0.vpHeight, vpClockMs: vp0.vpClockMs,
+        vpLastSyncTickMs: vp0.vpLastSyncTickMs, vpWasmStepMs: vp0.vpWasmStepMs, vpDrawCmdCount: vp0.vpDrawCmdCount,
+    }));
+    if (hidden) {
+        let (m2, _) = runClientM(drainStoryQueueM() *>> drainImmediatelyM(), m1);
+        m2
+    } else m1
+}
+
+// ============================================================================
+// Per-Frame Simulation Step (`stepClientFrame`)
+// ============================================================================
+
+def stepBattleTimelineM(stepMs: Float): ClientM Void =
+    get() >>= (m0) ->
+    let bt0 = m0.cmBattle in
+    match bt0.btActiveTimeline {
+        None -> pure(()),
+        Some(tl) -> {
+            let nextElapsed = bt0.btTimelineElapsedMs + stepMs;
+            let clamped = minFloat(tl.tlDurationMs, nextElapsed);
+            put(withBattle(m0, MkBattleStateView {
+                btInBattle: bt0.btInBattle, btSnap: bt0.btSnap,
+                btCooldownSyncedMs: bt0.btCooldownSyncedMs, btActionLockUntilMs: bt0.btActionLockUntilMs,
+                btPresentation: bt0.btPresentation, btPreEventSnap: bt0.btPreEventSnap,
+                btActiveTimeline: bt0.btActiveTimeline, btTimelineElapsedMs: clamped,
+                btAppliedHits: bt0.btAppliedHits, btNextTimelineId: bt0.btNextTimelineId,
+                btQueue: bt0.btQueue,
+            })) *>>
+            commitHitsUpToM(clamped) *>>
+            (if (nextElapsed < tl.tlDurationMs) pure(())
+             else if (tl.tlKind == "settlement") {
+                 get() >>= (m1) -> {
+                     let bt1 = m1.cmBattle;
+                     let mDone = markDirty(withBattle(m1, MkBattleStateView {
+                         btInBattle: false, btSnap: None,
+                         btCooldownSyncedMs: bt1.btCooldownSyncedMs, btActionLockUntilMs: bt1.btActionLockUntilMs,
+                         btPresentation: None, btPreEventSnap: bt1.btPreEventSnap,
+                         btActiveTimeline: None, btTimelineElapsedMs: 0.0,
+                         btAppliedHits: bt1.btAppliedHits, btNextTimelineId: bt1.btNextTimelineId,
+                         btQueue: bt1.btQueue,
+                     }));
+                     put(mDone) *>>
+                     whenM(pageEq(mDone.cmVp.vpPage, PageGame), () ->
+                         emitCmd(CmdSendWs(encodePlayerAction(ActOther("view"))))
+                     )
+                 }
+             } else {
+                 get() >>= (m1) -> {
+                     let bt1 = m1.cmBattle;
+                     put(withBattle(m1, MkBattleStateView {
+                         btInBattle: bt1.btInBattle, btSnap: bt1.btSnap,
+                         btCooldownSyncedMs: bt1.btCooldownSyncedMs, btActionLockUntilMs: bt1.btActionLockUntilMs,
+                         btPresentation: bt1.btPresentation, btPreEventSnap: bt1.btPreEventSnap,
+                         btActiveTimeline: None, btTimelineElapsedMs: 0.0,
+                         btAppliedHits: bt1.btAppliedHits, btNextTimelineId: bt1.btNextTimelineId,
+                         btQueue: bt1.btQueue,
+                     })) *>>
+                     startNextBattleItemM()
+                 }
+             })
+        },
+    }
+
+pub def stepClientFrame(rawDtMs: Float, rawW: Float, rawH: Float, m0: ClientModel): (ClientModel, List ClientCmd) = {
+    let dtSec = clampFloat(0.001, 0.25, rawDtMs / 1000.0);
+    let dtMs = dtSec * 1000.0;
+    let w = maxFloat(320.0, rawW);
+    let h = maxFloat(220.0, rawH);
+    let vp0 = m0.cmVp;
+    let nowMs = vp0.vpClockMs + dtMs;
+
+    let camAlpha = if (vp0.vpReducedMotion) 1.0 else 1.0 - exp(-14.0 * dtSec);
+    let c0 = m0.cmCam;
+    let cx1 = c0.camX + (c0.targetCamX - c0.camX) * camAlpha;
+    let cy1 = c0.camY + (c0.targetCamY - c0.camY) * camAlpha;
+
+    let mInit = withVp(m0, MkViewportState {
+        vpPage: vp0.vpPage, vpLocale: vp0.vpLocale, vpReducedMotion: vp0.vpReducedMotion,
+        vpDocHidden: vp0.vpDocHidden, vpSoundOn: vp0.vpSoundOn, vpLookStyle: vp0.vpLookStyle,
+        vpWidth: w, vpHeight: h, vpClockMs: nowMs,
+        vpLastSyncTickMs: vp0.vpLastSyncTickMs, vpWasmStepMs: vp0.vpWasmStepMs, vpDrawCmdCount: vp0.vpDrawCmdCount,
+    });
+
+    let effDtMs = if (mInit.cmLab.labPaused) 0.0 else dtMs * mInit.cmLab.labSpeed;
+    let (mAfterTl, cmds) = runClientM(stepStoryQueueM(dtMs) *>> stepBattleTimelineM(effDtMs), mInit);
+
+    let pCurRatio = match (mAfterTl.cmBattle.btPresentation, mAfterTl.cmBattle.btSnap) {
+        (Some(pr), Some(bs)) -> intToFloat(pr.prPlayerHp) / intToFloat(maxInt(1, bs.bsPlayer.cbMaxHp)),
+        _ -> intToFloat(mAfterTl.cmHero.hsStats.psHp) / intToFloat(maxInt(1, mAfterTl.cmHero.hsStats.psMaxHp)),
+    };
+    let eCurRatio = match (mAfterTl.cmBattle.btPresentation, mAfterTl.cmBattle.btSnap) {
+        (Some(pr), Some(bs)) -> intToFloat(pr.prEnemyHp) / intToFloat(maxInt(1, bs.bsEnemy.cbMaxHp)),
+        _ -> 1.0,
+    };
+    let stepTrail = (cur: Float, tgt: Float) -> if (cur > tgt) maxFloat(tgt, cur - dtSec * 0.42) else tgt;
+    let fxA = mAfterTl.cmFx;
+    let pTrail1 = stepTrail(fxA.fxPlayerHpTrail, pCurRatio);
+    let eTrail1 = stepTrail(fxA.fxEnemyHpTrail, eCurRatio);
+
+    let (pAgi, eAgi) = match mAfterTl.cmBattle.btSnap {
+        Some(bs) -> (intToFloat(bs.bsPlayer.cbAgility), intToFloat(bs.bsEnemy.cbAgility)),
+        None -> (intToFloat(mAfterTl.cmHero.hsStats.psAgility), apBaselineAgility()),
+    };
+    let canGrowAp =
+        mAfterTl.cmBattle.btInBattle
+            && !mAfterTl.cmLab.labPaused
+            && optIsNone(mAfterTl.cmBattle.btActiveTimeline)
+            && nowMs >= mAfterTl.cmBattle.btActionLockUntilMs;
+    let stepAp = (cur: Float, agi: Float) ->
+        if (canGrowAp) {
+            if (cur >= 99.9) 100.0
+            else minFloat(99.0, cur + maxFloat(1.0, agi) * apGainPerAgilitySecond() * dtSec)
+        } else cur;
+    let pAp1 = stepAp(fxA.fxPlayerApAnim, pAgi);
+    let eAp1 = stepAp(fxA.fxEnemyApAnim, eAgi);
+
+    let pFlash1 = maxFloat(0.0, fxA.fxPlayerHitFlashMs - dtMs);
+    let eFlash1 = maxFloat(0.0, fxA.fxEnemyHitFlashMs - dtMs);
+    let flashEnded =
+        (fxA.fxPlayerHitFlashMs > 0.0 && pFlash1 <= 0.0)
+            || (fxA.fxEnemyHitFlashMs > 0.0 && eFlash1 <= 0.0);
+
+    let wvA = mAfterTl.cmWorld;
+    let nextBanner = match wvA.wvTransitionBanner {
+        None -> None,
+        Some((txt, remMs)) -> {
+            let rNext = remMs - dtMs;
+            if (rNext <= 0.0) None else Some((txt, rNext))
+        },
+    };
+    let bannerChanged = optIsSome(wvA.wvTransitionBanner) != optIsSome(nextBanner);
+
+    let liveParts = listFilter(
+        listMap(fxA.fxParticles, (p) -> MkInkParticle {
+            ipX: p.ipX + p.ipVx * dtSec,
+            ipY: p.ipY + p.ipVy * dtSec,
+            ipVx: p.ipVx * (1.0 - 3.2 * dtSec),
+            ipVy: p.ipVy + 340.0 * dtSec,
+            ipRadius: p.ipRadius,
+            ipLife: p.ipLife + dtSec,
+            ipMaxLife: p.ipMaxLife,
+            ipColor: p.ipColor,
+        }),
+        (p) -> p.ipLife < p.ipMaxLife
+    );
+
+    let hasLiveTimers =
+        mAfterTl.cmBattle.btInBattle
+            || optIsSome(mAfterTl.cmHero.hsStats.psBusy)
+            || mAfterTl.cmHero.hsStats.psInjuredSeconds > 0;
+    let syncIntervalMs = if (mAfterTl.cmBattle.btInBattle) 80.0 else 180.0;
+    let vpA = mAfterTl.cmVp;
+    let tickSyncDue = hasLiveTimers && (nowMs - vpA.vpLastSyncTickMs >= syncIntervalMs);
+    let nextSyncTick = if (tickSyncDue) nowMs else vpA.vpLastSyncTickMs;
+
+    let cA = mAfterTl.cmCam;
+    let mOut = withFx(
+        withWorld(
+            withCam(
+                withVp(mAfterTl, MkViewportState {
+                    vpPage: vpA.vpPage, vpLocale: vpA.vpLocale, vpReducedMotion: vpA.vpReducedMotion,
+                    vpDocHidden: vpA.vpDocHidden, vpSoundOn: vpA.vpSoundOn, vpLookStyle: vpA.vpLookStyle,
+                    vpWidth: vpA.vpWidth, vpHeight: vpA.vpHeight, vpClockMs: vpA.vpClockMs,
+                    vpLastSyncTickMs: nextSyncTick, vpWasmStepMs: vpA.vpWasmStepMs, vpDrawCmdCount: vpA.vpDrawCmdCount,
+                }),
+                MkCameraState {
+                    camX: cx1, camY: cy1,
+                    targetCamX: cA.targetCamX, targetCamY: cA.targetCamY,
+                    panX: cA.panX, panY: cA.panY, mapZoom: cA.mapZoom,
+                }
+            ),
+            MkWorldView {
+                wvRoomName: wvA.wvRoomName, wvRoomDesc: wvA.wvRoomDesc,
+                wvRoomChars: wvA.wvRoomChars, wvRoomExits: wvA.wvRoomExits,
+                wvMapOverview: wvA.wvMapOverview, wvMapCache: wvA.wvMapCache,
+                wvRequestedInit: wvA.wvRequestedInit, wvStoryActive: wvA.wvStoryActive,
+                wvStoryQueue: wvA.wvStoryQueue, wvStoryDelayRemMs: wvA.wvStoryDelayRemMs,
+                wvTransitionBanner: nextBanner,
+            }
+        ),
+        MkBattleFxState {
+            fxPlayerHpTrail: pTrail1, fxEnemyHpTrail: eTrail1,
+            fxPlayerApAnim: pAp1, fxEnemyApAnim: eAp1,
+            fxPlayerHitFlashMs: pFlash1, fxEnemyHitFlashMs: eFlash1,
+            fxParticles: liveParts,
+            fxShockPos: fxA.fxShockPos,
+            fxShockAge: minFloat(99.0, fxA.fxShockAge + dtSec),
+            fxShockPower: fxA.fxShockPower,
+        }
+    );
+
+    let finalM = if (bannerChanged || flashEnded || tickSyncDue) markDirty(mOut) else mOut;
+    (finalM, cmds)
+}
+
+// ============================================================================
+// Pointer, Scroll, IME, Keyboard & Camera Controls
+// ============================================================================
+
+pub def isCameraPanned(m: ClientModel): Bool = {
+    let c = m.cmCam;
+    absFloat(c.panX) > 6.0 || absFloat(c.panY) > 6.0 || absFloat(c.mapZoom - 1.0) > 0.04
+}
+
+pub def panCameraBy(dx: Float, dy: Float, m: ClientModel): ClientModel =
+    if (m.cmBattle.btInBattle || !pageEq(m.cmVp.vpPage, PageGame)) m
+    else {
+        let c = m.cmCam;
+        let m1 = withCam(m, MkCameraState {
+            camX: c.camX, camY: c.camY,
+            targetCamX: c.targetCamX, targetCamY: c.targetCamY,
+            panX: clampFloat(-900.0, 900.0, c.panX + dx),
+            panY: clampFloat(-700.0, 700.0, c.panY + dy),
+            mapZoom: c.mapZoom,
+        });
+        if (isCameraPanned(m1) != isCameraPanned(m)) markDirty(m1) else m1
+    }
+
+pub def zoomCameraBy(factor: Float, m: ClientModel): ClientModel =
+    if (m.cmBattle.btInBattle || !pageEq(m.cmVp.vpPage, PageGame)) m
+    else {
+        let c = m.cmCam;
+        let m1 = withCam(m, MkCameraState {
+            camX: c.camX, camY: c.camY,
+            targetCamX: c.targetCamX, targetCamY: c.targetCamY,
+            panX: c.panX, panY: c.panY,
+            mapZoom: clampFloat(0.58, 1.75, c.mapZoom * factor),
+        });
+        if (isCameraPanned(m1) != isCameraPanned(m)) markDirty(m1) else m1
+    }
+
+pub def resetCameraPan(m: ClientModel): ClientModel = {
+    let c = m.cmCam;
+    markDirty(withCam(m, MkCameraState {
+        camX: c.camX, camY: c.camY,
+        targetCamX: c.targetCamX, targetCamY: c.targetCamY,
+        panX: 0.0, panY: 0.0, mapZoom: 1.0,
+    }))
+}
+
+def findHit(x: Float, y: Float, hbs: List CanvasHitbox): Option CanvasHitbox =
+    listFind(listRev(hbs), (hb) ->
+        x >= hb.chX && x <= hb.chX + hb.chW && y >= hb.chY && y <= hb.chY + hb.chH
+    )
+
+def findScrollZone(x: Float, y: Float, szs: List ScrollZone): Option ScrollTarget =
+    match listFind(listRev(szs), (sz) ->
+        x >= sz.szX && x <= sz.szX + sz.szW && y >= sz.szY && y <= sz.szY + sz.szH
+    ) {
+        Some(sz) -> Some(sz.szTarget),
+        None -> None,
+    }
+
+pub def handlePointerMove(x: Float, y: Float, m: ClientModel): (ClientModel, List ClientCmd) = {
+    let mHit = findHit(x, y, m.cmScroll.shHitboxes);
+    let nextTarget = match mHit { Some(hb) -> Some(hb.chTarget), None -> None };
+    let cursor = match mHit { Some(hb) -> hb.chCursor, None -> "default" };
+    let sh = m.cmScroll;
+    let changed = !optHitEq(nextTarget, sh.shHovered);
+    let m1 = withScroll(m, MkScrollHitState {
+        shLogScroll: sh.shLogScroll, shLogMaxScroll: sh.shLogMaxScroll, shLogStickBottom: sh.shLogStickBottom,
+        shDrawerScroll: sh.shDrawerScroll, shDrawerMaxScroll: sh.shDrawerMaxScroll,
+        shOnboardScroll: sh.shOnboardScroll, shOnboardMaxScroll: sh.shOnboardMaxScroll,
+        shNpcScroll: sh.shNpcScroll, shNpcMaxScroll: sh.shNpcMaxScroll,
+        shHovered: nextTarget, shHitboxes: sh.shHitboxes, shScrollZones: sh.shScrollZones,
+    });
+    (m1, if (changed) [CmdSetCursor(cursor)] else Nil)
+}
+
+def setFocusedInput(m: ClientModel, fOpt: Option String): ClientModel = {
+    let u = m.cmUi;
+    withUi(m, MkUiChrome {
+        uiLogs: u.uiLogs, uiNextLogId: u.uiNextLogId, uiUnreadLogs: u.uiUnreadLogs,
+        uiDesktopDrawer: u.uiDesktopDrawer, uiCharSubTab: u.uiCharSubTab, uiMobileTab: u.uiMobileTab,
+        uiSelectedNpc: u.uiSelectedNpc, uiFocusedInput: fOpt, uiSayDraft: u.uiSayDraft,
+        uiDirty: u.uiDirty,
+    })
+}
+
+def optStrEq(a: Option String, b: Option String): Bool = match (a, b) {
+    (None, None) -> true,
+    (Some(x), Some(y)) -> x == y,
+    _ -> false,
+}
+
+def blurIfOther(m0: ClientModel, targetInput: Option String): (ClientModel, List ClientCmd) =
+    if (!optStrEq(m0.cmUi.uiFocusedInput, targetInput) && optIsSome(m0.cmUi.uiFocusedInput)) {
+        (setFocusedInput(m0, None), [CmdBlurInput])
+    } else (m0, Nil)
+
+pub def handlePointerClick(x: Float, y: Float, m0: ClientModel): (ClientModel, List ClientCmd) =
+    match findHit(x, y, m0.cmScroll.shHitboxes) {
+        None ->
+            if (optIsSome(m0.cmUi.uiFocusedInput)) (setFocusedInput(m0, None), [CmdBlurInput])
+            else (m0, Nil),
+        Some(hb) -> match hb.chTarget {
+            HitSwallow -> blurIfOther(m0, None),
+            HitFocusInput(inpId) -> {
+                let curVal = if (inpId == "login") m0.cmAuth.auUsername else m0.cmUi.uiSayDraft;
+                (
+                    setFocusedInput(m0, Some(inpId)),
+                    [CmdFocusInput(inpId, curVal, hb.chX, hb.chY, hb.chW, hb.chH)]
+                )
+            },
+            HitExit(dir) -> {
+                let (m1, bc) = blurIfOther(m0, None);
+                if (m1.cmAuth.auConnected && !m1.cmWorld.wvStoryActive) {
+                    (m1, listAppend(bc, [CmdSendWs(encodePlayerAction(ActGo(dir)))]))
+                } else (m1, bc)
+            },
+            HitNpc(cid) -> {
+                let (m1, bc) = blurIfOther(m0, None);
+                let nextSel = if (optStrEq(m1.cmUi.uiSelectedNpc, Some(cid))) None else Some(cid);
+                let u = m1.cmUi;
+                let sh = m1.cmScroll;
+                let m2 = withScroll(
+                    withUi(m1, MkUiChrome {
+                        uiLogs: u.uiLogs, uiNextLogId: u.uiNextLogId, uiUnreadLogs: u.uiUnreadLogs,
+                        uiDesktopDrawer: u.uiDesktopDrawer, uiCharSubTab: u.uiCharSubTab, uiMobileTab: u.uiMobileTab,
+                        uiSelectedNpc: nextSel, uiFocusedInput: u.uiFocusedInput, uiSayDraft: u.uiSayDraft,
+                        uiDirty: true,
+                    }),
+                    MkScrollHitState {
+                        shLogScroll: sh.shLogScroll, shLogMaxScroll: sh.shLogMaxScroll, shLogStickBottom: sh.shLogStickBottom,
+                        shDrawerScroll: sh.shDrawerScroll, shDrawerMaxScroll: sh.shDrawerMaxScroll,
+                        shOnboardScroll: sh.shOnboardScroll, shOnboardMaxScroll: sh.shOnboardMaxScroll,
+                        shNpcScroll: 0.0, shNpcMaxScroll: sh.shNpcMaxScroll,
+                        shHovered: sh.shHovered, shHitboxes: sh.shHitboxes, shScrollZones: sh.shScrollZones,
+                    }
+                );
+                (m2, bc)
+            },
+            HitResetCam -> {
+                let (m1, bc) = blurIfOther(m0, None);
+                (resetCameraPan(m1), bc)
+            },
+            HitUi(k, a1, a2) -> {
+                let (m1, bc) = blurIfOther(m0, None);
+                let (m2, ucs) = handleUiAction(k, a1, a2, m1);
+                (m2, listAppend(bc, ucs))
+            },
+            HitLab(cmd, a1, a2, a3, num) -> {
+                let (m1, bc) = blurIfOther(m0, None);
+                let (m2, lcs) = handleLabCommand(cmd, a1, a2, a3, num, m1);
+                (m2, listAppend(bc, lcs))
+            },
+            HitLabScrub(x0, w0) -> {
+                let (m1, bc) = blurIfOther(m0, None);
+                let ratio = clamp01((x - x0) / maxFloat(1.0, w0));
+                let dur = match m1.cmBattle.btActiveTimeline { Some(tl) -> tl.tlDurationMs, None -> 0.0 };
+                let (m2, l1) = handleLabCommand("pause", "true", "", "", 0.0, m1);
+                let (m3, l2) = handleLabCommand("seek", "", "", "", ratio * dur, m2);
+                (m3, listAppend(bc, listAppend(l1, l2)))
+            },
+        },
+    }
+
+def applyScrollDelta(tgt: ScrollTarget, deltaY: Float, m: ClientModel): ClientModel = {
+    let sh = m.cmScroll;
+    match tgt {
+        ScrollLog -> {
+            let maxS = sh.shLogMaxScroll;
+            let cur = if (sh.shLogStickBottom) maxS else sh.shLogScroll;
+            let next = clampFloat(0.0, maxS, cur + deltaY);
+            let stick = maxS <= 1.0 || (maxS - next) <= 22.0;
+            withScroll(m, MkScrollHitState {
+                shLogScroll: next, shLogMaxScroll: maxS, shLogStickBottom: stick,
+                shDrawerScroll: sh.shDrawerScroll, shDrawerMaxScroll: sh.shDrawerMaxScroll,
+                shOnboardScroll: sh.shOnboardScroll, shOnboardMaxScroll: sh.shOnboardMaxScroll,
+                shNpcScroll: sh.shNpcScroll, shNpcMaxScroll: sh.shNpcMaxScroll,
+                shHovered: sh.shHovered, shHitboxes: sh.shHitboxes, shScrollZones: sh.shScrollZones,
+            })
+        },
+        ScrollDrawer -> {
+            let next = clampFloat(0.0, sh.shDrawerMaxScroll, sh.shDrawerScroll + deltaY);
+            withScroll(m, MkScrollHitState {
+                shLogScroll: sh.shLogScroll, shLogMaxScroll: sh.shLogMaxScroll, shLogStickBottom: sh.shLogStickBottom,
+                shDrawerScroll: next, shDrawerMaxScroll: sh.shDrawerMaxScroll,
+                shOnboardScroll: sh.shOnboardScroll, shOnboardMaxScroll: sh.shOnboardMaxScroll,
+                shNpcScroll: sh.shNpcScroll, shNpcMaxScroll: sh.shNpcMaxScroll,
+                shHovered: sh.shHovered, shHitboxes: sh.shHitboxes, shScrollZones: sh.shScrollZones,
+            })
+        },
+        ScrollOnboard -> {
+            let next = clampFloat(0.0, sh.shOnboardMaxScroll, sh.shOnboardScroll + deltaY);
+            withScroll(m, MkScrollHitState {
+                shLogScroll: sh.shLogScroll, shLogMaxScroll: sh.shLogMaxScroll, shLogStickBottom: sh.shLogStickBottom,
+                shDrawerScroll: sh.shDrawerScroll, shDrawerMaxScroll: sh.shDrawerMaxScroll,
+                shOnboardScroll: next, shOnboardMaxScroll: sh.shOnboardMaxScroll,
+                shNpcScroll: sh.shNpcScroll, shNpcMaxScroll: sh.shNpcMaxScroll,
+                shHovered: sh.shHovered, shHitboxes: sh.shHitboxes, shScrollZones: sh.shScrollZones,
+            })
+        },
+        ScrollNpc -> {
+            let next = clampFloat(0.0, sh.shNpcMaxScroll, sh.shNpcScroll + deltaY);
+            withScroll(m, MkScrollHitState {
+                shLogScroll: sh.shLogScroll, shLogMaxScroll: sh.shLogMaxScroll, shLogStickBottom: sh.shLogStickBottom,
+                shDrawerScroll: sh.shDrawerScroll, shDrawerMaxScroll: sh.shDrawerMaxScroll,
+                shOnboardScroll: sh.shOnboardScroll, shOnboardMaxScroll: sh.shOnboardMaxScroll,
+                shNpcScroll: next, shNpcMaxScroll: sh.shNpcMaxScroll,
+                shHovered: sh.shHovered, shHitboxes: sh.shHitboxes, shScrollZones: sh.shScrollZones,
+            })
+        },
+    }
+}
+
+pub def handleScrollAt(x: Float, y: Float, deltaY: Float, m: ClientModel): ClientModel =
+    match findScrollZone(x, y, m.cmScroll.shScrollZones) {
+        Some(tgt) -> applyScrollDelta(tgt, deltaY, m),
+        None -> zoomCameraBy(if (deltaY < 0.0) 1.09 else 0.92, m),
+    }
+
+pub def handleDragAt(x: Float, y: Float, dx: Float, dy: Float, m: ClientModel): ClientModel =
+    match findHit(x, y, m.cmScroll.shHitboxes) {
+        Some(hb) -> match hb.chTarget {
+            HitLabScrub(x0, w0) -> {
+                let ratio = clamp01((x - x0) / maxFloat(1.0, w0));
+                let dur = match m.cmBattle.btActiveTimeline { Some(tl) -> tl.tlDurationMs, None -> 0.0 };
+                let (m1, _) = handleLabCommand("pause", "true", "", "", 0.0, m);
+                let (m2, _) = handleLabCommand("seek", "", "", "", ratio * dur, m1);
+                m2
+            },
+            _ -> match findScrollZone(x, y, m.cmScroll.shScrollZones) {
+                Some(tgt) -> applyScrollDelta(tgt, -dy, m),
+                None -> panCameraBy(dx, dy, m),
+            },
+        },
+        None -> match findScrollZone(x, y, m.cmScroll.shScrollZones) {
+            Some(tgt) -> applyScrollDelta(tgt, -dy, m),
+            None -> panCameraBy(dx, dy, m),
+        },
+    }
+
+pub def handleTextInput(inpId: String, val: String, m: ClientModel): ClientModel =
+    if (inpId == "login") {
+        let au = m.cmAuth;
+        withAuth(m, MkAuthState {
+            auConnected: au.auConnected, auConnecting: au.auConnecting,
+            auUsername: val, auLastError: au.auLastError,
+            auLoginMode: au.auLoginMode, auCreateStep: au.auCreateStep,
+            auCreationCfg: au.auCreationCfg, auCreateChoice: au.auCreateChoice,
+            auDevReset: au.auDevReset,
+        })
+    } else if (inpId == "say") {
+        let u = m.cmUi;
+        withUi(m, MkUiChrome {
+            uiLogs: u.uiLogs, uiNextLogId: u.uiNextLogId, uiUnreadLogs: u.uiUnreadLogs,
+            uiDesktopDrawer: u.uiDesktopDrawer, uiCharSubTab: u.uiCharSubTab, uiMobileTab: u.uiMobileTab,
+            uiSelectedNpc: u.uiSelectedNpc, uiFocusedInput: u.uiFocusedInput, uiSayDraft: val,
+            uiDirty: u.uiDirty,
+        })
+    } else m
+
+pub def handleTextSubmit(inpId: String, m0: ClientModel): (ClientModel, List ClientCmd) =
+    if (inpId == "login") {
+        let m1 = setFocusedInput(m0, None);
+        if (m1.cmAuth.auLoginMode == "create") {
+            let (m2, cs) = handleUiAction("create_step", "1", "", m1);
+            (m2, Cons(CmdBlurInput, cs))
+        } else {
+            let passFlag = if (m1.cmAuth.auDevReset) "reset" else "";
+            let (m2, cs) = handleUiAction("login_submit", m1.cmAuth.auUsername, passFlag, m1);
+            (m2, Cons(CmdBlurInput, cs))
+        }
+    } else if (inpId == "say") {
+        let txt = utf8Trim(m0.cmUi.uiSayDraft);
+        let u = m0.cmUi;
+        let sh = m0.cmScroll;
+        let m1 = withScroll(
+            withUi(m0, MkUiChrome {
+                uiLogs: u.uiLogs, uiNextLogId: u.uiNextLogId, uiUnreadLogs: u.uiUnreadLogs,
+                uiDesktopDrawer: u.uiDesktopDrawer, uiCharSubTab: u.uiCharSubTab, uiMobileTab: u.uiMobileTab,
+                uiSelectedNpc: u.uiSelectedNpc, uiFocusedInput: None, uiSayDraft: "",
+                uiDirty: u.uiDirty,
+            }),
+            MkScrollHitState {
+                shLogScroll: sh.shLogScroll, shLogMaxScroll: sh.shLogMaxScroll, shLogStickBottom: true,
+                shDrawerScroll: sh.shDrawerScroll, shDrawerMaxScroll: sh.shDrawerMaxScroll,
+                shOnboardScroll: sh.shOnboardScroll, shOnboardMaxScroll: sh.shOnboardMaxScroll,
+                shNpcScroll: sh.shNpcScroll, shNpcMaxScroll: sh.shNpcMaxScroll,
+                shHovered: sh.shHovered, shHitboxes: sh.shHitboxes, shScrollZones: sh.shScrollZones,
+            }
+        );
+        if (strLen(txt) == 0) (m1, [CmdBlurInput])
+        else (m1, [CmdBlurInput, CmdSendWs(encodePlayerAction(ActSay(txt)))])
+    } else (m0, Nil)
+
+pub def handleFocusInputId(inpId: String, m: ClientModel): ClientModel =
+    setFocusedInput(m, if (strLen(inpId) == 0) None else Some(inpId))
+
+pub def handleBlurInput(m: ClientModel): ClientModel =
+    setFocusedInput(m, None)
+
+pub def handleKeyDown(key: String, m0: ClientModel): (ClientModel, List ClientCmd) =
+    if (optIsSome(m0.cmUi.uiFocusedInput)) {
+        if (key == "Escape") (setFocusedInput(m0, None), [CmdBlurInput])
+        else (m0, Nil)
+    } else if (key == "Escape") {
+        let u = m0.cmUi;
+        (withUi(m0, MkUiChrome {
+            uiLogs: u.uiLogs, uiNextLogId: u.uiNextLogId, uiUnreadLogs: u.uiUnreadLogs,
+            uiDesktopDrawer: "", uiCharSubTab: u.uiCharSubTab, uiMobileTab: u.uiMobileTab,
+            uiSelectedNpc: None, uiFocusedInput: u.uiFocusedInput, uiSayDraft: u.uiSayDraft,
+            uiDirty: true,
+        }), Nil)
+    } else if (m0.cmBattle.btInBattle) {
+        match key {
+            "1" -> handleUiAction("perform_index", "0", "", m0),
+            "2" -> handleUiAction("perform_index", "1", "", m0),
+            "3" -> handleUiAction("perform_index", "2", "", m0),
+            "4" -> handleUiAction("perform_index", "3", "", m0),
+            "5" -> handleUiAction("perform_index", "4", "", m0),
+            "6" -> handleUiAction("perform_index", "5", "", m0),
+            _ -> (m0, Nil),
+        }
+    } else if (m0.cmAuth.auConnected
+               && !m0.cmWorld.wvStoryActive
+               && strLen(m0.cmUi.uiDesktopDrawer) == 0
+               && optIsNone(m0.cmUi.uiSelectedNpc)) {
+        let mDir = match key {
+            "ArrowUp" -> Some(North),
+            "w" -> Some(North),
+            "W" -> Some(North),
+            "ArrowDown" -> Some(South),
+            "s" -> Some(South),
+            "S" -> Some(South),
+            "ArrowLeft" -> Some(West),
+            "a" -> Some(West),
+            "A" -> Some(West),
+            "ArrowRight" -> Some(East),
+            "d" -> Some(East),
+            "D" -> Some(East),
+            _ -> None,
+        };
+        match mDir {
+            Some(dir) ->
+                if (optIsSome(listFind(m0.cmWorld.wvRoomExits, (ex) -> dirEq(ex.reDirection, dir)))) {
+                    (m0, [CmdSendWs(encodePlayerAction(ActGo(dir)))])
+                } else (m0, Nil),
+            None -> (m0, Nil),
+        }
+    } else (m0, Nil)
+
+// ============================================================================
+// UI Action Dispatcher & BattleLab / Playwright Fixtures
+// ============================================================================
+
+pub def labActionOrder(m: ClientModel): List String =
+    listFilter(m.cmCatalog.acOrder, (aid) ->
+        match mapLookup(m.cmCatalog.acActions, aid) {
+            Some(act) ->
+                isTravelMotion(act.adActorMotion)
+                    || act.adActorMotion == "focus"
+                    || strStartsWith(aid, "rig.effect."),
+            None -> false,
+        }
+    )
+
+pub def handleUiAction(kind: String, a1: String, a2: String, m0: ClientModel): (ClientModel, List ClientCmd) =
+    match kind {
+        "reset_cam" -> (resetCameraPan(m0), Nil),
+        "zoom_in" -> (zoomCameraBy(1.18, m0), Nil),
+        "zoom_out" -> (zoomCameraBy(0.85, m0), Nil),
+        "close_all" -> {
+            let u = m0.cmUi;
+            (withUi(m0, MkUiChrome {
+                uiLogs: u.uiLogs, uiNextLogId: u.uiNextLogId, uiUnreadLogs: u.uiUnreadLogs,
+                uiDesktopDrawer: "", uiCharSubTab: u.uiCharSubTab, uiMobileTab: u.uiMobileTab,
+                uiSelectedNpc: None, uiFocusedInput: u.uiFocusedInput, uiSayDraft: u.uiSayDraft,
+                uiDirty: true,
+            }), Nil)
+        },
+        "toggle_dev_reset" -> {
+            let au = m0.cmAuth;
+            (markDirty(withAuth(m0, MkAuthState {
+                auConnected: au.auConnected, auConnecting: au.auConnecting,
+                auUsername: au.auUsername, auLastError: au.auLastError,
+                auLoginMode: au.auLoginMode, auCreateStep: au.auCreateStep,
+                auCreationCfg: au.auCreationCfg, auCreateChoice: au.auCreateChoice,
+                auDevReset: !au.auDevReset,
+            })), Nil)
+        },
+        "scroll_log_bottom" -> {
+            let sh = m0.cmScroll;
+            (withScroll(m0, MkScrollHitState {
+                shLogScroll: sh.shLogMaxScroll, shLogMaxScroll: sh.shLogMaxScroll, shLogStickBottom: true,
+                shDrawerScroll: sh.shDrawerScroll, shDrawerMaxScroll: sh.shDrawerMaxScroll,
+                shOnboardScroll: sh.shOnboardScroll, shOnboardMaxScroll: sh.shOnboardMaxScroll,
+                shNpcScroll: sh.shNpcScroll, shNpcMaxScroll: sh.shNpcMaxScroll,
+                shHovered: sh.shHovered, shHitboxes: sh.shHitboxes, shScrollZones: sh.shScrollZones,
+            }), Nil)
+        },
+        "send_say_draft" -> handleTextSubmit("say", m0),
+        "lab_cycle_action" -> {
+            let acts = labActionOrder(m0);
+            let n = maxInt(1, listLen(acts));
+            let step = if (a1 == "prev") -1 else 1;
+            let lb = m0.cmLab;
+            let idxNext = floorMod(lb.labActionIdx + step + n, n);
+            (withLab(m0, MkLabControls {
+                labPaused: lb.labPaused, labSpeed: lb.labSpeed,
+                labActionIdx: idxNext, labOutcomeIdx: lb.labOutcomeIdx, labSideIdx: lb.labSideIdx,
+            }), Nil)
+        },
+        "lab_cycle_outcome" -> {
+            let lb = m0.cmLab;
+            (withLab(m0, MkLabControls {
+                labPaused: lb.labPaused, labSpeed: lb.labSpeed,
+                labActionIdx: lb.labActionIdx, labOutcomeIdx: floorMod(lb.labOutcomeIdx + 1, 4), labSideIdx: lb.labSideIdx,
+            }), Nil)
+        },
+        "lab_cycle_side" -> {
+            let lb = m0.cmLab;
+            (withLab(m0, MkLabControls {
+                labPaused: lb.labPaused, labSpeed: lb.labSpeed,
+                labActionIdx: lb.labActionIdx, labOutcomeIdx: lb.labOutcomeIdx, labSideIdx: floorMod(lb.labSideIdx + 1, 2),
+            }), Nil)
+        },
+        "lab_play_selected" -> {
+            let acts = labActionOrder(m0);
+            let aid =
+                if (listIsEmpty(acts)) "rig.fist.punch_a"
+                else listNthOr(acts, floorMod(m0.cmLab.labActionIdx, listLen(acts)), "rig.fist.punch_a");
+            let out = listNthOr(["hit", "dodge", "parry", "effect"], floorMod(m0.cmLab.labOutcomeIdx, 4), "hit");
+            let side = listNthOr(["player", "enemy"], floorMod(m0.cmLab.labSideIdx, 2), "player");
+            let (m1, c1) = handleLabCommand("seed", "female", "male", "", 0.0, m0);
+            let (m2, c2) = handleLabCommand("submit", aid, out, side, 18.0, m1);
+            (m2, listAppend(c1, c2))
+        },
+        "toggle_look" -> {
+            let vp = m0.cmVp;
+            let lk = if (lookEq(vp.vpLookStyle, LookMaiden)) LookPonytail else LookMaiden;
+            (markDirty(withVp(m0, MkViewportState {
+                vpPage: vp.vpPage, vpLocale: vp.vpLocale, vpReducedMotion: vp.vpReducedMotion,
+                vpDocHidden: vp.vpDocHidden, vpSoundOn: vp.vpSoundOn, vpLookStyle: lk,
+                vpWidth: vp.vpWidth, vpHeight: vp.vpHeight, vpClockMs: vp.vpClockMs,
+                vpLastSyncTickMs: vp.vpLastSyncTickMs, vpWasmStepMs: vp.vpWasmStepMs, vpDrawCmdCount: vp.vpDrawCmdCount,
+            })), Nil)
+        },
+        "request_creation_cfg" -> (m0, [CmdOpenConfigWs]),
+        "set_locale" -> {
+            let vp = m0.cmVp;
+            (markDirty(withVp(m0, MkViewportState {
+                vpPage: vp.vpPage, vpLocale: parseLocale(a1), vpReducedMotion: vp.vpReducedMotion,
+                vpDocHidden: vp.vpDocHidden, vpSoundOn: vp.vpSoundOn, vpLookStyle: vp.vpLookStyle,
+                vpWidth: vp.vpWidth, vpHeight: vp.vpHeight, vpClockMs: vp.vpClockMs,
+                vpLastSyncTickMs: vp.vpLastSyncTickMs, vpWasmStepMs: vp.vpWasmStepMs, vpDrawCmdCount: vp.vpDrawCmdCount,
+            })), Nil)
+        },
+        "toggle_locale" -> {
+            let vp = m0.cmVp;
+            let next = if (isZh(vp.vpLocale)) En else Zh;
+            (markDirty(withVp(m0, MkViewportState {
+                vpPage: vp.vpPage, vpLocale: next, vpReducedMotion: vp.vpReducedMotion,
+                vpDocHidden: vp.vpDocHidden, vpSoundOn: vp.vpSoundOn, vpLookStyle: vp.vpLookStyle,
+                vpWidth: vp.vpWidth, vpHeight: vp.vpHeight, vpClockMs: vp.vpClockMs,
+                vpLastSyncTickMs: vp.vpLastSyncTickMs, vpWasmStepMs: vp.vpWasmStepMs, vpDrawCmdCount: vp.vpDrawCmdCount,
+            })), Nil)
+        },
+        "toggle_sound" -> {
+            let vp = m0.cmVp;
+            (markDirty(withVp(m0, MkViewportState {
+                vpPage: vp.vpPage, vpLocale: vp.vpLocale, vpReducedMotion: vp.vpReducedMotion,
+                vpDocHidden: vp.vpDocHidden, vpSoundOn: !vp.vpSoundOn, vpLookStyle: vp.vpLookStyle,
+                vpWidth: vp.vpWidth, vpHeight: vp.vpHeight, vpClockMs: vp.vpClockMs,
+                vpLastSyncTickMs: vp.vpLastSyncTickMs, vpWasmStepMs: vp.vpWasmStepMs, vpDrawCmdCount: vp.vpDrawCmdCount,
+            })), Nil)
+        },
+        "set_look" -> {
+            let vp = m0.cmVp;
+            let lk = if (a1 == "ponytail") LookPonytail else LookMaiden;
+            (markDirty(withVp(m0, MkViewportState {
+                vpPage: vp.vpPage, vpLocale: vp.vpLocale, vpReducedMotion: vp.vpReducedMotion,
+                vpDocHidden: vp.vpDocHidden, vpSoundOn: vp.vpSoundOn, vpLookStyle: lk,
+                vpWidth: vp.vpWidth, vpHeight: vp.vpHeight, vpClockMs: vp.vpClockMs,
+                vpLastSyncTickMs: vp.vpLastSyncTickMs, vpWasmStepMs: vp.vpWasmStepMs, vpDrawCmdCount: vp.vpDrawCmdCount,
+            })), Nil)
+        },
+        "login_mode" -> {
+            let au = m0.cmAuth;
+            let cmds = if (a1 == "create" && optIsNone(au.auCreationCfg)) [CmdOpenConfigWs] else Nil;
+            (markDirty(withAuth(m0, MkAuthState {
+                auConnected: au.auConnected, auConnecting: au.auConnecting,
+                auUsername: au.auUsername, auLastError: None,
+                auLoginMode: a1, auCreateStep: au.auCreateStep,
+                auCreationCfg: au.auCreationCfg, auCreateChoice: au.auCreateChoice,
+                auDevReset: au.auDevReset,
+            })), cmds)
+        },
+        "set_username" -> {
+            let au = m0.cmAuth;
+            (markDirty(withAuth(m0, MkAuthState {
+                auConnected: au.auConnected, auConnecting: au.auConnecting,
+                auUsername: a1, auLastError: au.auLastError,
+                auLoginMode: au.auLoginMode, auCreateStep: au.auCreateStep,
+                auCreationCfg: au.auCreationCfg, auCreateChoice: au.auCreateChoice,
+                auDevReset: au.auDevReset,
+            })), Nil)
+        },
+        "create_step" -> {
+            let stp = clampInt(0, 5, parseIntOr(a1, 0));
+            let au = m0.cmAuth;
+            (markDirty(withAuth(m0, MkAuthState {
+                auConnected: au.auConnected, auConnecting: au.auConnecting,
+                auUsername: au.auUsername, auLastError: au.auLastError,
+                auLoginMode: au.auLoginMode, auCreateStep: stp,
+                auCreationCfg: au.auCreationCfg, auCreateChoice: au.auCreateChoice,
+                auDevReset: au.auDevReset,
+            })), Nil)
+        },
+        "create_pick" -> {
+            let au = m0.cmAuth;
+            let cc = au.auCreateChoice;
+            let ccNext = match a1 {
+                "gender" -> MkCreationChoice { ccGender: a2, ccOrigin: cc.ccOrigin, ccChildhood1: cc.ccChildhood1, ccChildhood2: cc.ccChildhood2 },
+                "origin" -> MkCreationChoice { ccGender: cc.ccGender, ccOrigin: a2, ccChildhood1: cc.ccChildhood1, ccChildhood2: cc.ccChildhood2 },
+                "childhood1" -> MkCreationChoice { ccGender: cc.ccGender, ccOrigin: cc.ccOrigin, ccChildhood1: a2, ccChildhood2: cc.ccChildhood2 },
+                "childhood2" -> MkCreationChoice { ccGender: cc.ccGender, ccOrigin: cc.ccOrigin, ccChildhood1: cc.ccChildhood1, ccChildhood2: a2 },
+                _ -> cc,
+            };
+            let nextStep = minInt(5, au.auCreateStep + 1);
+            (markDirty(withAuth(m0, MkAuthState {
+                auConnected: au.auConnected, auConnecting: au.auConnecting,
+                auUsername: au.auUsername, auLastError: au.auLastError,
+                auLoginMode: au.auLoginMode, auCreateStep: nextStep,
+                auCreationCfg: au.auCreationCfg, auCreateChoice: ccNext,
+                auDevReset: au.auDevReset,
+            })), Nil)
+        },
+        "login_submit" -> {
+            let u = utf8Trim(a1);
+            let pass = if (a2 == "reset") "__dev_reset" else "";
+            let au = m0.cmAuth;
+            if (strLen(u) == 0) {
+                (markDirty(withAuth(m0, MkAuthState {
+                    auConnected: au.auConnected, auConnecting: au.auConnecting,
+                    auUsername: au.auUsername, auLastError: Some(tr(m0.cmVp.vpLocale, "error.username_required")),
+                    auLoginMode: au.auLoginMode, auCreateStep: au.auCreateStep,
+                    auCreationCfg: au.auCreationCfg, auCreateChoice: au.auCreateChoice,
+                    auDevReset: au.auDevReset,
+                })), Nil)
+            } else {
+                let wv = m0.cmWorld;
+                let m1 = markDirty(withWorld(
+                    withAuth(m0, MkAuthState {
+                        auConnected: au.auConnected, auConnecting: true,
+                        auUsername: u, auLastError: None,
+                        auLoginMode: au.auLoginMode, auCreateStep: au.auCreateStep,
+                        auCreationCfg: au.auCreationCfg, auCreateChoice: au.auCreateChoice,
+                        auDevReset: au.auDevReset,
+                    }),
+                    MkWorldView {
+                        wvRoomName: wv.wvRoomName, wvRoomDesc: wv.wvRoomDesc,
+                        wvRoomChars: wv.wvRoomChars, wvRoomExits: wv.wvRoomExits,
+                        wvMapOverview: wv.wvMapOverview, wvMapCache: wv.wvMapCache,
+                        wvRequestedInit: false, wvStoryActive: wv.wvStoryActive,
+                        wvStoryQueue: wv.wvStoryQueue, wvStoryDelayRemMs: wv.wvStoryDelayRemMs,
+                        wvTransitionBanner: wv.wvTransitionBanner,
+                    }
+                ));
+                (m1, [CmdSaveLocal("tingfeng.lastUsername", u), CmdConnectWs(u, pass, None)])
+            }
+        },
+        "create_submit" -> {
+            let u = utf8Trim(a1);
+            let pass = if (a2 == "reset") "__dev_reset" else "";
+            let au = m0.cmAuth;
+            if (strLen(u) == 0) {
+                (markDirty(withAuth(m0, MkAuthState {
+                    auConnected: au.auConnected, auConnecting: au.auConnecting,
+                    auUsername: au.auUsername, auLastError: Some(tr(m0.cmVp.vpLocale, "error.username_required")),
+                    auLoginMode: au.auLoginMode, auCreateStep: 0,
+                    auCreationCfg: au.auCreationCfg, auCreateChoice: au.auCreateChoice,
+                    auDevReset: au.auDevReset,
+                })), Nil)
+            } else {
+                let wv = m0.cmWorld;
+                let m1 = markDirty(withWorld(
+                    withAuth(m0, MkAuthState {
+                        auConnected: au.auConnected, auConnecting: true,
+                        auUsername: u, auLastError: None,
+                        auLoginMode: au.auLoginMode, auCreateStep: au.auCreateStep,
+                        auCreationCfg: au.auCreationCfg, auCreateChoice: au.auCreateChoice,
+                        auDevReset: au.auDevReset,
+                    }),
+                    MkWorldView {
+                        wvRoomName: wv.wvRoomName, wvRoomDesc: wv.wvRoomDesc,
+                        wvRoomChars: wv.wvRoomChars, wvRoomExits: wv.wvRoomExits,
+                        wvMapOverview: wv.wvMapOverview, wvMapCache: wv.wvMapCache,
+                        wvRequestedInit: false, wvStoryActive: wv.wvStoryActive,
+                        wvStoryQueue: wv.wvStoryQueue, wvStoryDelayRemMs: wv.wvStoryDelayRemMs,
+                        wvTransitionBanner: wv.wvTransitionBanner,
+                    }
+                ));
+                (m1, [CmdSaveLocal("tingfeng.lastUsername", u), CmdConnectWs(u, pass, Some(au.auCreateChoice))])
+            }
+        },
+        "desktop_drawer" -> {
+            let u = m0.cmUi;
+            let sh = m0.cmScroll;
+            let next = if (u.uiDesktopDrawer == a1) "" else a1;
+            (withScroll(
+                withUi(m0, MkUiChrome {
+                    uiLogs: u.uiLogs, uiNextLogId: u.uiNextLogId, uiUnreadLogs: u.uiUnreadLogs,
+                    uiDesktopDrawer: next, uiCharSubTab: u.uiCharSubTab, uiMobileTab: u.uiMobileTab,
+                    uiSelectedNpc: u.uiSelectedNpc, uiFocusedInput: u.uiFocusedInput, uiSayDraft: u.uiSayDraft,
+                    uiDirty: true,
+                }),
+                MkScrollHitState {
+                    shLogScroll: sh.shLogScroll, shLogMaxScroll: sh.shLogMaxScroll, shLogStickBottom: sh.shLogStickBottom,
+                    shDrawerScroll: 0.0, shDrawerMaxScroll: sh.shDrawerMaxScroll,
+                    shOnboardScroll: sh.shOnboardScroll, shOnboardMaxScroll: sh.shOnboardMaxScroll,
+                    shNpcScroll: sh.shNpcScroll, shNpcMaxScroll: sh.shNpcMaxScroll,
+                    shHovered: sh.shHovered, shHitboxes: sh.shHitboxes, shScrollZones: sh.shScrollZones,
+                }
+            ), Nil)
+        },
+        "char_subtab" -> {
+            let u = m0.cmUi;
+            let sh = m0.cmScroll;
+            (withScroll(
+                withUi(m0, MkUiChrome {
+                    uiLogs: u.uiLogs, uiNextLogId: u.uiNextLogId, uiUnreadLogs: u.uiUnreadLogs,
+                    uiDesktopDrawer: u.uiDesktopDrawer, uiCharSubTab: a1, uiMobileTab: u.uiMobileTab,
+                    uiSelectedNpc: u.uiSelectedNpc, uiFocusedInput: u.uiFocusedInput, uiSayDraft: u.uiSayDraft,
+                    uiDirty: true,
+                }),
+                MkScrollHitState {
+                    shLogScroll: sh.shLogScroll, shLogMaxScroll: sh.shLogMaxScroll, shLogStickBottom: sh.shLogStickBottom,
+                    shDrawerScroll: 0.0, shDrawerMaxScroll: sh.shDrawerMaxScroll,
+                    shOnboardScroll: sh.shOnboardScroll, shOnboardMaxScroll: sh.shOnboardMaxScroll,
+                    shNpcScroll: sh.shNpcScroll, shNpcMaxScroll: sh.shNpcMaxScroll,
+                    shHovered: sh.shHovered, shHitboxes: sh.shHitboxes, shScrollZones: sh.shScrollZones,
+                }
+            ), Nil)
+        },
+        "mobile_tab" -> {
+            let u = m0.cmUi;
+            let sh = m0.cmScroll;
+            let unread = if (a1 == "log") 0 else u.uiUnreadLogs;
+            (withScroll(
+                withUi(m0, MkUiChrome {
+                    uiLogs: u.uiLogs, uiNextLogId: u.uiNextLogId, uiUnreadLogs: unread,
+                    uiDesktopDrawer: u.uiDesktopDrawer, uiCharSubTab: u.uiCharSubTab, uiMobileTab: a1,
+                    uiSelectedNpc: u.uiSelectedNpc, uiFocusedInput: u.uiFocusedInput, uiSayDraft: u.uiSayDraft,
+                    uiDirty: true,
+                }),
+                MkScrollHitState {
+                    shLogScroll: sh.shLogScroll, shLogMaxScroll: sh.shLogMaxScroll, shLogStickBottom: sh.shLogStickBottom,
+                    shDrawerScroll: 0.0, shDrawerMaxScroll: sh.shDrawerMaxScroll,
+                    shOnboardScroll: sh.shOnboardScroll, shOnboardMaxScroll: sh.shOnboardMaxScroll,
+                    shNpcScroll: sh.shNpcScroll, shNpcMaxScroll: sh.shNpcMaxScroll,
+                    shHovered: sh.shHovered, shHitboxes: sh.shHitboxes, shScrollZones: sh.shScrollZones,
+                }
+            ), Nil)
+        },
+        "select_npc" -> {
+            let u = m0.cmUi;
+            let sh = m0.cmScroll;
+            let next = if (strLen(a1) == 0 || optStrEq(u.uiSelectedNpc, Some(a1))) None else Some(a1);
+            (withScroll(
+                withUi(m0, MkUiChrome {
+                    uiLogs: u.uiLogs, uiNextLogId: u.uiNextLogId, uiUnreadLogs: u.uiUnreadLogs,
+                    uiDesktopDrawer: u.uiDesktopDrawer, uiCharSubTab: u.uiCharSubTab, uiMobileTab: u.uiMobileTab,
+                    uiSelectedNpc: next, uiFocusedInput: u.uiFocusedInput, uiSayDraft: u.uiSayDraft,
+                    uiDirty: true,
+                }),
+                MkScrollHitState {
+                    shLogScroll: sh.shLogScroll, shLogMaxScroll: sh.shLogMaxScroll, shLogStickBottom: sh.shLogStickBottom,
+                    shDrawerScroll: sh.shDrawerScroll, shDrawerMaxScroll: sh.shDrawerMaxScroll,
+                    shOnboardScroll: sh.shOnboardScroll, shOnboardMaxScroll: sh.shOnboardMaxScroll,
+                    shNpcScroll: 0.0, shNpcMaxScroll: sh.shNpcMaxScroll,
+                    shHovered: sh.shHovered, shHitboxes: sh.shHitboxes, shScrollZones: sh.shScrollZones,
+                }
+            ), Nil)
+        },
+        "go" -> match parseDirection(a1) {
+            Some(d) -> (m0, [CmdSendWs(encodePlayerAction(ActGo(d)))]),
+            None -> (m0, Nil),
+        },
+        "talk" -> {
+            let u = m0.cmUi;
+            let m1 = withUi(m0, MkUiChrome {
+                uiLogs: u.uiLogs, uiNextLogId: u.uiNextLogId, uiUnreadLogs: u.uiUnreadLogs,
+                uiDesktopDrawer: u.uiDesktopDrawer, uiCharSubTab: u.uiCharSubTab, uiMobileTab: u.uiMobileTab,
+                uiSelectedNpc: None, uiFocusedInput: u.uiFocusedInput, uiSayDraft: u.uiSayDraft,
+                uiDirty: true,
+            });
+            (m1, [CmdSendWs(encodePlayerAction(ActTalk(a1)))])
+        },
+        "attack" -> {
+            let u = m0.cmUi;
+            let m1 = withUi(m0, MkUiChrome {
+                uiLogs: u.uiLogs, uiNextLogId: u.uiNextLogId, uiUnreadLogs: u.uiUnreadLogs,
+                uiDesktopDrawer: u.uiDesktopDrawer, uiCharSubTab: u.uiCharSubTab, uiMobileTab: u.uiMobileTab,
+                uiSelectedNpc: None, uiFocusedInput: u.uiFocusedInput, uiSayDraft: u.uiSayDraft,
+                uiDirty: true,
+            });
+            (m1, [CmdSendWs(encodePlayerAction(ActAttack(a1)))])
+        },
+        "learn" -> {
+            let n = parseIntOr(a2, 1);
+            match strSplitChar(a1, ':') {
+                Cons(tid, Cons(aid, Nil)) -> (m0, [CmdSendWs(encodePlayerAction(ActLearn(tid, aid, n)))]),
+                _ -> (m0, Nil),
+            }
+        },
+        "buy" -> match strSplitChar(a1, ':') {
+            Cons(merch, Cons(iid, Nil)) -> {
+                let mMerch = if (strLen(merch) == 0) None else Some(merch);
+                (m0, [CmdSendWs(encodePlayerAction(ActBuy(mMerch, iid)))])
+            },
+            _ -> (m0, [CmdSendWs(encodePlayerAction(ActBuy(None, a1)))]),
+        },
+        "perform" -> (m0, [CmdSendWs(encodePlayerAction(ActPerform(a1)))]),
+        "perform_index" -> {
+            let idx = parseIntOr(a1, -1);
+            let skills = match m0.cmBattle.btSnap { Some(bs) -> bs.bsActiveSkills, None -> Nil };
+            if (idx >= 0 && idx < listLen(skills)) {
+                match std.list.listNth(skills, idx) {
+                    Some(sk) -> (m0, [CmdSendWs(encodePlayerAction(ActPerform(sk.asId)))]),
+                    None -> (m0, Nil),
+                }
+            } else (m0, Nil)
+        },
+        "practice" -> {
+            let n = parseIntOr(a2, 1);
+            (m0, [CmdSendWs(encodePlayerAction(ActPractice(a1, n)))])
+        },
+        "research" -> (m0, [CmdSendWs(encodePlayerAction(ActResearch(a1, 1)))]),
+        "enable" -> (m0, [CmdSendWs(encodePlayerAction(ActEnable(a1, a2)))]),
+        "meditate" -> (m0, [CmdSendWs(encodePlayerAction(ActMeditate(20, 10)))]),
+        "halt" -> (m0, [CmdSendWs(encodePlayerAction(ActOther("halt")))]),
+        "use" -> (m0, [CmdSendWs(encodePlayerAction(ActUse(a1)))]),
+        "study" -> (m0, [CmdSendWs(encodePlayerAction(ActStudy(a1, 10)))]),
+        "refresh" -> (m0, [
+            CmdSendWs(encodePlayerAction(ActOther("view"))),
+            CmdSendWs(encodePlayerAction(ActOther("quests"))),
+            CmdSendWs(encodePlayerAction(ActOther("inventory"))),
+            CmdSendWs(encodePlayerAction(ActOther("arts")))
+        ]),
+        "say" -> {
+            let s = utf8Trim(a1);
+            if (strLen(s) == 0) (m0, Nil)
+            else (m0, [CmdSendWs(encodePlayerAction(ActSay(s)))])
+        },
+        "clear_logs" -> {
+            let u = m0.cmUi;
+            (withUi(m0, MkUiChrome {
+                uiLogs: Nil, uiNextLogId: u.uiNextLogId, uiUnreadLogs: 0,
+                uiDesktopDrawer: u.uiDesktopDrawer, uiCharSubTab: u.uiCharSubTab, uiMobileTab: u.uiMobileTab,
+                uiSelectedNpc: u.uiSelectedNpc, uiFocusedInput: u.uiFocusedInput, uiSayDraft: u.uiSayDraft,
+                uiDirty: true,
+            }), Nil)
+        },
+        "set_reduced_motion" -> {
+            let vp = m0.cmVp;
+            (markDirty(withVp(m0, MkViewportState {
+                vpPage: vp.vpPage, vpLocale: vp.vpLocale, vpReducedMotion: a1 == "1",
+                vpDocHidden: vp.vpDocHidden, vpSoundOn: vp.vpSoundOn, vpLookStyle: vp.vpLookStyle,
+                vpWidth: vp.vpWidth, vpHeight: vp.vpHeight, vpClockMs: vp.vpClockMs,
+                vpLastSyncTickMs: vp.vpLastSyncTickMs, vpWasmStepMs: vp.vpWasmStepMs, vpDrawCmdCount: vp.vpDrawCmdCount,
+            })), Nil)
+        },
+        _ -> (m0, Nil),
+    }
+
+def labCombatant(name: String, style: String, gender: String): CombatantInfo = MkCombatantInfo {
+    cbId: name, cbName: name, cbGender: gender, cbStyle: style,
+    cbHp: 180, cbMaxHp: 180, cbQi: 100, cbMaxQi: 100,
+    cbAp: 100, cbApProgress: 100.0, cbAgility: 18, cbEffects: Nil,
+}
+
+def withCombatantStyle(cb: CombatantInfo, st: String): CombatantInfo = MkCombatantInfo {
+    cbId: cb.cbId, cbName: cb.cbName, cbGender: cb.cbGender, cbStyle: st,
+    cbHp: cb.cbHp, cbMaxHp: cb.cbMaxHp, cbQi: cb.cbQi, cbMaxQi: cb.cbMaxQi,
+    cbAp: cb.cbAp, cbApProgress: cb.cbApProgress, cbAgility: cb.cbAgility, cbEffects: cb.cbEffects,
+}
+
+def withCombatantHpDelta(cb: CombatantInfo, delta: Int): CombatantInfo = MkCombatantInfo {
+    cbId: cb.cbId, cbName: cb.cbName, cbGender: cb.cbGender, cbStyle: cb.cbStyle,
+    cbHp: clampInt(0, cb.cbMaxHp, cb.cbHp + delta),
+    cbMaxHp: cb.cbMaxHp, cbQi: cb.cbQi, cbMaxQi: cb.cbMaxQi,
+    cbAp: cb.cbAp, cbApProgress: cb.cbApProgress, cbAgility: cb.cbAgility, cbEffects: cb.cbEffects,
+}
+
+pub def handleLabCommand(
+    cmd: String,
+    a1: String,
+    a2: String,
+    a3: String,
+    numArg: Float,
+    m0: ClientModel
+): (ClientModel, List ClientCmd) = match cmd {
+    "seed" -> {
+        let pGender = if (strLen(a1) == 0) "female" else a1;
+        let eGender = if (strLen(a2) == 0) "male" else a2;
+        let snap = MkBattleSnap {
+            bsPlayer: labCombatant("行者", "fist", pGender),
+            bsEnemy: labCombatant("守擂人", "sword", eGender),
+            bsCooldowns: mapEmpty(),
+            bsActiveSkills: Nil,
+            bsActionLock: 0.0,
+            bsPendingSkillId: None,
+        };
+        let au = m0.cmAuth;
+        let hs = m0.cmHero;
+        let st = hs.hsStats;
+        let wv = m0.cmWorld;
+        let bt = m0.cmBattle;
+        let lb = m0.cmLab;
+        let ui = m0.cmUi;
+        let mReset = withUi(
+            withLab(
+                withBattle(
+                    withWorld(
+                        withHero(
+                            withAuth(m0, MkAuthState {
+                                auConnected: true, auConnecting: au.auConnecting,
+                                auUsername: "行者", auLastError: au.auLastError,
+                                auLoginMode: au.auLoginMode, auCreateStep: au.auCreateStep,
+                                auCreationCfg: au.auCreationCfg, auCreateChoice: au.auCreateChoice,
+                                auDevReset: au.auDevReset,
+                            }),
+                            MkHeroSheets {
+                                hsStats: MkPlayerStatsInfo {
+                                    psHp: 180, psMaxHp: 180, psQi: st.psQi, psMaxQi: st.psMaxQi,
+                                    psJing: st.psJing, psMaxJing: st.psMaxJing, psAp: st.psAp,
+                                    psStatus: st.psStatus, psGender: pGender, psAppearance: st.psAppearance,
+                                    psAppearanceText: st.psAppearanceText, psPortraitKey: st.psPortraitKey,
+                                    psStrength: st.psStrength, psAgility: st.psAgility, psVitality: st.psVitality,
+                                    psPotential: st.psPotential, psCombatExp: st.psCombatExp,
+                                    psInjuredSeconds: st.psInjuredSeconds, psCombatInsight: st.psCombatInsight,
+                                    psBusy: st.psBusy,
+                                },
+                                hsStatsSyncedAtMs: hs.hsStatsSyncedAtMs,
+                                hsMoney: hs.hsMoney, hsInventory: hs.hsInventory,
+                                hsArts: hs.hsArts, hsQuests: hs.hsQuests,
+                            }
+                        ),
+                        MkWorldView {
+                            wvRoomName: "竹间试招", wvRoomDesc: wv.wvRoomDesc,
+                            wvRoomChars: wv.wvRoomChars, wvRoomExits: wv.wvRoomExits,
+                            wvMapOverview: wv.wvMapOverview, wvMapCache: wv.wvMapCache,
+                            wvRequestedInit: wv.wvRequestedInit, wvStoryActive: wv.wvStoryActive,
+                            wvStoryQueue: wv.wvStoryQueue, wvStoryDelayRemMs: wv.wvStoryDelayRemMs,
+                            wvTransitionBanner: wv.wvTransitionBanner,
+                        }
+                    ),
+                    MkBattleStateView {
+                        btInBattle: bt.btInBattle, btSnap: bt.btSnap,
+                        btCooldownSyncedMs: bt.btCooldownSyncedMs, btActionLockUntilMs: bt.btActionLockUntilMs,
+                        btPresentation: None, btPreEventSnap: None,
+                        btActiveTimeline: None, btTimelineElapsedMs: 0.0,
+                        btAppliedHits: 0, btNextTimelineId: bt.btNextTimelineId,
+                        btQueue: Nil,
+                    }
+                ),
+                MkLabControls {
+                    labPaused: false, labSpeed: 1.0,
+                    labActionIdx: lb.labActionIdx, labOutcomeIdx: lb.labOutcomeIdx, labSideIdx: lb.labSideIdx,
+                }
+            ),
+            MkUiChrome {
+                uiLogs: Nil, uiNextLogId: ui.uiNextLogId, uiUnreadLogs: ui.uiUnreadLogs,
+                uiDesktopDrawer: ui.uiDesktopDrawer, uiCharSubTab: ui.uiCharSubTab, uiMobileTab: ui.uiMobileTab,
+                uiSelectedNpc: ui.uiSelectedNpc, uiFocusedInput: ui.uiFocusedInput, uiSayDraft: ui.uiSayDraft,
+                uiDirty: true,
+            }
+        );
+        applyServerMessage(SmBattleState(snap), mReset)
+    },
+    "submit" -> {
+        let aid = if (strLen(a1) == 0) "rig.fist.punch_a" else a1;
+        let res = parseCombatResult(if (strLen(a2) == 0) "hit" else a2);
+        let side = parseBattleSide(if (strLen(a3) == 0) "player" else a3);
+        let dmg = if (numArg <= 0.0) 18 else roundInt(numArg);
+        let act = battleActionFor(m0.cmCatalog, aid, StyleFist);
+        let bs0 = optOr(m0.cmBattle.btSnap, MkBattleSnap {
+            bsPlayer: labCombatant("行者", "fist", "female"),
+            bsEnemy: labCombatant("守擂人", "sword", "male"),
+            bsCooldowns: mapEmpty(), bsActiveSkills: Nil, bsActionLock: 0.0, bsPendingSkillId: None,
+        });
+        let isSelf = act.adActorMotion == "focus";
+        let isEff = strStartsWith(aid, "rig.effect.");
+        let stTxt = combatStyleText(act.adStyle);
+        let pl0 = if (sideEq(side, SidePlayer) && !isEff) withCombatantStyle(bs0.bsPlayer, stTxt) else bs0.bsPlayer;
+        let en0 = if (sideEq(side, SideEnemy) && !isEff) withCombatantStyle(bs0.bsEnemy, stTxt) else bs0.bsEnemy;
+        let actorC = if (sideEq(side, SidePlayer)) pl0 else en0;
+        let targetIsPlayer = if (isSelf) sideEq(side, SidePlayer) else sideEq(side, SideEnemy);
+        let targetC = if (targetIsPlayer) pl0 else en0;
+        let snapBefore = MkBattleSnap {
+            bsPlayer: pl0, bsEnemy: en0,
+            bsCooldowns: bs0.bsCooldowns, bsActiveSkills: bs0.bsActiveSkills,
+            bsActionLock: act.adDurationMs / 1000.0, bsPendingSkillId: bs0.bsPendingSkillId,
+        };
+        let mHeal = if (strContains(aid, "healing") || strEndsWith(aid, "hot")) Some(22) else None;
+        let mDmg = if (combatResEq(res, ResHit) && optIsNone(mHeal)) Some(dmg) else None;
+        let evKind = if (isEff) "effect_tick" else if (isSelf) "active_skill" else "normal";
+        let evRes = if (isSelf || optIsSome(mHeal)) ResEffect else res;
+        let ev = MkCombatEvt {
+            ceKind: evKind, ceActorName: actorC.cbName, ceTargetName: targetC.cbName,
+            ceMsgKind: "script", ceText: act.adLabel, ceEffectKind: "", ceEffectAmount: 0,
+            ceDamage: mDmg, ceHeal: mHeal, ceResult: evRes, ceHits: Nil,
+            ceActionId: aid, ceTags: act.adTags, ceLabel: None,
+            ceDurationMs: Some(act.adDurationMs), ceStagingOverride: None,
+        };
+        let hpDelta = -optOr(mDmg, 0) + optOr(mHeal, 0);
+        let snapAfter =
+            if (targetIsPlayer) {
+                MkBattleSnap {
+                    bsPlayer: withCombatantHpDelta(pl0, hpDelta), bsEnemy: en0,
+                    bsCooldowns: snapBefore.bsCooldowns, bsActiveSkills: snapBefore.bsActiveSkills,
+                    bsActionLock: snapBefore.bsActionLock, bsPendingSkillId: snapBefore.bsPendingSkillId,
+                }
+            } else {
+                MkBattleSnap {
+                    bsPlayer: pl0, bsEnemy: withCombatantHpDelta(en0, hpDelta),
+                    bsCooldowns: snapBefore.bsCooldowns, bsActiveSkills: snapBefore.bsActiveSkills,
+                    bsActionLock: snapBefore.bsActionLock, bsPendingSkillId: snapBefore.bsPendingSkillId,
+                }
+            };
+        let (m1, c1) = applyServerMessage(SmBattleState(snapBefore), m0);
+        let (m2, c2) = applyServerMessage(SmCombatEvent(ev), m1);
+        let (m3, c3) = applyServerMessage(SmBattleState(snapAfter), m2);
+        (m3, listAppend(c1, listAppend(c2, c3)))
+    },
+    "demo" -> {
+        let steps = [
+            ("rig.fist.punch_a", "hit", "player", 18.0),
+            ("rig.fist.punch_a", "hit", "player", 18.0),
+            ("rig.sword.thrust_a", "parry", "enemy", 18.0),
+            ("rig.fist.kick_a", "dodge", "player", 18.0),
+            ("rig.sword.cut_a", "hit", "enemy", 26.0),
+            ("rig.fist.heavy_a", "hit", "player", 35.0),
+            ("rig.fist.healing_palm", "effect", "player", 0.0),
+            ("rig.sword.rising_cut_a", "dodge", "enemy", 18.0),
+            ("rig.fist.heavy_a", "hit", "player", 109.0)
+        ];
+        let (mSeed, c0) = handleLabCommand("seed", "female", "male", "", 0.0, m0);
+        let (mMid, cMid) = std.list.listFold(steps, (mSeed, c0), (acc, step) -> match (acc, step) {
+            ((accM, accC), (aid, r, s, d)) -> {
+                let (nm, nc) = handleLabCommand("submit", aid, r, s, d, accM);
+                (nm, listAppend(accC, nc))
+            },
+        });
+        let (mEnd, cEnd) = applyServerMessage(SmCombatSettlement("行者", "守擂人", true), mMid);
+        (mEnd, listAppend(cMid, cEnd))
+    },
+    "pause" -> {
+        let paused = a1 != "false" && a1 != "0";
+        let lb = m0.cmLab;
+        (markDirty(withLab(m0, MkLabControls {
+            labPaused: paused, labSpeed: lb.labSpeed,
+            labActionIdx: lb.labActionIdx, labOutcomeIdx: lb.labOutcomeIdx, labSideIdx: lb.labSideIdx,
+        })), Nil)
+    },
+    "speed" -> {
+        let lb = m0.cmLab;
+        (markDirty(withLab(m0, MkLabControls {
+            labPaused: lb.labPaused, labSpeed: clampFloat(0.05, 4.0, numArg),
+            labActionIdx: lb.labActionIdx, labOutcomeIdx: lb.labOutcomeIdx, labSideIdx: lb.labSideIdx,
+        })), Nil)
+    },
+    "seek" -> match m0.cmBattle.btActiveTimeline {
+        None -> (m0, Nil),
+        Some(tl) -> {
+            let clamped = clampFloat(0.0, tl.tlDurationMs, numArg);
+            let bt0 = m0.cmBattle;
+            let m1 = markDirty(withBattle(m0, MkBattleStateView {
+                btInBattle: bt0.btInBattle, btSnap: bt0.btSnap,
+                btCooldownSyncedMs: bt0.btCooldownSyncedMs, btActionLockUntilMs: bt0.btActionLockUntilMs,
+                btPresentation: bt0.btPresentation, btPreEventSnap: bt0.btPreEventSnap,
+                btActiveTimeline: bt0.btActiveTimeline, btTimelineElapsedMs: clamped,
+                btAppliedHits: bt0.btAppliedHits, btNextTimelineId: bt0.btNextTimelineId,
+                btQueue: bt0.btQueue,
+            }));
+            runClientM(commitHitsUpToM(clamped), m1)
+        },
+    },
+    _ -> (m0, Nil),
+}
+
+// ============================================================================
+// Shared HUD Evaluation, Portrait Hash & Playwright Lab State JSON
+// ============================================================================
+
+pub def liveEffectsOf(m: ClientModel, isPlayer: Bool): List (EffectInfo, Float) = {
+    let cdAgeSec = maxFloat(0.0, (m.cmVp.vpClockMs - m.cmBattle.btCooldownSyncedMs) / 1000.0);
+    let raw = match (m.cmBattle.btPresentation, m.cmBattle.btSnap) {
+        (Some(pr), _) -> if (isPlayer) pr.prPlayerEffects else pr.prEnemyEffects,
+        (None, Some(bs)) -> if (isPlayer) bs.bsPlayer.cbEffects else bs.bsEnemy.cbEffects,
+        _ -> Nil,
+    };
+    listFilterMap(raw, (ef) -> {
+        let remS = maxFloat(0.0, ef.efRemaining - cdAgeSec);
+        if (remS > 0.05) Some((ef, remS)) else None
+    })
+}
+
+pub data SkillEval {
+    MkSkillEval {
+        seSkill: ActiveSkillInfo,
+        seCdRem: Float,
+        seCdTotal: Float,
+        seReady: Bool,
+        seQueued: Bool,
+        seUltimate: Bool,
+        seReason: String,
+    },
+}
+
+pub def evalSkillState(m: ClientModel): List SkillEval = match m.cmBattle.btSnap {
+    None -> Nil,
+    Some(bs) -> {
+        let loc = m.cmVp.vpLocale;
+        let zh = isZh(loc);
+        let cdAgeSec = maxFloat(0.0, (m.cmVp.vpClockMs - m.cmBattle.btCooldownSyncedMs) / 1000.0);
+        let cds = bs.bsCooldowns;
+        let pEffs = liveEffectsOf(m, true);
+        let presQi = match m.cmBattle.btPresentation {
+            Some(pr) -> pr.prPlayerQi,
+            None -> bs.bsPlayer.cbQi,
+        };
+        let apCur = maxInt(bs.bsPlayer.cbAp, floorInt(m.cmFx.fxPlayerApAnim));
+        listMap(bs.bsActiveSkills, (sk) -> {
+            let cdRem = maxFloat(0.0, optOr(mapLookup(cds, sk.asId), 0.0) - cdAgeSec);
+            let nReqs = listLen(sk.asReqStatus);
+            let missingReqs = listFilterMap(intRange(0, nReqs - 1), (idx) -> {
+                let reqId = listNthOr(sk.asReqStatus, idx, "");
+                let reqNm = listNthOr(sk.asReqStatusNames, idx, "");
+                let present = optIsSome(listFind(pEffs, (p) -> match p { (ef, _) -> ef.efId == reqId }));
+                if (!present) Some(reqNm) else None
+            });
+            let hasReqs = listIsEmpty(missingReqs);
+            let ready = cdRem <= 0.05 && presQi >= sk.asCost && apCur >= sk.asApReq && hasReqs;
+            let queued = optStrEq(bs.bsPendingSkillId, Some(sk.asId));
+            let reasonTxt =
+                if (queued) {
+                    if (zh) "蓄势待发" else "Queued"
+                } else if (cdRem > 0.05) {
+                    (if (zh) "冷却 " else "CD ") + intToStr(ceilInt(cdRem)) + "s"
+                } else if (!hasReqs) {
+                    let nonEmpty = listFilter(missingReqs, (s) -> strLen(s) > 0);
+                    (if (zh) "需「" else "Need ") + strJoin(nonEmpty, "、") + (if (zh) "」" else "")
+                } else if (presQi < sk.asCost) {
+                    (if (zh) "需气 " else "Qi ") + intToStr(sk.asCost)
+                } else if (apCur < sk.asApReq) {
+                    (if (zh) "需动 " else "AP ") + intToStr(sk.asApReq)
+                } else {
+                    (if (zh) "动 " else "AP ") + intToStr(sk.asApReq) + (if (zh) " · 气 " else " · Qi ") + intToStr(sk.asCost)
+                };
+            MkSkillEval {
+                seSkill: sk,
+                seCdRem: cdRem,
+                seCdTotal: maxFloat(1.0, sk.asCooldown),
+                seReady: ready,
+                seQueued: queued,
+                seUltimate: optOr(sk.asDamage, 0) >= 100,
+                seReason: reasonTxt,
+            }
+        })
+    },
+}
+
+pub def portraitScoreFile(gender: String, app: Int, playerName: String): String = {
+    let evenScore = clampInt(0, 10, floorDiv(app + 1, 2) * 2);
+    let twoDigit = if (evenScore < 10) "0" + intToStr(evenScore) else intToStr(evenScore);
+    let trimmed = utf8Trim(playerName);
+    let variant = 1 + utf8FoldCodepoints(trimmed, 0, (acc, cp) -> floorMod(acc * 31 + cp, 4));
+    let variantText = "-0" + intToStr(variant);
+    let version = if (evenScore >= 8) "v9" else "v8";
+    let portraitGender = match gender {
+        "female" -> "female",
+        "male" -> "male",
+        _ -> if (evenScore <= 2) "male" else "female",
+    };
+    "beauty-" + version + "-" + portraitGender + "-" + twoDigit + variantText
+}
+
+def encodeCombatantVal(mCb: Option CombatantInfo): Value = match mCb {
+    None -> VNull,
+    Some(cb) -> object([
+        "combatantSnapshotName" := cb.cbName,
+        "combatantSnapshotHp" := cb.cbHp,
+        "combatantSnapshotMaxHp" := cb.cbMaxHp,
+        "combatantSnapshotQi" := cb.cbQi,
+        "combatantSnapshotMaxQi" := cb.cbMaxQi,
+    ]),
+}
+
+pub def buildLabStateJson(m: ClientModel): String = {
+    let bt = m.cmBattle;
+    let mTl = bt.btActiveTimeline;
+    let tlVal = match mTl {
+        None -> VNull,
+        Some(tl) -> object([
+            "id" := tl.tlId,
+            "kind" := tl.tlKind,
+            "durationMs" := numVal(tl.tlDurationMs),
+            "impactAtMs" := numVal(tl.tlImpactAtMs),
+        ]),
+    };
+    let presVal = match bt.btPresentation {
+        None -> VNull,
+        Some(pr) -> object([
+            "playerHp" := pr.prPlayerHp,
+            "enemyHp" := pr.prEnemyHp,
+            "playerQi" := pr.prPlayerQi,
+            "enemyQi" := pr.prEnemyQi,
+        ]),
+    };
+    let (playerDashX, playerDashY) =
+        if (m.cmVp.vpReducedMotion) (0.0, 0.0)
+        else match mTl {
+            Some(tl) -> {
+                let sc = sampleBattleScene(Some(tl), bt.btTimelineElapsedMs, tl.tlActor.raVisual, tl.tlTarget.rtVisual, false);
+                let pf = sc.scPlayer;
+                (pf.fsX - sideHome(SidePlayer), pf.fsY)
+            },
+            None -> (0.0, 0.0),
+        };
+    let stageEventId = match mTl { Some(tl) -> intToStr(tl.tlId), None -> "idle" };
+    let pCb = match bt.btSnap { Some(bs) -> Some(bs.bsPlayer), None -> None };
+    let eCb = match bt.btSnap { Some(bs) -> Some(bs.bsEnemy), None -> None };
+    let activeCount = match mTl { Some(_) -> 1, None -> 0 };
+    stringify(object([
+        "stageEventId" := stageEventId,
+        "playerDashX" := numVal(playerDashX),
+        "playerDashY" := numVal(playerDashY),
+        "soundOn" := m.cmVp.vpSoundOn,
+        "logCount" := listLen(m.cmUi.uiLogs),
+        "game" := object([
+            "battle" := object([
+                "active" := bt.btInBattle,
+                "player" := encodeCombatantVal(pCb),
+                "enemy" := encodeCombatantVal(eCb),
+                "presentation" := presVal,
+                "animation" := object([
+                    "activeTimeline" := tlVal,
+                    "queueDepth" := listLen(bt.btQueue) + activeCount,
+                ]),
+            ]),
+        ]),
+        "playback" := object([
+            "paused" := m.cmLab.labPaused,
+            "speed" := numVal(m.cmLab.labSpeed),
+            "elapsedMs" := numVal(bt.btTimelineElapsedMs),
+            "durationMs" := numVal(match mTl { Some(tl) -> tl.tlDurationMs, None -> 0.0 }),
+        ]),
+    ]))
+}

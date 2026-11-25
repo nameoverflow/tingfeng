@@ -1,0 +1,174 @@
+// Persistent AVL `OrdMap k v` & `OrdSet k` parameterized by `Ord k` (`ordmap`).
+// Deterministic ascending traversal matching `Data.Map.Strict` / `Data.Set`,
+// with HKT `Functor (OrdMap k)` and `Semigroup`/`Monoid` left-biased union.
+
+use std.option.{Option, Some, None}
+use prelude.{
+    Ordering, Lt, EqOrd, Gt, Ord, compare,
+    Semigroup, (<+>), Monoid, empty,
+    Functor, fmap, maxInt
+}
+
+pub data OrdMap k v {
+    MEmpty,
+    MNode(Int, OrdMap k v, k, v, OrdMap k v),
+}
+
+pub def mapEmpty(): OrdMap k v = MEmpty
+
+pub def mapSingleton(k: k, v: v): OrdMap k v =
+    MNode(1, MEmpty, k, v, MEmpty)
+
+pub def mapIsEmpty(m: OrdMap k v): Bool = match m {
+    MEmpty -> true,
+    _ -> false,
+}
+
+pub def mapSize(m: OrdMap k v): Int = match m {
+    MEmpty -> 0,
+    MNode(_, l, _, _, r) -> 1 + mapSize(l) + mapSize(r),
+}
+
+def height(m: OrdMap k v): Int = match m {
+    MEmpty -> 0,
+    MNode(h, _, _, _, _) -> h,
+}
+
+def mkNode(l: OrdMap k v, k: k, v: v, r: OrdMap k v): OrdMap k v =
+    MNode(1 + maxInt(height(l), height(r)), l, k, v, r)
+
+def balanceFactor(m: OrdMap k v): Int = match m {
+    MEmpty -> 0,
+    MNode(_, l, _, _, r) -> height(l) - height(r),
+}
+
+def rotateRight(y: OrdMap k v): OrdMap k v = match y {
+    MNode(_, MNode(_, xl, xk, xv, xr), yk, yv, yr) ->
+        mkNode(xl, xk, xv, mkNode(xr, yk, yv, yr)),
+    _ -> y,
+}
+
+def rotateLeft(x: OrdMap k v): OrdMap k v = match x {
+    MNode(_, xl, xk, xv, MNode(_, yl, yk, yv, yr)) ->
+        mkNode(mkNode(xl, xk, xv, yl), yk, yv, yr),
+    _ -> x,
+}
+
+def rebalance(l: OrdMap k v, k: k, v: v, r: OrdMap k v): OrdMap k v = {
+    let hl = height(l);
+    let hr = height(r);
+    if (hl > hr + 1) {
+        if (balanceFactor(l) < 0) rotateRight(mkNode(rotateLeft(l), k, v, r))
+        else rotateRight(mkNode(l, k, v, r))
+    } else if (hr > hl + 1) {
+        if (balanceFactor(r) > 0) rotateLeft(mkNode(l, k, v, rotateRight(r)))
+        else rotateLeft(mkNode(l, k, v, r))
+    } else {
+        mkNode(l, k, v, r)
+    }
+}
+
+pub def mapLookup(m, key): forall k v. (Ord k) => (OrdMap k v, k) -> Option v = match m {
+    MEmpty -> None,
+    MNode(_, l, k, v, r) -> match compare(key, k) {
+        Lt -> mapLookup(l, key),
+        Gt -> mapLookup(r, key),
+        EqOrd -> Some(v),
+    },
+}
+
+pub def mapLookupOr(m, key, fallback): forall k v. (Ord k) => (OrdMap k v, k, v) -> v =
+    match mapLookup(m, key) {
+        Some(v) -> v,
+        None -> fallback,
+    }
+
+pub def mapMember(m, key): forall k v. (Ord k) => (OrdMap k v, k) -> Bool =
+    match mapLookup(m, key) {
+        Some(_) -> true,
+        None -> false,
+    }
+
+pub def mapInsert(m, key, val): forall k v. (Ord k) => (OrdMap k v, k, v) -> OrdMap k v = match m {
+    MEmpty -> mapSingleton(key, val),
+    MNode(_, l, k, v, r) -> match compare(key, k) {
+        Lt -> rebalance(mapInsert(l, key, val), k, v, r),
+        Gt -> rebalance(l, k, v, mapInsert(r, key, val)),
+        EqOrd -> mkNode(l, key, val, r),
+    },
+}
+
+def toAscLoop(m: OrdMap k v, acc: List (k, v)): List (k, v) = match m {
+    MEmpty -> acc,
+    MNode(_, l, k, v, r) -> toAscLoop(l, Cons((k, v), toAscLoop(r, acc))),
+}
+
+pub def mapToAscList(m: OrdMap k v): List (k, v) = toAscLoop(m, Nil)
+
+def keysLoop(m: OrdMap k v, acc: List k): List k = match m {
+    MEmpty -> acc,
+    MNode(_, l, k, _, r) -> keysLoop(l, Cons(k, keysLoop(r, acc))),
+}
+
+pub def mapKeys(m: OrdMap k v): List k = keysLoop(m, Nil)
+
+def elemsLoop(m: OrdMap k v, acc: List v): List v = match m {
+    MEmpty -> acc,
+    MNode(_, l, _, v, r) -> elemsLoop(l, Cons(v, elemsLoop(r, acc))),
+}
+
+pub def mapElems(m: OrdMap k v): List v = elemsLoop(m, Nil)
+
+pub def mapFromList(pairs): forall k v. (Ord k) => List (k, v) -> OrdMap k v =
+    std.list.listFold(pairs, MEmpty, (acc, p) -> match p { (k, v) -> mapInsert(acc, k, v) })
+
+pub def mapMap(m: OrdMap k a, f: a -> b): OrdMap k b = match m {
+    MEmpty -> MEmpty,
+    MNode(h, l, k, v, r) -> MNode(h, mapMap(l, f), k, f(v), mapMap(r, f)),
+}
+
+pub def mapUnion(left, right): forall k v. (Ord k) => (OrdMap k v, OrdMap k v) -> OrdMap k v =
+    std.list.listFold(
+        mapToAscList(right),
+        left,
+        (acc, p) -> match p {
+            (k, v) -> if (mapMember(acc, k)) acc else mapInsert(acc, k, v),
+        }
+    )
+
+instance Functor (OrdMap k) {
+    def fmap(f, m) = mapMap(m, f)
+}
+
+instance (Ord k) => Semigroup (OrdMap k v) {
+    def (<+>)(a, b) = mapUnion(a, b)
+}
+
+instance (Ord k) => Monoid (OrdMap k v) {
+    def empty() = MEmpty
+}
+
+pub data OrdSet k {
+    MkOrdSet(OrdMap k Void),
+}
+
+pub def setEmpty(): OrdSet k = MkOrdSet(MEmpty)
+
+pub def setSize(s: OrdSet k): Int = match s {
+    MkOrdSet(m) -> mapSize(m),
+}
+
+pub def setMember(s, x): forall k. (Ord k) => (OrdSet k, k) -> Bool = match s {
+    MkOrdSet(m) -> mapMember(m, x),
+}
+
+pub def setInsert(s, x): forall k. (Ord k) => (OrdSet k, k) -> OrdSet k = match s {
+    MkOrdSet(m) -> MkOrdSet(mapInsert(m, x, ())),
+}
+
+pub def setToAscList(s: OrdSet k): List k = match s {
+    MkOrdSet(m) -> mapKeys(m),
+}
+
+pub def setFromList(xs): forall k. (Ord k) => List k -> OrdSet k =
+    std.list.listFold(xs, setEmpty(), (acc, x) -> setInsert(acc, x))

@@ -1,7 +1,7 @@
 {
   "name": "tingfeng-client",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "scripts": {
     "dev": "node scripts/serve-client.mjs",
@@ -9,8 +9,8 @@
     "preview": "node scripts/serve-client.mjs",
     "check": "npm run validate:animations && node scripts/build-wasm.mjs --check",
     "validate:animations": "node scripts/validate-animation-data.mjs",
-    "test:portraits": "node scripts/test-portraits-hs.mjs",
-    "test:battle": "node scripts/test-battle-hs.mjs",
+    "test:portraits": "node scripts/test-portraits.mjs",
+    "test:battle": "node scripts/test-battle.mjs",
     "test:battle:browser": "playwright test",
     "record:battle": "node scripts/record-battle.mjs"
   },

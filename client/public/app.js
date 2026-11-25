@@ -1,11 +1,8 @@
-import ghcWasmJsffi from "/wasm/ghc_wasm_jsffi.js";
-
 const pageKind = document.body.dataset.page || "game";
 const c2dCanvas = document.getElementById("c2d-stage");
 const stageProbe = document.getElementById("stage-probe");
 const imeProxy = document.getElementById("ime-proxy");
 const ctx = c2dCanvas.getContext("2d", { alpha: false });
-const isTouch = matchMedia("(pointer: coarse)").matches || window.innerWidth <= 768;
 const reducedMotionQuery = matchMedia("(prefers-reduced-motion: reduce)");
 
 let resolveWasmReady = null;
@@ -24,82 +21,7 @@ function portraitImage(id) {
   return img;
 }
 
-// --- 2. Self-contained WASI preview1 shim ---
-function createWasiShim(getMemory) {
-  const dec = new TextDecoder();
-  const base = {
-    args_sizes_get(argcPtr, argvBufPtr) {
-      const dv = new DataView(getMemory().buffer);
-      dv.setUint32(argcPtr, 0, true);
-      dv.setUint32(argvBufPtr, 0, true);
-      return 0;
-    },
-    args_get() { return 0; },
-    environ_sizes_get(cntPtr, szPtr) {
-      const dv = new DataView(getMemory().buffer);
-      dv.setUint32(cntPtr, 0, true);
-      dv.setUint32(szPtr, 0, true);
-      return 0;
-    },
-    environ_get() { return 0; },
-    clock_res_get(_id, resPtr) {
-      new DataView(getMemory().buffer).setBigUint64(resPtr, 1000n, true);
-      return 0;
-    },
-    clock_time_get(_id, _prec, timePtr) {
-      new DataView(getMemory().buffer).setBigUint64(timePtr, BigInt(Math.floor(performance.now() * 1e6)), true);
-      return 0;
-    },
-    fd_fdstat_get(fd, ptr) {
-      const dv = new DataView(getMemory().buffer);
-      dv.setUint8(ptr, fd <= 2 ? 2 : 4);
-      dv.setUint16(ptr + 2, 0, true);
-      dv.setBigUint64(ptr + 8, 0n, true);
-      dv.setBigUint64(ptr + 16, 0n, true);
-      return 0;
-    },
-    fd_fdstat_set_flags() { return 0; },
-    fd_filestat_get() { return 8; },
-    fd_filestat_set_size() { return 8; },
-    fd_prestat_get() { return 8; },
-    fd_prestat_dir_name() { return 8; },
-    fd_write(fd, iovsPtr, iovsLen, nwrittenPtr) {
-      const mem = getMemory();
-      const dv = new DataView(mem.buffer);
-      const u8 = new Uint8Array(mem.buffer);
-      let total = 0, out = "";
-      for (let i = 0; i < iovsLen; i++) {
-        const ptr = dv.getUint32(iovsPtr + i * 8, true);
-        const len = dv.getUint32(iovsPtr + i * 8 + 4, true);
-        out += dec.decode(u8.subarray(ptr, ptr + len));
-        total += len;
-      }
-      if (out.trim()) (fd === 2 ? console.warn : console.log)("[ghc-wasm]", out.trimEnd());
-      dv.setUint32(nwrittenPtr, total, true);
-      return 0;
-    },
-    fd_read(_fd, _iovs, _len, nreadPtr) {
-      new DataView(getMemory().buffer).setUint32(nreadPtr, 0, true);
-      return 0;
-    },
-    fd_close() { return 0; },
-    fd_seek() { return 70; },
-    poll_oneoff(_in, _out, _n, nevPtr) {
-      new DataView(getMemory().buffer).setUint32(nevPtr, 0, true);
-      return 0;
-    },
-    proc_exit(code) { throw new Error(`WASI exit ${code}`); },
-    random_get(bufPtr, bufLen) {
-      crypto.getRandomValues(new Uint8Array(getMemory().buffer, bufPtr, bufLen));
-      return 0;
-    }
-  };
-  return new Proxy(base, {
-    get(target, prop) { return prop in target ? target[prop] : () => 8; }
-  });
-}
-
-// --- 3. One-Time Offscreen Xuan-Paper Fiber Texture Pattern (Zero per-frame GPU upload!) ---
+// --- 2. One-Time Offscreen Xuan-Paper Fiber Texture Pattern (Zero per-frame GPU upload!) ---
 function createPaperPattern(targetCtx) {
   const tile = document.createElement("canvas");
   tile.width = 192;
@@ -108,7 +30,6 @@ function createPaperPattern(targetCtx) {
   if (!tctx) return null;
   let seed = 1337;
   const rand = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
-  // Subtle organic Xuan paper grain & horizontal mulberry fibers
   for (let i = 0; i < 650; i++) {
     const x = rand() * 192, y = rand() * 192;
     const dark = rand() > 0.45;
@@ -129,7 +50,7 @@ function createPaperPattern(targetCtx) {
 
 const paperPattern = createPaperPattern(ctx);
 
-// --- 4. Procedural WebAudio Synthesizer ---
+// --- 3. Procedural WebAudio Synthesizer ---
 let audioCtx = null;
 function playSynthesizedSfx(kind) {
   try {
@@ -166,20 +87,19 @@ function playSynthesizedSfx(kind) {
   } catch (_) {}
 }
 
-// --- 5. Full-Canvas Command Tape Executor (Zero DOM UI!) ---
+// --- 4. Full-Canvas Command Tape Executor (Zero DOM UI!) ---
 let cssW = window.innerWidth;
 let cssH = pageKind === "poses" ? 1420 : window.innerHeight;
 let layoutH = cssH;
 let dpr = Math.min(2.0, window.devicePixelRatio || 1);
 
 function syncCanvasSize() {
-  // Always match the canvas backing store 1:1 with its actual CSS box (never distort when iOS keyboard opens!)
   const boxW = Math.max(320, c2dCanvas.clientWidth || window.innerWidth);
   const boxH = pageKind === "poses" ? Math.max(window.innerHeight, 1420) : Math.max(320, c2dCanvas.clientHeight || window.innerHeight);
   cssW = boxW;
   cssH = boxH;
   const vv = window.visualViewport;
-  layoutH = pageKind === "poses" ? boxH : Math.max(220, Math.min(boxH, Math.round(vv ? vv.height : boxH)));
+  layoutH = pageKind === "poses" ? boxH : Math.max(220, Math.min(cssH, Math.round(vv ? vv.height : boxH)));
   dpr = Math.min(2.0, window.devicePixelRatio || 1);
   const pw = Math.round(cssW * dpr), ph = Math.round(cssH * dpr);
   if (c2dCanvas.width !== pw || c2dCanvas.height !== ph) {
@@ -274,7 +194,6 @@ function executeFrameBatch(batchStr) {
           ctx.fillStyle = paperPattern;
           ctx.fillRect(0, 0, w, h);
         }
-        // Soft atmospheric warm-ink vignette around edges
         const vig = ctx.createRadialGradient(w * 0.5, h * 0.44, Math.min(w, h) * 0.25, w * 0.5, h * 0.5, Math.max(w, h) * 0.78);
         vig.addColorStop(0, "rgba(255, 252, 244, 0.14)");
         vig.addColorStop(1, "rgba(42, 34, 24, 0.08)");
@@ -283,7 +202,6 @@ function executeFrameBatch(batchStr) {
         break;
       }
       case "MT": {
-        // Song-dynasty Shan-shui misty ink-wash mountain range (vertical fade into mist!)
         const yBase = +p[1], amp = +p[2], par = +p[3], camX = +p[4], al = +p[6];
         ctx.save();
         const mg = ctx.createLinearGradient(0, yBase - amp * 1.15, 0, yBase + amp * 2.8 + 80);
@@ -306,7 +224,6 @@ function executeFrameBatch(batchStr) {
         break;
       }
       case "CARD": {
-        // Elevated Song-dynasty Xuan-paper plaque with soft diffused ink shadow + hairline border
         const x = +p[1], y = +p[2], w = Math.max(0, +p[3]), h = Math.max(0, +p[4]), r = +p[5];
         const fill = p[6], bd = p[7], lw = +p[8], al = +p[9], shY = +p[10], shBlur = +p[11], dbl = p[12] === "1";
         ctx.save();
@@ -345,7 +262,6 @@ function executeFrameBatch(batchStr) {
         break;
       }
       case "BAR": {
-        // Sleek mineral-pigment gradient progress bar with optional ghost trail
         const x = +p[1], y = +p[2], w = Math.max(0, +p[3]), h = Math.max(0, +p[4]), r = +p[5];
         const ratio = Math.max(0, Math.min(1, +p[6])), trail = +p[7];
         const c1 = p[8], c2 = p[9], trailCol = p[10];
@@ -557,17 +473,57 @@ function executeFrameBatch(batchStr) {
   syncImeOverlay(frameInput);
 }
 
+// --- 5. Geisha Freestanding WebAssembly Bridge & Frame-Boundary Mark-Sweep GC ---
+const utf8Dec = new TextDecoder("utf-8");
+const utf8Enc = new TextEncoder();
+let wasmExports = null;
+let tfApi = null;
+let callDepth = 0;
+let lastGcLive = 0;
+let tfQueue = Promise.resolve();
+
+function readStr(ptr) {
+  const p = ptr >>> 0;
+  if (!p || !wasmExports) return "";
+  const len = wasmExports.gs_wasm_str_len(p) >>> 0;
+  if (!len) return "";
+  return utf8Dec.decode(new Uint8Array(wasmExports.memory.buffer, p, len));
+}
+
+function writeStr(str) {
+  const raw = utf8Enc.encode(String(str ?? ""));
+  const ptr = wasmExports.gs_wasm_alloc(raw.length + 1) >>> 0;
+  const view = new Uint8Array(wasmExports.memory.buffer, ptr, raw.length + 1);
+  view.set(raw);
+  view[raw.length] = 0;
+  return ptr;
+}
+
+function invokeWasm(fn) {
+  callDepth++;
+  try {
+    return fn();
+  } finally {
+    callDepth--;
+    if (callDepth === 0 && wasmExports) {
+      const live = wasmExports.gs_wasm_heap_live() >>> 0;
+      if (live > lastGcLive + 524288) {
+        wasmExports.gs_wasm_gc_collect();
+        lastGcLive = wasmExports.gs_wasm_heap_live() >>> 0;
+      }
+    }
+  }
+}
+
+function runTf(fn) {
+  tfQueue = tfQueue.then(fn).catch((e) => console.error("[geisha-wasm]", e));
+  return tfQueue;
+}
+
 // --- 6. Low-Latency Dual WebSocket + Piggybacked HTTP Bridge ---
 let wsConn = null;
 let bridgeSession = null;
 let bridgeAborter = null;
-let hsExports = null;
-let hsQueue = Promise.resolve();
-
-function runHs(fn) {
-  hsQueue = hsQueue.then(fn).catch((e) => console.error("[hs]", e));
-  return hsQueue;
-}
 
 async function startBridgeLoop(sessionId) {
   while (bridgeSession === sessionId) {
@@ -581,10 +537,10 @@ async function startBridgeLoop(sessionId) {
       });
       if (!res.ok) break;
       const { messages, closed } = await res.json();
-      for (const m of messages || []) await runHs(() => hsExports.hs_on_ws_message(m));
+      for (const m of messages || []) await runTf(() => tfApi.onWsMessage(m));
       if (closed) {
         bridgeSession = null;
-        await runHs(() => hsExports.hs_on_ws_close());
+        await runTf(() => tfApi.onWsClose());
         break;
       }
     } catch (e) {
@@ -604,10 +560,10 @@ async function openHttpBridge(mode, username, password) {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const { sessionId } = await res.json();
     bridgeSession = sessionId;
-    await runHs(() => hsExports.hs_on_ws_open(mode, username, password));
+    await runTf(() => tfApi.onWsOpen(mode, username, password));
     startBridgeLoop(sessionId);
   } catch (_) {
-    await runHs(() => hsExports.hs_on_ws_close());
+    await runTf(() => tfApi.onWsClose());
   }
 }
 
@@ -632,10 +588,10 @@ function connectServer(mode, username, password) {
     sock.addEventListener("open", () => {
       if (settled) return;
       settled = true; clearTimeout(fallback);
-      runHs(() => hsExports.hs_on_ws_open(mode, username, password));
+      runTf(() => tfApi.onWsOpen(mode, username, password));
     });
     sock.addEventListener("message", (ev) => {
-      if (typeof ev.data === "string") runHs(() => hsExports.hs_on_ws_message(ev.data));
+      if (typeof ev.data === "string") runTf(() => tfApi.onWsMessage(ev.data));
     });
     sock.addEventListener("error", () => {
       if (!settled) {
@@ -646,7 +602,7 @@ function connectServer(mode, username, password) {
     sock.addEventListener("close", () => {
       if (settled && wsConn === sock) {
         wsConn = null;
-        runHs(() => hsExports.hs_on_ws_close());
+        runTf(() => tfApi.onWsClose());
       }
     });
   } catch (_) {
@@ -668,7 +624,7 @@ function sendServer(payload) {
       .then((r) => (r.ok ? r.json() : null))
       .then(async (data) => {
         if (data?.messages?.length) {
-          for (const m of data.messages) await runHs(() => hsExports.hs_on_ws_message(m));
+          for (const m of data.messages) await runTf(() => tfApi.onWsMessage(m));
         }
       })
       .catch(() => {});
@@ -681,16 +637,16 @@ let activeInputId = null;
 if (imeProxy) {
   imeProxy.addEventListener("focus", () => {
     if (currentImeId) activeInputId = currentImeId;
-    if (activeInputId && hsExports) {
+    if (activeInputId && tfApi) {
       const id = activeInputId;
-      runHs(() => hsExports.hs_focus_input_id(id));
+      runTf(() => tfApi.focusInputId(id));
     }
   });
   const pushVal = () => {
     const id = activeInputId || currentImeId;
-    if (id && hsExports) {
+    if (id && tfApi) {
       const val = imeProxy.value;
-      runHs(() => hsExports.hs_text_input(id, val));
+      runTf(() => tfApi.textInput(id, val));
     }
   };
   imeProxy.addEventListener("input", pushVal);
@@ -698,17 +654,17 @@ if (imeProxy) {
   imeProxy.addEventListener("compositionend", pushVal);
   imeProxy.addEventListener("keydown", (ev) => {
     const id = activeInputId || currentImeId;
-    if (ev.key === "Enter" && !ev.isComposing && id && hsExports) {
+    if (ev.key === "Enter" && !ev.isComposing && id && tfApi) {
       ev.preventDefault();
-      runHs(() => hsExports.hs_text_submit(id));
-    } else if (ev.key === "Escape" && hsExports) {
+      runTf(() => tfApi.textSubmit(id));
+    } else if (ev.key === "Escape" && tfApi) {
       ev.preventDefault();
       imeProxy.blur();
     }
   });
   imeProxy.addEventListener("blur", () => {
     activeInputId = null;
-    if (hsExports) runHs(() => hsExports.hs_blur_input());
+    if (tfApi) runTf(() => tfApi.blurInput());
   });
 }
 
@@ -758,42 +714,42 @@ globalThis.__tfHost = {
 };
 
 const syncReducedMotion = () =>
-  runHs(() => hsExports?.hs_ui_action("set_reduced_motion", reducedMotionQuery.matches ? "1" : "0", ""));
+  runTf(() => tfApi?.uiAction("set_reduced_motion", reducedMotionQuery.matches ? "1" : "0", ""));
 
 const fixturesApi = {
   ready: () => wasmReady,
   seed: (p = "female", e = "male") =>
-    runHs(async () => {
-      await hsExports?.hs_ui_action("set_reduced_motion", reducedMotionQuery.matches ? "1" : "0", "");
-      await hsExports?.hs_lab_cmd("seed", p, e, "", 0);
+    runTf(async () => {
+      tfApi?.uiAction("set_reduced_motion", reducedMotionQuery.matches ? "1" : "0", "");
+      tfApi?.labCmd("seed", p, e, "", 0);
     }),
   submit: (actionId = "rig.fist.punch_a", result = "hit", side = "player", damage = 18) =>
-    runHs(async () => {
-      await hsExports?.hs_ui_action("set_reduced_motion", reducedMotionQuery.matches ? "1" : "0", "");
-      await hsExports?.hs_lab_cmd("submit", actionId, result, side, damage);
+    runTf(async () => {
+      tfApi?.uiAction("set_reduced_motion", reducedMotionQuery.matches ? "1" : "0", "");
+      tfApi?.labCmd("submit", actionId, result, side, damage);
     }),
   demo: () =>
-    runHs(async () => {
-      await hsExports?.hs_ui_action("set_reduced_motion", reducedMotionQuery.matches ? "1" : "0", "");
-      await hsExports?.hs_lab_cmd("demo", "", "", "", 0);
+    runTf(async () => {
+      tfApi?.uiAction("set_reduced_motion", reducedMotionQuery.matches ? "1" : "0", "");
+      tfApi?.labCmd("demo", "", "", "", 0);
     }),
   pause: (paused = true) =>
-    runHs(() => hsExports?.hs_lab_cmd("pause", paused ? "true" : "false", "", "", 0)),
+    runTf(() => tfApi?.labCmd("pause", paused ? "true" : "false", "", "", 0)),
   seek: (ms) =>
-    runHs(async () => {
-      await hsExports?.hs_ui_action("set_reduced_motion", reducedMotionQuery.matches ? "1" : "0", "");
-      await hsExports?.hs_lab_cmd("seek", "", "", "", Number(ms) || 0);
+    runTf(async () => {
+      tfApi?.uiAction("set_reduced_motion", reducedMotionQuery.matches ? "1" : "0", "");
+      tfApi?.labCmd("seek", "", "", "", Number(ms) || 0);
     }),
   speed: (val) =>
-    runHs(() => hsExports?.hs_lab_cmd("speed", "", "", "", Number(val) || 1)),
+    runTf(() => tfApi?.labCmd("speed", "", "", "", Number(val) || 1)),
   ui: (kind, a1 = "", a2 = "") =>
-    runHs(() => hsExports?.hs_ui_action(kind, a1, a2)),
+    runTf(() => tfApi?.uiAction(kind, a1, a2)),
   state: () => latestLabStateObj
 };
 window.__battleLab = fixturesApi;
 globalThis.__tfHsFixtures = fixturesApi;
 
-// --- 9. Boot Haskell Wasm Client ---
+// --- 9. Boot Pure-Geisha Wasm Client ---
 async function boot() {
   const [poseRes, stgRes, fistRes, swordRes, effRes, wasmRes] = await Promise.all([
     fetch("/data/svg-poses.json"),
@@ -801,23 +757,89 @@ async function boot() {
     fetch("/data/fist.json"),
     fetch("/data/sword.json"),
     fetch("/data/effects.json"),
-    fetch("/wasm/tingfeng-hs.wasm")
+    fetch("/wasm/tingfeng.wasm")
   ]);
   const [poseTxt, stgTxt, fistTxt, swordTxt, effTxt, wasmBytes] = await Promise.all([
     poseRes.text(), stgRes.text(), fistRes.text(), swordRes.text(), effRes.text(), wasmRes.arrayBuffer()
   ]);
 
-  const __exports = {};
-  const wasi = createWasiShim(() => __exports.memory);
-  const { instance } = await WebAssembly.instantiate(wasmBytes, {
-    wasi_snapshot_preview1: wasi,
-    ghc_wasm_jsffi: ghcWasmJsffi(__exports),
-  });
-  Object.assign(__exports, instance.exports);
-  if (typeof instance.exports._initialize === "function") instance.exports._initialize();
-  hsExports = instance.exports;
+  const envImports = {
+    sin: Math.sin,
+    cos: Math.cos,
+    acos: Math.acos,
+    atan2: Math.atan2,
+    sqrt: Math.sqrt,
+    exp: Math.exp,
+    gs_log: (ptr, len) => {
+      if (!wasmExports || !len) return;
+      const msg = utf8Dec.decode(new Uint8Array(wasmExports.memory.buffer, ptr >>> 0, len >>> 0));
+      if (msg.trim()) console.log("[geisha]", msg.trimEnd());
+    },
+    host_now_ms: () => performance.now(),
+    host_submit_frame: (batchPtr) => globalThis.__tfHost.submitFrame(readStr(batchPtr)),
+    host_sync_lab_state: (jsonPtr) => globalThis.__tfHost.syncLabState(readStr(jsonPtr)),
+    host_send_ws: (payloadPtr) => globalThis.__tfHost.sendWs(readStr(payloadPtr)),
+    host_connect_ws: (modePtr, userPtr, passPtr) =>
+      globalThis.__tfHost.connectWs(readStr(modePtr), readStr(userPtr), readStr(passPtr)),
+    host_set_cursor: (curPtr) => globalThis.__tfHost.setCursor(readStr(curPtr)),
+    host_play_sfx: (kindPtr) => globalThis.__tfHost.playSfx(readStr(kindPtr)),
+    host_save_local: (kPtr, vPtr) => globalThis.__tfHost.saveLocal(readStr(kPtr), readStr(vPtr)),
+    host_focus_input: (idPtr, valPtr, x, y, w, h) =>
+      globalThis.__tfHost.focusInput(readStr(idPtr), readStr(valPtr), x, y, w, h),
+    host_blur_input: () => globalThis.__tfHost.blurInput()
+  };
 
-  await runHs(() => hsExports.hs_init_app(pageKind, poseTxt, stgTxt, fistTxt, swordTxt, effTxt, cssW, cssH, reducedMotionQuery.matches ? 1 : 0));
+  const { instance } = await WebAssembly.instantiate(wasmBytes, { env: envImports });
+  wasmExports = instance.exports;
+  invokeWasm(() => wasmExports.__geisha_init());
+  lastGcLive = wasmExports.gs_wasm_heap_live() >>> 0;
+
+  tfApi = {
+    initApp: (page, pose, stg, fist, sword, eff, w, h, red) =>
+      invokeWasm(() =>
+        wasmExports.tf_init_app(
+          writeStr(page), writeStr(pose), writeStr(stg),
+          writeStr(fist), writeStr(sword), writeStr(eff),
+          w, h, red
+        )
+      ),
+    stepFrame: (dtMs, w, h, red) =>
+      invokeWasm(() => wasmExports.tf_step_frame(dtMs, w, h, red)),
+    onWsOpen: (mode, user, pass) =>
+      invokeWasm(() => wasmExports.tf_on_ws_open(writeStr(mode), writeStr(user), writeStr(pass))),
+    onWsMessage: (raw) =>
+      invokeWasm(() => wasmExports.tf_on_ws_message(writeStr(raw))),
+    onWsClose: () =>
+      invokeWasm(() => wasmExports.tf_on_ws_close()),
+    setHidden: (hiddenInt) =>
+      invokeWasm(() => wasmExports.tf_set_hidden(hiddenInt)),
+    pointerMove: (x, y) =>
+      invokeWasm(() => wasmExports.tf_pointer_move(x, y)),
+    pointerClick: (x, y) =>
+      invokeWasm(() => wasmExports.tf_pointer_click(x, y)),
+    panZoom: (dx, dy, zFactor) =>
+      invokeWasm(() => wasmExports.tf_pan_zoom(dx, dy, zFactor)),
+    dragAt: (x, y, dx, dy) =>
+      invokeWasm(() => wasmExports.tf_drag_at(x, y, dx, dy)),
+    scrollAt: (x, y, deltaY) =>
+      invokeWasm(() => wasmExports.tf_scroll_at(x, y, deltaY)),
+    textInput: (inpId, val) =>
+      invokeWasm(() => wasmExports.tf_text_input(writeStr(inpId), writeStr(val))),
+    textSubmit: (inpId) =>
+      invokeWasm(() => wasmExports.tf_text_submit(writeStr(inpId))),
+    focusInputId: (inpId) =>
+      invokeWasm(() => wasmExports.tf_focus_input_id(writeStr(inpId))),
+    blurInput: () =>
+      invokeWasm(() => wasmExports.tf_blur_input()),
+    keyDown: (key) =>
+      invokeWasm(() => wasmExports.tf_key_down(writeStr(key))),
+    uiAction: (kind, a1, a2) =>
+      invokeWasm(() => wasmExports.tf_ui_action(writeStr(kind), writeStr(a1), writeStr(a2))),
+    labCmd: (cmd, a1, a2, a3, numArg) =>
+      invokeWasm(() => wasmExports.tf_lab_cmd(writeStr(cmd), writeStr(a1), writeStr(a2), writeStr(a3), numArg))
+  };
+
+  await runTf(() => tfApi.initApp(pageKind, poseTxt, stgTxt, fistTxt, swordTxt, effTxt, cssW, cssH, reducedMotionQuery.matches ? 1 : 0));
   wasmReady = true;
   if (resolveWasmReady) resolveWasmReady();
   reducedMotionQuery.addEventListener("change", syncReducedMotion);
@@ -839,18 +861,18 @@ async function boot() {
       if (dragMoved) {
         const dx = e.clientX - lastX, dy = e.clientY - lastY;
         lastX = e.clientX; lastY = e.clientY;
-        runHs(() => hsExports.hs_drag_at(e.clientX, e.clientY, dx, dy));
+        runTf(() => tfApi.dragAt(e.clientX, e.clientY, dx, dy));
         return;
       }
     }
-    runHs(() => hsExports.hs_pointer_move(e.clientX, e.clientY));
+    runTf(() => tfApi.pointerMove(e.clientX, e.clientY));
   });
   stageWrap.addEventListener("pointerup", (e) => {
     const wasTap = dragging && !dragMoved;
     dragging = false;
     dragMoved = false;
     if (wasTap && e.button <= 0) {
-      runHs(() => hsExports.hs_pointer_click(e.clientX, e.clientY));
+      runTf(() => tfApi.pointerClick(e.clientX, e.clientY));
     }
   });
   window.addEventListener("pointerup", () => { dragging = false; dragMoved = false; });
@@ -859,17 +881,17 @@ async function boot() {
   stageWrap.addEventListener("wheel", (e) => {
     if (pageKind === "poses") return;
     e.preventDefault();
-    runHs(() => hsExports.hs_scroll_at(e.clientX, e.clientY, e.deltaY));
+    runTf(() => tfApi.scrollAt(e.clientX, e.clientY, e.deltaY));
   }, { passive: false });
 
   window.addEventListener("keydown", (e) => {
-    if (!hsExports || document.activeElement === imeProxy) return;
+    if (!tfApi || document.activeElement === imeProxy) return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
-    runHs(() => hsExports.hs_key_down(e.key));
+    runTf(() => tfApi.keyDown(e.key));
   });
 
   document.addEventListener("visibilitychange", () => {
-    runHs(() => hsExports?.hs_set_hidden(document.hidden ? 1 : 0));
+    runTf(() => tfApi?.setHidden(document.hidden ? 1 : 0));
   });
 
   if (pageKind === "game") {
@@ -879,13 +901,13 @@ async function boot() {
     const isTest = params.get("test") === "1";
     const urlUser = params.get("user");
     const initName = urlUser || savedName;
-    if (initName) await runHs(() => hsExports.hs_ui_action("set_username", initName, ""));
+    if (initName) await runTf(() => tfApi.uiAction("set_username", initName, ""));
     if (isTest || urlUser) {
       const targetUser = urlUser || "tester";
       const wantReset = isTest ? params.get("reset") !== "0" : params.get("reset") === "1";
-      await runHs(() => hsExports.hs_ui_action("login_submit", targetUser, wantReset ? "reset" : ""));
+      await runTf(() => tfApi.uiAction("login_submit", targetUser, wantReset ? "reset" : ""));
     } else {
-      await runHs(() => hsExports.hs_ui_action("request_creation_cfg", "", ""));
+      await runTf(() => tfApi.uiAction("request_creation_cfg", "", ""));
     }
   }
 
@@ -894,7 +916,7 @@ async function boot() {
     const dt = Math.min(220, Math.max(1, ts - lastTs));
     lastTs = ts;
     if (!document.hidden) {
-      await runHs(() => hsExports.hs_step_frame(dt, cssW, layoutH, reducedMotionQuery.matches ? 1 : 0));
+      await runTf(() => tfApi.stepFrame(dt, cssW, layoutH, reducedMotionQuery.matches ? 1 : 0));
     }
     requestAnimationFrame(frameLoop);
   };

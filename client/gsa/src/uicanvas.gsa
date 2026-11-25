@@ -1,0 +1,1695 @@
+// Full-Canvas Song-Dynasty Xuan-Paper UI Renderer (`uicanvas`).
+// Streams draw commands directly into an O(1) `StringBuf` + `Vec` hitbox collector (`Tape`).
+
+use std.option.{Option, Some, None}
+use std.list.{listLen, listAppend, listMap}
+use std.buf.{StringBuf, bufNew, bufWithCap, bufPushByte, bufPushStr, bufPushBuf, bufToString}
+use std.vec.{Vec, vecNew, vecPush, vecToList}
+use std.str.{intToStr, strJoin}
+use prelude.{
+    mconcat, minInt, maxInt, clampInt, minFloat, maxFloat, clampFloat, clamp01,
+    floorInt, ceilInt, roundInt, floorDiv, floorMod,
+    optOr, optIsSome, optIsNone, listIsEmpty, listNthOr, listFind, listFilter, listTake, listConcatMap,
+    utf8Trim, textWidth, truncateText, wrapText, strReplace, listContainsStr,
+    bufPushF1, bufPushF2, bufPushSanitized
+}
+use ordmap.mapLookup
+use i18n.{Locale, isZh, tr, trParams, artRankTitle, formatArtType}
+use protocol.{
+    CreationBonus, CreationOption, CreationConfig,
+    TeachableArt, ShopItem, RoomChar, MapOverview,
+    EffectInfo, ActiveSkillInfo, BattleSnap,
+    BusyInfo, PlayerStatsInfo, ArtInfo, InvItem, RewardInfo, QuestItem
+}
+use pose.{LookMaiden, lookEq}
+use catalog.{ActionDef, ActionCatalog}
+use state.{
+    AppPage, PageGame, PageBattleLab, PagePoseSheet,
+    LogLine, HitTarget, HitUi, HitFocusInput, HitLab, HitLabScrub, HitSwallow, optHitEq,
+    CanvasHitbox, MkCanvasHitbox,
+    ScrollTarget, ScrollLog, ScrollDrawer, ScrollOnboard, ScrollNpc,
+    ScrollZone, MkScrollZone,
+    ClientModel, SkillEval,
+    isCameraPanned, labActionOrder, liveEffectsOf, evalSkillState, portraitScoreFile
+}
+
+pub data UiOutput {
+    MkUiOutput {
+        uoBuf: StringBuf,
+        uoHits: List CanvasHitbox,
+        uoScrollZones: List ScrollZone,
+        uoLogMaxScroll: Float,
+        uoDrawerMaxScroll: Float,
+        uoOnboardMaxScroll: Float,
+        uoNpcMaxScroll: Float,
+        uoCmdCount: Int,
+    },
+}
+
+// Mutable O(1) Canvas command tape + hitbox accumulator
+data Tape {
+    MkTape {
+        tpBuf: StringBuf,
+        tpHits: Vec CanvasHitbox,
+        tpZones: Vec ScrollZone,
+        tpEmit: Bool,
+    },
+}
+
+def tapeNew(emit: Bool): Tape = MkTape {
+    tpBuf: if (emit) bufWithCap(4096) else bufNew(),
+    tpHits: vecNew(),
+    tpZones: vecNew(),
+    tpEmit: emit,
+}
+
+def pushHit(t: Tape, hb: CanvasHitbox): Void =
+    if (t.tpEmit) vecPush(t.tpHits, hb) else ()
+
+def pushZone(t: Tape, sz: ScrollZone): Void =
+    if (t.tpEmit) vecPush(t.tpZones, sz) else ()
+
+// ============================================================================
+// Streaming Canvas2D Command Primitives
+// ============================================================================
+
+def cmdCard(
+    t: Tape, x: Float, y: Float, w: Float, h: Float, r: Float,
+    fill: String, bd: String, lw: Float, al: Float, shY: Float, shBlur: Float, dbl: Bool
+): Void = if (t.tpEmit) {
+    let b = t.tpBuf;
+    bufPushStr(b, "CARD|");
+    bufPushF1(b, x); bufPushByte(b, 124);
+    bufPushF1(b, y); bufPushByte(b, 124);
+    bufPushF1(b, w); bufPushByte(b, 124);
+    bufPushF1(b, h); bufPushByte(b, 124);
+    bufPushF1(b, r); bufPushByte(b, 124);
+    bufPushStr(b, fill); bufPushByte(b, 124);
+    bufPushStr(b, bd); bufPushByte(b, 124);
+    bufPushF1(b, lw); bufPushByte(b, 124);
+    bufPushF2(b, al); bufPushByte(b, 124);
+    bufPushF1(b, shY); bufPushByte(b, 124);
+    bufPushF1(b, shBlur); bufPushByte(b, 124);
+    bufPushByte(b, if (dbl) 49 else 48);
+    bufPushByte(b, 10)
+} else ()
+
+def cmdBar(
+    t: Tape, x: Float, y: Float, w: Float, h: Float, r: Float,
+    ratio: Float, trail: Float, c1: String, c2: String, trailCol: String
+): Void = if (t.tpEmit) {
+    let b = t.tpBuf;
+    bufPushStr(b, "BAR|");
+    bufPushF1(b, x); bufPushByte(b, 124);
+    bufPushF1(b, y); bufPushByte(b, 124);
+    bufPushF1(b, w); bufPushByte(b, 124);
+    bufPushF1(b, h); bufPushByte(b, 124);
+    bufPushF1(b, r); bufPushByte(b, 124);
+    bufPushF2(b, ratio); bufPushByte(b, 124);
+    bufPushF2(b, trail); bufPushByte(b, 124);
+    bufPushStr(b, c1); bufPushByte(b, 124);
+    bufPushStr(b, c2); bufPushByte(b, 124);
+    bufPushStr(b, trailCol);
+    bufPushByte(b, 10)
+} else ()
+
+def cmdRect(
+    t: Tape, x: Float, y: Float, w: Float, h: Float, r: Float,
+    fill: String, bd: String, lw: Float, al: Float
+): Void = if (t.tpEmit) {
+    let b = t.tpBuf;
+    bufPushStr(b, "RR|");
+    bufPushF1(b, x); bufPushByte(b, 124);
+    bufPushF1(b, y); bufPushByte(b, 124);
+    bufPushF1(b, w); bufPushByte(b, 124);
+    bufPushF1(b, h); bufPushByte(b, 124);
+    bufPushF1(b, r); bufPushByte(b, 124);
+    bufPushStr(b, fill); bufPushByte(b, 124);
+    bufPushStr(b, bd); bufPushByte(b, 124);
+    bufPushF1(b, lw); bufPushByte(b, 124);
+    bufPushF2(b, al);
+    bufPushByte(b, 10)
+} else ()
+
+def cmdLine(
+    t: Tape, x1: Float, y1: Float, x2: Float, y2: Float,
+    lw: Float, col: String, al: Float, dashed: Bool
+): Void = if (t.tpEmit) {
+    let b = t.tpBuf;
+    bufPushStr(b, "LN|");
+    bufPushF1(b, x1); bufPushByte(b, 124);
+    bufPushF1(b, y1); bufPushByte(b, 124);
+    bufPushF1(b, x2); bufPushByte(b, 124);
+    bufPushF1(b, y2); bufPushByte(b, 124);
+    bufPushF1(b, lw); bufPushByte(b, 124);
+    bufPushStr(b, col); bufPushByte(b, 124);
+    bufPushF2(b, al); bufPushByte(b, 124);
+    bufPushByte(b, if (dashed) 49 else 48);
+    bufPushByte(b, 10)
+} else ()
+
+def cmdCirc(
+    t: Tape, cx: Float, cy: Float, r: Float,
+    fill: String, bd: String, lw: Float, al: Float
+): Void = if (t.tpEmit) {
+    let b = t.tpBuf;
+    bufPushStr(b, "CI|");
+    bufPushF1(b, cx); bufPushByte(b, 124);
+    bufPushF1(b, cy); bufPushByte(b, 124);
+    bufPushF1(b, r); bufPushByte(b, 124);
+    bufPushStr(b, fill); bufPushByte(b, 124);
+    bufPushStr(b, bd); bufPushByte(b, 124);
+    bufPushF1(b, lw); bufPushByte(b, 124);
+    bufPushF2(b, al);
+    bufPushByte(b, 10)
+} else ()
+
+def cmdTextImpl(
+    t: Tape, op: String, x: Float, y: Float, sz: Float,
+    wt: String, align: String, col: String, al: Float, txt: String
+): Void = if (t.tpEmit) {
+    let b = t.tpBuf;
+    bufPushStr(b, op); bufPushByte(b, 124);
+    bufPushF1(b, x); bufPushByte(b, 124);
+    bufPushF1(b, y); bufPushByte(b, 124);
+    bufPushF1(b, sz); bufPushByte(b, 124);
+    bufPushStr(b, wt); bufPushByte(b, 124);
+    bufPushStr(b, align); bufPushByte(b, 124);
+    bufPushStr(b, col); bufPushByte(b, 124);
+    bufPushF2(b, al); bufPushByte(b, 124);
+    bufPushSanitized(b, txt);
+    bufPushByte(b, 10)
+} else ()
+
+def cmdTx(t: Tape, x: Float, y: Float, sz: Float, wt: String, align: String, col: String, al: Float, txt: String): Void =
+    cmdTextImpl(t, "TX", x, y, sz, wt, align, col, al, txt)
+
+def cmdSerif(t: Tape, x: Float, y: Float, sz: Float, wt: String, align: String, col: String, al: Float, txt: String): Void =
+    cmdTextImpl(t, "TXS", x, y, sz, wt, align, col, al, txt)
+
+def cmdImg(t: Tape, key: String, x: Float, y: Float, w: Float, h: Float, r: Float): Void = if (t.tpEmit) {
+    let b = t.tpBuf;
+    bufPushStr(b, "IMG|");
+    bufPushStr(b, key); bufPushByte(b, 124);
+    bufPushF1(b, x); bufPushByte(b, 124);
+    bufPushF1(b, y); bufPushByte(b, 124);
+    bufPushF1(b, w); bufPushByte(b, 124);
+    bufPushF1(b, h); bufPushByte(b, 124);
+    bufPushF1(b, r);
+    bufPushByte(b, 10)
+} else ()
+
+def cmdClip(t: Tape, x: Float, y: Float, w: Float, h: Float): Void = if (t.tpEmit) {
+    let b = t.tpBuf;
+    bufPushStr(b, "CLIP|");
+    bufPushF1(b, x); bufPushByte(b, 124);
+    bufPushF1(b, y); bufPushByte(b, 124);
+    bufPushF1(b, w); bufPushByte(b, 124);
+    bufPushF1(b, h);
+    bufPushByte(b, 10)
+} else ()
+
+def cmdUnclip(t: Tape): Void = if (t.tpEmit) bufPushStr(t.tpBuf, "UNCLIP\n") else ()
+
+def cmdInput(t: Tape, inpId: String, x: Float, y: Float, w: Float, h: Float, val: String): Void = if (t.tpEmit) {
+    let b = t.tpBuf;
+    bufPushStr(b, "INPUT|");
+    bufPushStr(b, inpId); bufPushByte(b, 124);
+    bufPushF1(b, x); bufPushByte(b, 124);
+    bufPushF1(b, y); bufPushByte(b, 124);
+    bufPushF1(b, w); bufPushByte(b, 124);
+    bufPushF1(b, h); bufPushByte(b, 124);
+    bufPushSanitized(b, val);
+    bufPushByte(b, 10)
+} else ()
+
+// ============================================================================
+// Woodblock Buttons, Gradient Meters & Scrollbars
+// ============================================================================
+
+data BtnTone {
+    ToneDefault,
+    TonePrimary,
+    ToneDanger,
+    ToneJade,
+    ToneGhost,
+    ToneActive,
+}
+
+def drawBtn(
+    t: Tape,
+    m: ClientModel,
+    x: Float, y: Float, w: Float, h: Float,
+    label: String, fontSz: Float,
+    tone: BtnTone, disabled: Bool, target: HitTarget
+): Void = if (t.tpEmit) {
+    let hov = !disabled && optHitEq(m.cmScroll.shHovered, Some(target));
+    let (bg, bd, fg, lw) = match tone {
+        TonePrimary -> if (hov) ("#21473c", "#a87d38", "#faf6ee", 1.0) else ("#275247", "#1e3f35", "#faf6ee", 0.9),
+        ToneDanger -> if (hov) ("#852018", "#691710", "#faf6ee", 1.0) else ("#9e2a22", "#7a1f18", "#faf6ee", 0.9),
+        ToneJade -> if (hov) ("#e7f0ec", "rgba(39,82,71,0.45)", "#1f4239", 0.9) else ("#f2f6f3", "rgba(39,82,71,0.28)", "#275247", 0.8),
+        ToneActive -> ("#1c1915", "#b89552", "#faf6ee", 1.0),
+        ToneGhost -> if (hov) ("rgba(28,25,21,0.06)", "rgba(130,118,98,0.26)", "#1c1915", 0.75) else ("transparent", "transparent", "#5c5346", 0.0),
+        ToneDefault -> if (hov) ("#f4ede0", "rgba(168,125,56,0.52)", "#1c1915", 0.9) else ("#faf6ee", "rgba(130,118,98,0.34)", "#2a241d", 0.8),
+    };
+    let al = if (disabled) 0.40 else 0.98;
+    if (bg != "transparent" || bd != "transparent") {
+        cmdRect(t, x, y, w, h, 3.0, bg, bd, lw, al)
+    } else ();
+    cmdTx(t, x + w * 0.5, y + h * 0.5 + fontSz * 0.35, fontSz, "600", "center", fg, al, truncateText(w - 10.0, fontSz, label));
+    if (!disabled) {
+        pushHit(t, MkCanvasHitbox { chX: x, chY: y, chW: w, chH: h, chTarget: target, chCursor: "pointer" })
+    } else ()
+} else ()
+
+def drawMeter(
+    t: Tape, x: Float, y: Float, w: Float, h: Float,
+    ratio: Float, mTrail: Option Float, fillCol: String, trailCol: String, labelTxt: String
+): Void = if (t.tpEmit) {
+    let r = clamp01(ratio);
+    let c2 = match fillCol {
+        "#a32c22" -> "#c24436",
+        "#2b594b" -> "#3f7a68",
+        "#946623" -> "#be8e3e",
+        _ -> fillCol,
+    };
+    cmdBar(t, x, y, w, h, minFloat(2.5, h * 0.4), r, optOr(mTrail, 0.0), fillCol, c2, trailCol);
+    if (strLen(labelTxt) > 0) {
+        cmdTx(t, x + w - 4.0, y + h * 0.5 + 3.4, 9.5, "600", "right", if (r >= 0.92) "#faf6ee" else "#3a3229", 0.95, labelTxt)
+    } else ()
+} else ()
+
+def drawScrollbar(t: Tape, x: Float, y: Float, h: Float, scrollPos: Float, maxScroll: Float, viewH: Float): Void =
+    if (t.tpEmit && maxScroll > 2.0) {
+        let totalH = viewH + maxScroll;
+        let thumbH = maxFloat(24.0, h * (viewH / maxFloat(1.0, totalH)));
+        let thumbY = y + (h - thumbH) * (scrollPos / maxFloat(1.0, maxScroll));
+        cmdRect(t, x, y, 4.0, h, 2.0, "#dcd1ba", "", 0.0, 0.45);
+        cmdRect(t, x, thumbY, 4.0, thumbH, 2.0, "#8b7f6e", "", 0.0, 0.78)
+    } else ()
+
+def mergeSubTapeClipped(parent: Tape, child: Tape, clipY: Float, clipH: Float): Void = {
+    bufPushBuf(parent.tpBuf, child.tpBuf);
+    let cur = cellNew(vecToList(child.tpHits));
+    while (match cellGet(cur) { Nil -> false, _ -> true }) {
+        match cellGet(cur) {
+            Cons(hb, rest) -> {
+                if (hb.chY + hb.chH >= clipY && hb.chY <= clipY + clipH) {
+                    pushHit(parent, hb)
+                } else ();
+                cellSet(cur, rest)
+            },
+            Nil -> (),
+        }
+    }
+}
+
+// ============================================================================
+// Shared Vitals Helpers
+// ============================================================================
+
+def presentedVitals(m: ClientModel): (Int, Int, Int, Int) = {
+    let st = m.cmHero.hsStats;
+    let bt = m.cmBattle;
+    let hp = match (bt.btInBattle, bt.btPresentation, bt.btSnap) {
+        (true, Some(pr), _) -> pr.prPlayerHp,
+        (true, None, Some(bs)) -> bs.bsPlayer.cbHp,
+        _ -> st.psHp,
+    };
+    let mhp = match (bt.btInBattle, bt.btSnap) {
+        (true, Some(bs)) -> bs.bsPlayer.cbMaxHp,
+        _ -> st.psMaxHp,
+    };
+    let qi = match (bt.btInBattle, bt.btPresentation, bt.btSnap) {
+        (true, Some(pr), _) -> pr.prPlayerQi,
+        (true, None, Some(bs)) -> bs.bsPlayer.cbQi,
+        _ -> st.psQi,
+    };
+    let mqi = match (bt.btInBattle, bt.btSnap) {
+        (true, Some(bs)) -> bs.bsPlayer.cbMaxQi,
+        _ -> st.psMaxQi,
+    };
+    (hp, mhp, qi, mqi)
+}
+
+def enemyVitals(m: ClientModel): (String, Int, Int, Int, Int) = {
+    let bt = m.cmBattle;
+    let name = match bt.btSnap { Some(bs) -> bs.bsEnemy.cbName, None -> "对手" };
+    let hp = match (bt.btPresentation, bt.btSnap) {
+        (Some(pr), _) -> pr.prEnemyHp,
+        (None, Some(bs)) -> bs.bsEnemy.cbHp,
+        _ -> 0,
+    };
+    let mhp = match bt.btSnap { Some(bs) -> bs.bsEnemy.cbMaxHp, None -> 1 };
+    let qi = match (bt.btPresentation, bt.btSnap) {
+        (Some(pr), _) -> pr.prEnemyQi,
+        (None, Some(bs)) -> bs.bsEnemy.cbQi,
+        _ -> 0,
+    };
+    let mqi = match bt.btSnap { Some(bs) -> bs.bsEnemy.cbMaxQi, None -> 1 };
+    (name, hp, mhp, qi, mqi)
+}
+
+def currentMapName(m: ClientModel): String = match m.cmWorld.wvMapOverview {
+    Some(mo) -> {
+        let rn = m.cmWorld.wvRoomName;
+        let matchesCur = strLen(rn) == 0 || optIsSome(listFind(mo.moRooms, (r) -> {
+            let (rx, ry) = r.mrPos;
+            let (cx, cy) = mo.moCurrentPos;
+            rx == cx && ry == cy && r.mrRoomName == rn
+        }));
+        if (matchesCur) mo.moMapName else ""
+    },
+    None -> "",
+}
+
+def optStrEqLocal(a: Option String, b: Option String): Bool = match (a, b) {
+    (None, None) -> true,
+    (Some(x), Some(y)) -> x == y,
+    _ -> false,
+}
+
+// ============================================================================
+// Battle Top HUD & Active Skill Bar
+// ============================================================================
+
+def drawBattleTopBar(t: Tape, m: ClientModel, isMob: Bool, y0: Float): Void = {
+    let w = m.cmVp.vpWidth;
+    let zh = isZh(m.cmVp.vpLocale);
+    let (pHp, pMaxHp, pQi, pMaxQi) = presentedVitals(m);
+    let (eName, eHp, eMaxHp, eQi, eMaxQi) = enemyVitals(m);
+    let pEffs = liveEffectsOf(m, true);
+    let eEffs = liveEffectsOf(m, false);
+    let totalW = minFloat(760.0, w - (if (isMob) 16.0 else 32.0));
+    let x0 = (w - totalW) * 0.5;
+    let midW = if (isMob) 6.0 else 84.0;
+    let cardW = (totalW - midW - 12.0) * 0.5;
+
+    let drawCard = (cx: Float, name: String, hp: Int, mhp: Int, hpTrail: Float, qi: Int, mqi: Int, apVal: Float, effs: List (EffectInfo, Float), hitFlash: Bool) -> {
+        let hasEff = !listIsEmpty(effs);
+        let ch = if (hasEff) 92.0 else 72.0;
+        let bd = if (hitFlash) "rgba(158,42,34,0.75)" else "rgba(130,118,98,0.28)";
+        let bg = if (hitFlash) "#faece8" else "#faf6ee";
+        let hpRatio = intToFloat(hp) / intToFloat(maxInt(1, mhp));
+        let qiRatio = intToFloat(qi) / intToFloat(maxInt(1, mqi));
+        let apRatio = apVal / 100.0;
+        let vitalsTxt = intToStr(hp) + "/" + intToStr(mhp) + "  ·  " + intToStr(qi);
+        cmdCard(t, cx, y0, cardW, ch, 3.0, bg, bd, if (hitFlash) 1.4 else 0.8, 0.96, 4.0, 14.0, false);
+        cmdSerif(t, cx + 11.0, y0 + 21.0, 14.0, "700", "left", "#1c1915", 1.0, truncateText(cardW - 104.0, 14.0, name));
+        cmdTx(t, cx + cardW - 11.0, y0 + 20.0, 10.5, "600", "right", "#6b6255", 0.95, vitalsTxt);
+        cmdBar(t, cx + 11.0, y0 + 29.0, cardW - 22.0, 8.0, 2.0, hpRatio, hpTrail, "#8e241c", "#bc3f32", "#d99b82");
+        cmdBar(t, cx + 11.0, y0 + 42.0, cardW - 22.0, 5.5, 2.0, qiRatio, 0.0, "#224a3f", "#3c7564", "");
+        cmdBar(t, cx + 11.0, y0 + 52.0, cardW - 22.0, 4.0, 1.5, apRatio, 0.0, "#8a6220", "#be9142", "");
+        cmdTx(t, cx + cardW - 11.0, y0 + 66.0, 9.5, "600", "right", "#8a6220", 0.88, "动 " + intToStr(roundInt(apVal)));
+        if (hasEff) {
+            let accX = cellNew(cx + 11.0);
+            let cur = cellNew(listTake(effs, 4));
+            while (match cellGet(cur) { Nil -> false, _ -> true }) {
+                match cellGet(cur) {
+                    Cons((ef, remS), rest) -> {
+                        let lbl = ef.efName + " " + intToStr(ceilInt(remS)) + "s";
+                        let ew = textWidth(10.0, lbl) + 10.0;
+                        let isBad = ef.efType == "dot" || ef.efType == "debuff";
+                        let ax = cellGet(accX);
+                        if (ax + ew <= cx + cardW - 8.0) {
+                            cmdRect(t, ax, y0 + 68.0, ew, 17.0, 2.0,
+                                if (isBad) "rgba(158,42,34,0.10)" else "rgba(39,82,71,0.10)",
+                                if (isBad) "rgba(158,42,34,0.35)" else "rgba(39,82,71,0.35)",
+                                0.7, 1.0);
+                            cmdTx(t, ax + ew * 0.5, y0 + 80.0, 9.5, "600", "center", if (isBad) "#8e241c" else "#224a3f", 1.0, lbl)
+                        } else ();
+                        cellSet(accX, ax + ew + 4.0);
+                        cellSet(cur, rest)
+                    },
+                    Nil -> (),
+                }
+            }
+        } else ();
+        pushHit(t, MkCanvasHitbox { chX: cx, chY: y0, chW: cardW, chH: ch, chTarget: HitSwallow, chCursor: "default" })
+    };
+
+    let pName = if (strLen(m.cmAuth.auUsername) == 0) "行者" else m.cmAuth.auUsername;
+    drawCard(x0, pName, pHp, pMaxHp, m.cmFx.fxPlayerHpTrail, pQi, pMaxQi, m.cmFx.fxPlayerApAnim, pEffs, m.cmFx.fxPlayerHitFlashMs > 0.0);
+    drawCard(x0 + cardW + midW + 12.0, eName, eHp, eMaxHp, m.cmFx.fxEnemyHpTrail, eQi, eMaxQi, m.cmFx.fxEnemyApAnim, eEffs, m.cmFx.fxEnemyHitFlashMs > 0.0);
+    let sndLbl = if (zh) (if (m.cmVp.vpSoundOn) "音效：开" else "音效：关") else (if (m.cmVp.vpSoundOn) "SFX On" else "SFX Off");
+    if (isMob) {
+        drawBtn(t, m, w - 74.0, y0 + 78.0, 64.0, 24.0, sndLbl, 10.5, ToneGhost, false, HitUi("toggle_sound", "", ""))
+    } else {
+        drawBtn(t, m, x0 + cardW + 10.0, y0 + 22.0, midW - 8.0, 28.0, sndLbl, 11.0, ToneGhost, false, HitUi("toggle_sound", "", ""))
+    }
+}
+
+def drawBattleSkills(t: Tape, m: ClientModel, isMob: Bool, bottomAnchorY: Float): Void = {
+    let evals = evalSkillState(m);
+    let n = listLen(evals);
+    if (n > 0) {
+        let w = m.cmVp.vpWidth;
+        let zh = isZh(m.cmVp.vpLocale);
+        let panelW = minFloat(760.0, w - (if (isMob) 16.0 else 32.0));
+        let cols = if (isMob) minInt(3, n) else minInt(6, n);
+        let gap = 8.0;
+        let btnW = minFloat(134.0, (panelW - intToFloat(cols - 1) * gap) / intToFloat(maxInt(1, cols)));
+        let btnH = 48.0;
+        let rows = (n + cols - 1) / maxInt(1, cols);
+        let totalH = intToFloat(rows) * btnH + intToFloat(maxInt(0, rows - 1)) * 6.0;
+        let startY = bottomAnchorY - totalH - 6.0;
+
+        let cur = cellNew(evals);
+        let idxCell = cellNew(0);
+        while (match cellGet(cur) { Nil -> false, _ -> true }) {
+            match cellGet(cur) {
+                Cons(ev, rest) -> {
+                    let idx = cellGet(idxCell);
+                    let sk = ev.seSkill;
+                    let r = idx / cols;
+                    let c = idx % cols;
+                    let rowCount = minInt(cols, n - r * cols);
+                    let rowW = intToFloat(rowCount) * btnW + intToFloat(maxInt(0, rowCount - 1)) * gap;
+                    let bx = (w - rowW) * 0.5 + intToFloat(c) * (btnW + gap);
+                    let by = startY + intToFloat(r) * (btnH + 6.0);
+                    let tgt = HitUi("perform", sk.asId, "");
+                    let hov = ev.seReady && optHitEq(m.cmScroll.shHovered, Some(tgt));
+                    let bg = if (ev.seQueued) "#f5ebd5" else if (hov) "#fbf8f1" else "#faf6ee";
+                    let bd =
+                        if (ev.seQueued) "#a87d38"
+                        else if (ev.seUltimate) "rgba(158,42,34,0.65)"
+                        else if (ev.seReady) "rgba(39,82,71,0.45)"
+                        else "rgba(130,118,98,0.25)";
+                    let al = if (ev.seReady || ev.seQueued) 0.98 else 0.56;
+                    let cdPct = if (ev.seCdRem > 0.05) minFloat(1.0, ev.seCdRem / ev.seCdTotal) else 0.0;
+                    cmdCard(t, bx, by, btnW, btnH, 3.0, bg, bd, if (ev.seQueued || ev.seReady) 1.0 else 0.75, al, 3.0, if (ev.seReady) 10.0 else 0.0, ev.seUltimate);
+                    if (cdPct > 0.005) cmdRect(t, bx, by, btnW * cdPct, btnH, 3.0, "rgba(168,125,56,0.18)", "", 0.0, 1.0) else ();
+                    if (ev.seQueued) {
+                        cmdRect(t, bx + 4.0, by + 4.0, 16.0, 16.0, 2.0, "#9e2a22", "", 0.0, 0.95);
+                        cmdTx(t, bx + 12.0, by + 15.5, 10.0, "700", "center", "#faf6ee", 1.0, if (zh) "蓄" else "Q")
+                    } else if (idx < 6 && !isMob) {
+                        cmdTx(t, bx + 9.0, by + 15.0, 10.0, "600", "center", "#8b7f6e", 0.85, intToStr(idx + 1))
+                    } else ();
+                    cmdSerif(t, bx + btnW * 0.5, by + 21.0, 13.0, "700", "center", "#1c1915", al, truncateText(btnW - 14.0, 13.0, sk.asName));
+                    let rCol = if (ev.seQueued) "#8a6220" else if (ev.seCdRem > 0.05) "#9e2a22" else "#6b6255";
+                    cmdTx(t, bx + btnW * 0.5, by + 38.0, 10.0, "500", "center", rCol, al, truncateText(btnW - 10.0, 10.0, ev.seReason));
+                    pushHit(t, MkCanvasHitbox {
+                        chX: bx, chY: by, chW: btnW, chH: btnH,
+                        chTarget: if (ev.seReady) tgt else HitSwallow,
+                        chCursor: if (ev.seReady) "pointer" else "not-allowed",
+                    });
+                    cellSet(idxCell, idx + 1);
+                    cellSet(cur, rest)
+                },
+                Nil -> (),
+            }
+        }
+    } else ()
+}
+
+// ============================================================================
+// 1. Battle Lab Full-Canvas Controls (`/battle-lab.html`)
+// ============================================================================
+
+def buildBattleLabUi(m: ClientModel): UiOutput = {
+    let t = tapeNew(true);
+    let w = m.cmVp.vpWidth;
+    let h = m.cmVp.vpHeight;
+    let isMob = w <= 768.0;
+    drawBattleTopBar(t, m, isMob, 14.0);
+
+    let acts = labActionOrder(m);
+    let curActId =
+        if (listIsEmpty(acts)) "rig.fist.punch_a"
+        else listNthOr(acts, floorMod(m.cmLab.labActionIdx, listLen(acts)), "rig.fist.punch_a");
+    let curActLbl = match mapLookup(m.cmCatalog.acActions, curActId) {
+        Some(ad) -> ad.adLabel,
+        None -> curActId,
+    };
+    let outLbl = listNthOr(["命中", "闪避", "招架", "效果"], floorMod(m.cmLab.labOutcomeIdx, 4), "命中");
+    let sideLbl = listNthOr(["行者", "守擂人"], floorMod(m.cmLab.labSideIdx, 2), "行者");
+    let lookLbl = if (lookEq(m.cmVp.vpLookStyle, LookMaiden)) "发髻披发" else "高马尾";
+
+    let dockW = minFloat(900.0, w - 24.0);
+    let dockH = if (isMob) 128.0 else 86.0;
+    let dockX = (w - dockW) * 0.5;
+    let dockY = h - dockH - 12.0;
+    cmdRect(t, dockX, dockY, dockW, dockH, 3.0, "#f6f0e2", "#b8aa91", 1.2, 0.96);
+    pushHit(t, MkCanvasHitbox { chX: dockX, chY: dockY, chW: dockW, chH: dockH, chTarget: HitSwallow, chCursor: "default" });
+
+    let bx0 = dockX + 12.0;
+    let by0 = dockY + 10.0;
+    drawBtn(t, m, bx0, by0, 102.0, 28.0, "播放完整交锋", 12.0, TonePrimary, false, HitLab("demo", "", "", "", 0.0));
+    drawBtn(t, m, bx0 + 108.0, by0, 56.0, 28.0, if (m.cmLab.labPaused) "继续" else "暂停", 12.0, ToneDefault, false, HitLab("pause", if (m.cmLab.labPaused) "false" else "true", "", "", 0.0));
+    drawBtn(t, m, bx0 + 170.0, by0, 28.0, 28.0, "‹", 14.0, ToneDefault, false, HitUi("lab_cycle_action", "prev", ""));
+    let actBoxW = if (isMob) maxFloat(110.0, dockW - 240.0) else 172.0;
+    cmdRect(t, bx0 + 202.0, by0, actBoxW, 28.0, 3.0, "#efe7d4", "#c5b9a0", 1.0, 0.98);
+    cmdTx(t, bx0 + 202.0 + actBoxW * 0.5, by0 + 18.0, 11.5, "600", "center", "#1e1a16", 1.0, truncateText(actBoxW - 10.0, 11.5, curActLbl));
+    drawBtn(t, m, bx0 + 206.0 + actBoxW, by0, 28.0, 28.0, "›", 14.0, ToneDefault, false, HitUi("lab_cycle_action", "next", ""));
+
+    let r2x = if (isMob) bx0 else bx0 + 240.0 + actBoxW;
+    let r2y = if (isMob) by0 + 34.0 else by0;
+    drawBtn(t, m, r2x, r2y, 56.0, 28.0, outLbl, 11.5, ToneDefault, false, HitUi("lab_cycle_outcome", "", ""));
+    drawBtn(t, m, r2x + 62.0, r2y, 60.0, 28.0, sideLbl, 11.5, ToneDefault, false, HitUi("lab_cycle_side", "", ""));
+    drawBtn(t, m, r2x + 128.0, r2y, 68.0, 28.0, lookLbl, 11.5, ToneDefault, false, HitUi("toggle_look", "", ""));
+    drawBtn(t, m, r2x + 202.0, r2y, 82.0, 28.0, "播放这一招", 11.5, ToneJade, false, HitUi("lab_play_selected", "", ""));
+
+    let sy = dockY + dockH - 26.0;
+    let dur = match m.cmBattle.btActiveTimeline { Some(tl) -> tl.tlDurationMs, None -> 0.0 };
+    let elap = m.cmBattle.btTimelineElapsedMs;
+    let tLbl = "时间轴 " + intToStr(roundInt(elap)) + " / " + intToStr(roundInt(dur)) + " ms";
+    let scX = dockX + 168.0;
+    let scW = maxFloat(80.0, dockW - 184.0);
+    let ratio = if (dur > 0.1) clamp01(elap / dur) else 0.0;
+    cmdTx(t, dockX + 12.0, sy + 9.0, 11.5, "600", "left", "#5c5346", 1.0, tLbl);
+    cmdRect(t, scX, sy + 2.0, scW, 8.0, 2.0, "#dfd5be", "#b8aa91", 0.8, 1.0);
+    cmdRect(t, scX, sy + 2.0, scW * ratio, 8.0, 2.0, "#946623", "", 0.0, 0.95);
+    cmdCirc(t, scX + scW * ratio, sy + 6.0, 6.0, "#a32c22", "#f6f0e2", 1.5, 1.0);
+    pushHit(t, MkCanvasHitbox { chX: scX - 6.0, chY: sy - 6.0, chW: scW + 12.0, chH: 24.0, chTarget: HitLabScrub(scX, scW), chCursor: "ew-resize" });
+
+    MkUiOutput {
+        uoBuf: t.tpBuf,
+        uoHits: vecToList(t.tpHits),
+        uoScrollZones: Nil,
+        uoLogMaxScroll: 0.0, uoDrawerMaxScroll: 0.0, uoOnboardMaxScroll: 0.0, uoNpcMaxScroll: 0.0,
+        uoCmdCount: 60,
+    }
+}
+
+// ============================================================================
+// 2. Onboarding & Six-Step Character Creation Scroll Card
+// ============================================================================
+
+def buildLoginBody(t: Tape, m: ClientModel, zh: Bool, cardX: Float, pad: Float, innerW: Float, y0: Float): Float = {
+    let x0 = cardX + pad;
+    cmdSerif(t, x0, y0 + 18.0, 20.0, "700", "left", "#1e1a16", 1.0, if (zh) "重入江湖" else "Return to Jianghu");
+    let subLines = wrapText(innerW, 12.5, if (zh) "输入角色名号续接存档，或切换至「创建角色」定制身世与先天根骨。" else "Enter your character name to continue your journey.");
+    let si = cellNew(0);
+    let scur = cellNew(subLines);
+    while (match cellGet(scur) { Nil -> false, _ -> true }) {
+        match cellGet(scur) {
+            Cons(ln, rest) -> {
+                cmdTx(t, x0, y0 + 40.0 + intToFloat(cellGet(si)) * 18.0, 12.5, "400", "left", "#5c5346", 1.0, ln);
+                cellSet(si, cellGet(si) + 1);
+                cellSet(scur, rest)
+            },
+            Nil -> (),
+        }
+    };
+    let yInp = y0 + 44.0 + intToFloat(listLen(subLines)) * 18.0;
+    let inpW = innerW - 102.0;
+    let focused = optStrEqLocal(m.cmUi.uiFocusedInput, Some("login"));
+    let inpBd = if (focused) "#946623" else "#b8aa91";
+    let uTxt = m.cmAuth.auUsername;
+    let blink = focused && (floorMod(floorInt(m.cmVp.vpClockMs / 520.0), 2) == 0);
+    let dispTxt = if (strLen(uTxt) == 0) (if (zh) "点击输入角色名号…" else "Character Name…") else uTxt;
+    let dispCol = if (strLen(uTxt) == 0) "#8b7f6e" else "#1e1a16";
+    let caretX = x0 + 10.0 + (if (strLen(uTxt) == 0) 0.0 else textWidth(13.5, uTxt));
+
+    cmdRect(t, x0, yInp, inpW, 36.0, 3.0, "#fcf9f2", inpBd, if (focused) 1.8 else 1.1, 1.0);
+    cmdTx(t, x0 + 10.0, yInp + 23.0, 13.5, "500", "left", dispCol, 1.0, truncateText(inpW - 20.0, 13.5, dispTxt));
+    if (blink) {
+        let cx = minFloat(x0 + inpW - 8.0, caretX);
+        cmdLine(t, cx, yInp + 8.0, cx, yInp + 28.0, 1.5, "#1e1a16", 0.9, false)
+    } else ();
+    cmdInput(t, "login", x0, yInp, inpW, 36.0, uTxt);
+    pushHit(t, MkCanvasHitbox { chX: x0, chY: yInp, chW: inpW, chH: 36.0, chTarget: HitFocusInput("login"), chCursor: "text" });
+
+    let passFlag = if (m.cmAuth.auDevReset) "reset" else "";
+    let goLbl = if (m.cmAuth.auConnecting) (if (zh) "入世中…" else "Joining…") else (if (zh) "踏入江湖" else "Enter");
+    drawBtn(t, m, x0 + inpW + 8.0, yInp, 94.0, 36.0, goLbl, 13.0, TonePrimary, m.cmAuth.auConnecting, HitUi("login_submit", uTxt, passFlag));
+
+    let yChk = yInp + 48.0;
+    cmdRect(t, x0, yChk, 16.0, 16.0, 2.0, if (m.cmAuth.auDevReset) "#2b594b" else "#fcf9f2", "#8b7f6e", 1.1, 1.0);
+    if (m.cmAuth.auDevReset) cmdTx(t, x0 + 8.0, yChk + 12.5, 12.0, "700", "center", "#f7f1e3", 1.0, "✓") else ();
+    cmdTx(t, x0 + 24.0, yChk + 12.5, 12.0, "400", "left", "#5c5346", 1.0, if (zh) "测试重开存档（需 MUD_DEV_MODE=1）" else "Dev reset save");
+    pushHit(t, MkCanvasHitbox { chX: x0, chY: yChk - 4.0, chW: 240.0, chH: 24.0, chTarget: HitUi("toggle_dev_reset", "", ""), chCursor: "pointer" });
+
+    let errH = match m.cmAuth.auLastError {
+        None -> 0.0,
+        Some(e) -> {
+            let els = wrapText(innerW, 12.0, e);
+            let ei = cellNew(0);
+            let ecur = cellNew(els);
+            while (match cellGet(ecur) { Nil -> false, _ -> true }) {
+                match cellGet(ecur) {
+                    Cons(ln, rest) -> {
+                        cmdTx(t, x0, yChk + 32.0 + intToFloat(cellGet(ei)) * 17.0, 12.0, "600", "left", "#a32c22", 1.0, ln);
+                        cellSet(ei, cellGet(ei) + 1);
+                        cellSet(ecur, rest)
+                    },
+                    Nil -> (),
+                }
+            };
+            intToFloat(listLen(els)) * 17.0 + 12.0
+        },
+    };
+    (yChk + 30.0 + errH) - y0
+}
+
+def buildCreateBody(t: Tape, m: ClientModel, zh: Bool, cardX: Float, pad: Float, innerW: Float, y0: Float): Float = {
+    let x0 = cardX + pad;
+    match m.cmAuth.auCreationCfg {
+        None -> {
+            cmdTx(t, x0, y0 + 22.0, 13.0, "400", "left", "#5c5346", 1.0, if (zh) "正在向服务端读取身世配置…" else "Loading creation config…");
+            drawBtn(t, m, x0, y0 + 40.0, 96.0, 32.0, if (zh) "重试读取" else "Retry", 12.5, ToneDefault, false, HitUi("request_creation_cfg", "", ""));
+            88.0
+        },
+        Some(cfg) -> {
+            let step = m.cmAuth.auCreateStep;
+            let cc = m.cmAuth.auCreateChoice;
+            let stepLabels = if (zh) ["名号", "性别", "出身", "幼年", "后来", "预览"] else ["Name", "Sex", "Origin", "Early", "Youth", "Done"];
+            let sw = (innerW - 25.0) / 6.0;
+            let si = cellNew(0);
+            let scur = cellNew(stepLabels);
+            while (match cellGet(scur) { Nil -> false, _ -> true }) {
+                match cellGet(scur) {
+                    Cons(lbl, rest) -> {
+                        let idx = cellGet(si);
+                        drawBtn(t, m, x0 + intToFloat(idx) * (sw + 5.0), y0, sw, 26.0, lbl, 11.0, if (step == idx) ToneActive else ToneGhost, false, HitUi("create_step", intToStr(idx), ""));
+                        cellSet(si, idx + 1);
+                        cellSet(scur, rest)
+                    },
+                    Nil -> (),
+                }
+            };
+            let y1 = y0 + 40.0;
+            let uTxt = m.cmAuth.auUsername;
+            let shH =
+                if (step == 0) {
+                    cmdSerif(t, x0, y1 + 16.0, 17.0, "700", "left", "#1e1a16", 1.0, if (zh) "立定名号" else "Choose a Name");
+                    let inpW = innerW - 92.0;
+                    let focused = optStrEqLocal(m.cmUi.uiFocusedInput, Some("login"));
+                    let disp = if (strLen(uTxt) == 0) (if (zh) "如：沈青蝉" else "Name") else uTxt;
+                    cmdRect(t, x0, y1 + 30.0, inpW, 36.0, 3.0, "#fcf9f2", if (focused) "#946623" else "#b8aa91", 1.3, 1.0);
+                    cmdTx(t, x0 + 10.0, y1 + 53.0, 13.5, "500", "left", if (strLen(uTxt) == 0) "#8b7f6e" else "#1e1a16", 1.0, disp);
+                    cmdInput(t, "login", x0, y1 + 30.0, inpW, 36.0, uTxt);
+                    pushHit(t, MkCanvasHitbox { chX: x0, chY: y1 + 30.0, chW: inpW, chH: 36.0, chTarget: HitFocusInput("login"), chCursor: "text" });
+                    drawBtn(t, m, x0 + inpW + 8.0, y1 + 30.0, 84.0, 36.0, if (zh) "下一步" else "Next", 12.5, TonePrimary, false, HitUi("create_step", "1", ""));
+                    82.0
+                } else if (step == 1) {
+                    let who = if (strLen(uTxt) == 0) "无名客" else uTxt;
+                    cmdSerif(t, x0, y1 + 16.0, 17.0, "700", "left", "#1e1a16", 1.0, who + (if (zh) " 是：" else ":"));
+                    let gi = cellNew(0);
+                    let gcur = cellNew(cfg.cfgGenders);
+                    while (match cellGet(gcur) { Nil -> false, _ -> true }) {
+                        match cellGet(gcur) {
+                            Cons((gid, glbl), rest) -> {
+                                let idx = cellGet(gi);
+                                drawBtn(t, m, x0, y1 + 30.0 + intToFloat(idx) * 44.0, innerW, 36.0, glbl, 13.5, if (cc.ccGender == gid) ToneJade else ToneDefault, false, HitUi("create_pick", "gender", gid));
+                                cellSet(gi, idx + 1);
+                                cellSet(gcur, rest)
+                            },
+                            Nil -> (),
+                        }
+                    };
+                    36.0 + intToFloat(listLen(cfg.cfgGenders)) * 44.0
+                } else if (step >= 2 && step <= 4) {
+                    let (field, opts, title, curId) =
+                        if (step == 2) ("origin", cfg.cfgOrigins, if (zh) "出身来历" else "Origin", cc.ccOrigin)
+                        else if (step == 3) ("childhood1", cfg.cfgChildhood1, if (zh) "幼年经历" else "Childhood", cc.ccChildhood1)
+                        else ("childhood2", cfg.cfgChildhood2, if (zh) "后来际遇" else "Youth", cc.ccChildhood2);
+                    let pName = if (strLen(utf8Trim(uTxt)) == 0) "无名客" else utf8Trim(uTxt);
+                    cmdSerif(t, x0, y1 + 16.0, 17.0, "700", "left", "#1e1a16", 1.0, title);
+                    let accY = cellNew(y1 + 30.0);
+                    let ocur = cellNew(opts);
+                    while (match cellGet(ocur) { Nil -> false, _ -> true }) {
+                        match cellGet(ocur) {
+                            Cons(o, rest) -> {
+                                let ay = cellGet(accY);
+                                let storyLines = wrapText(innerW - 24.0, 11.5, strReplace(o.coStory, "{name}", pName));
+                                let oh = 32.0 + intToFloat(listLen(storyLines)) * 16.0 + 10.0;
+                                let sel = curId == o.coId;
+                                let tgt = HitUi("create_pick", field, o.coId);
+                                let hov = optHitEq(m.cmScroll.shHovered, Some(tgt));
+                                let bg = if (sel) "#ebe3cf" else if (hov) "#f2ead8" else "#faf5e9";
+                                let bd = if (sel) "#946623" else if (hov) "#2b594b" else "#c8bca4";
+                                cmdRect(t, x0, ay, innerW, oh, 3.0, bg, bd, if (sel) 1.6 else 1.0, 0.98);
+                                cmdTx(t, x0 + 12.0, ay + 20.0, 13.0, "700", "left", "#1e1a16", 1.0, o.coLabel);
+                                let li = cellNew(0);
+                                let lcur = cellNew(storyLines);
+                                while (match cellGet(lcur) { Nil -> false, _ -> true }) {
+                                    match cellGet(lcur) {
+                                        Cons(ln, lrest) -> {
+                                            cmdTx(t, x0 + 12.0, ay + 38.0 + intToFloat(cellGet(li)) * 16.0, 11.5, "400", "left", "#5c5346", 1.0, ln);
+                                            cellSet(li, cellGet(li) + 1);
+                                            cellSet(lcur, lrest)
+                                        },
+                                        Nil -> (),
+                                    }
+                                };
+                                pushHit(t, MkCanvasHitbox { chX: x0, chY: ay, chW: innerW, chH: oh, chTarget: tgt, chCursor: "pointer" });
+                                cellSet(accY, ay + oh + 8.0);
+                                cellSet(ocur, rest)
+                            },
+                            Nil -> (),
+                        }
+                    };
+                    cellGet(accY) - y1
+                } else {
+                    let bonusOf = (nid: String, xs: List CreationOption) -> match listFind(xs, (o) -> o.coId == nid) {
+                        Some(o) -> o.coBonus,
+                        None -> protocol.emptyBonus(),
+                    };
+                    let tot: CreationBonus = mconcat([
+                        cfg.cfgBaseStats,
+                        bonusOf(cc.ccOrigin, cfg.cfgOrigins),
+                        bonusOf(cc.ccChildhood1, cfg.cfgChildhood1),
+                        bonusOf(cc.ccChildhood2, cfg.cfgChildhood2)
+                    ]);
+                    cmdSerif(t, x0, y1 + 16.0, 17.0, "700", "left", "#1e1a16", 1.0, if (zh) "入世预览" else "Character Preview");
+                    cmdRect(t, x0, y1 + 28.0, innerW, 84.0, 3.0, "#efe7d4", "#c5b9a0", 1.1, 0.98);
+                    cmdImg(t, portraitScoreFile(cc.ccGender, tot.cbAppearance, uTxt), x0 + 10.0, y1 + 38.0, 64.0, 64.0, 3.0);
+                    cmdSerif(t, x0 + 86.0, y1 + 58.0, 16.0, "700", "left", "#1e1a16", 1.0, if (strLen(uTxt) == 0) "无名客" else uTxt);
+                    cmdTx(t, x0 + 86.0, y1 + 80.0, 12.0, "500", "left", "#5c5346", 1.0,
+                        "臂力 " + intToStr(tot.cbStrength) + " · 身法 " + intToStr(tot.cbAgilityValue) + " · 根骨 " + intToStr(tot.cbVitality));
+                    cmdTx(t, x0 + 86.0, y1 + 98.0, 12.0, "500", "left", "#2b594b", 1.0,
+                        "内力 " + intToStr(tot.cbMaxQiBonus) + " · 容貌 " + intToStr(clampInt(0, 10, tot.cbAppearance)));
+                    let passFlag = if (m.cmAuth.auDevReset) "reset" else "";
+                    drawBtn(t, m, x0, y1 + 124.0, innerW, 38.0, if (zh) "确认踏入江湖" else "Create & Enter", 13.5, TonePrimary, m.cmAuth.auConnecting, HitUi("create_submit", uTxt, passFlag));
+                    174.0
+                };
+            40.0 + shH
+        },
+    }
+}
+
+def buildOnboardingUi(m: ClientModel): UiOutput = {
+    let t = tapeNew(true);
+    let w = m.cmVp.vpWidth;
+    let h = m.cmVp.vpHeight;
+    let zh = isZh(m.cmVp.vpLocale);
+
+    let hdrH = 50.0;
+    cmdRect(t, 0.0, 0.0, w, hdrH, 0.0, "#f5efe1", "", 0.0, 0.96);
+    cmdLine(t, 0.0, hdrH, w, hdrH, 1.0, "#c6baa3", 0.9, false);
+    cmdRect(t, 16.0, 11.0, 28.0, 28.0, 3.0, "#a32c22", "#7d2018", 1.0, 0.96);
+    cmdSerif(t, 30.0, 30.0, 16.0, "700", "center", "#f7f1e3", 1.0, "武");
+    cmdSerif(t, 54.0, 31.0, 18.0, "700", "left", "#1e1a16", 1.0, if (zh) "听风录" else "Tingfeng");
+    drawBtn(t, m, w - 54.0, 11.0, 40.0, 28.0, if (zh) "EN" else "中", 11.5, ToneGhost, false, HitUi("toggle_locale", "", ""));
+
+    let cardW = minFloat(500.0, w - 28.0);
+    let cardMaxH = maxFloat(180.0, h - hdrH - 16.0);
+    let cardX = (w - cardW) * 0.5;
+    let isCreate = m.cmAuth.auLoginMode == "create";
+    let pad = if (h < 480.0) 14.0 else 20.0;
+    let innerW = cardW - pad * 2.0;
+    let tabW = (innerW - 8.0) * 0.5;
+    let tabY = if (h < 480.0) 12.0 else 18.0;
+    let contentStartY = tabY + (if (h < 480.0) 36.0 else 42.0);
+
+    let measureTape = tapeNew(false);
+    let contentH =
+        if (!isCreate) buildLoginBody(measureTape, m, zh, cardX, pad, innerW, contentStartY)
+        else buildCreateBody(measureTape, m, zh, cardX, pad, innerW, contentStartY);
+
+    let cardH = minFloat(cardMaxH, maxFloat(210.0, contentStartY + contentH + 14.0));
+    let cardY = hdrH + maxFloat(8.0, (h - hdrH - cardH) * (if (h < 480.0) 0.25 else 0.45));
+    let viewH = cardH - contentStartY - 12.0;
+    let maxScroll = maxFloat(0.0, contentH - viewH);
+    let scrollY = clampFloat(0.0, maxScroll, m.cmScroll.shOnboardScroll);
+
+    cmdCard(t, cardX, cardY, cardW, cardH, 4.0, "#faf6ee", "rgba(130,118,98,0.34)", 0.9, 0.99, 8.0, 24.0, true);
+    cmdRect(t, cardX + 16.0, cardY, cardW - 32.0, 2.5, 1.0, "#9e2a22", "", 0.0, 0.88);
+    pushHit(t, MkCanvasHitbox { chX: cardX, chY: cardY, chW: cardW, chH: cardH, chTarget: HitSwallow, chCursor: "default" });
+
+    drawBtn(t, m, cardX + pad, cardY + tabY, tabW, 32.0, if (zh) "登录江湖" else "Sign In", 13.0, if (!isCreate) ToneActive else ToneGhost, false, HitUi("login_mode", "login", ""));
+    drawBtn(t, m, cardX + pad + tabW + 8.0, cardY + tabY, tabW, 32.0, if (zh) "创建角色" else "New Character", 13.0, if (isCreate) ToneActive else ToneGhost, false, HitUi("login_mode", "create", ""));
+
+    let clipY = cardY + contentStartY - 2.0;
+    let clipH = maxFloat(40.0, cardH - contentStartY - 10.0);
+    let bodyTape = tapeNew(true);
+    let _ =
+        if (!isCreate) buildLoginBody(bodyTape, m, zh, cardX, pad, innerW, cardY + contentStartY - scrollY)
+        else buildCreateBody(bodyTape, m, zh, cardX, pad, innerW, cardY + contentStartY - scrollY);
+
+    cmdClip(t, cardX + 4.0, clipY, cardW - 8.0, clipH);
+    mergeSubTapeClipped(t, bodyTape, clipY, clipH);
+    cmdUnclip(t);
+    drawScrollbar(t, cardX + cardW - 8.0, clipY, clipH, scrollY, maxScroll, viewH);
+    pushZone(t, MkScrollZone { szX: cardX, szY: clipY, szW: cardW, szH: clipH, szTarget: ScrollOnboard });
+
+    MkUiOutput {
+        uoBuf: t.tpBuf,
+        uoHits: vecToList(t.tpHits),
+        uoScrollZones: vecToList(t.tpZones),
+        uoLogMaxScroll: 0.0, uoDrawerMaxScroll: 0.0, uoOnboardMaxScroll: maxScroll, uoNpcMaxScroll: 0.0,
+        uoCmdCount: 90,
+    }
+}
+
+// ============================================================================
+// 3. Connected Main Game Full-Canvas UI
+// ============================================================================
+
+def drawDesktopHeader(t: Tape, m: ClientModel): Void = {
+    let w = m.cmVp.vpWidth;
+    let zh = isZh(m.cmVp.vpLocale);
+    let st = m.cmHero.hsStats;
+    let (presHp, presMaxHp, presQi, presMaxQi) = presentedVitals(m);
+    let hpPct = intToFloat(presHp) / intToFloat(maxInt(1, presMaxHp));
+    let qiPct = intToFloat(presQi) / intToFloat(maxInt(1, presMaxQi));
+
+    cmdRect(t, 0.0, 0.0, w, 52.0, 0.0, "#faf6ee", "", 0.0, 0.94);
+    cmdLine(t, 0.0, 52.0, w, 52.0, 0.75, "rgba(130,118,98,0.28)", 1.0, false);
+    pushHit(t, MkCanvasHitbox { chX: 0.0, chY: 0.0, chW: w, chH: 52.0, chTarget: HitSwallow, chCursor: "default" });
+
+    let pillW = 216.0;
+    let pillActive = m.cmUi.uiDesktopDrawer == "character";
+    let pillTgt = HitUi("desktop_drawer", "character", "");
+    let pillHov = optHitEq(m.cmScroll.shHovered, Some(pillTgt));
+    let pillBg = if (pillActive) "rgba(28,25,21,0.07)" else if (pillHov) "rgba(28,25,21,0.04)" else "transparent";
+    let pillBd = if (pillActive) "rgba(168,125,56,0.45)" else "transparent";
+    if (pillBg != "transparent") {
+        cmdRect(t, 14.0, 7.0, pillW, 38.0, 3.0, pillBg, pillBd, if (pillActive) 0.9 else 0.0, 1.0)
+    } else ();
+    cmdImg(t, portraitScoreFile(st.psGender, st.psAppearance, m.cmAuth.auUsername), 19.0, 11.0, 30.0, 30.0, 3.0);
+    cmdSerif(t, 56.0, 22.0, 13.0, "700", "left", "#1c1915", 1.0, truncateText(96.0, 13.0, m.cmAuth.auUsername));
+    cmdBar(t, 56.0, 28.0, 88.0, 4.0, 1.5, clamp01(hpPct), 0.0, "#8e241c", "#bc3f32", "");
+    cmdBar(t, 56.0, 35.0, 88.0, 3.5, 1.5, clamp01(qiPct), 0.0, "#224a3f", "#3c7564", "");
+    cmdTx(t, 14.0 + pillW - 8.0, 31.0, 11.0, "600", "right", "#6b6255", 1.0, intToStr(presHp) + "/" + intToStr(presQi));
+    pushHit(t, MkCanvasHitbox { chX: 14.0, chY: 7.0, chW: pillW, chH: 38.0, chTarget: pillTgt, chCursor: "pointer" });
+
+    match st.psBusy {
+        Some(bi) if (!m.cmBattle.btInBattle) -> {
+            let ageS = maxFloat(0.0, (m.cmVp.vpClockMs - m.cmHero.hsStatsSyncedAtMs) / 1000.0);
+            let remS = maxFloat(0.0, bi.biSeconds - ageS);
+            let tot = bi.biCompleted + bi.biRemaining;
+            let tName = match listFind(m.cmHero.hsArts, (a) -> a.aiId == bi.biTarget) {
+                Some(a) -> a.aiName,
+                None -> bi.biTarget,
+            };
+            let lbl = tr(m.cmVp.vpLocale, "training.action." + bi.biAction) + " " + tName + " " + intToStr(bi.biCompleted) + "/" + intToStr(tot) + " · " + intToStr(ceilInt(remS)) + "s";
+            let bw = minFloat(240.0, textWidth(11.5, lbl) + 20.0);
+            drawBtn(t, m, 14.0 + pillW + 10.0, 11.0, bw, 30.0, lbl, 11.5, ToneJade, false, HitUi("desktop_drawer", "arts", ""))
+        },
+        _ -> (),
+    };
+
+    let activeQ = listLen(listFilter(m.cmHero.hsQuests, (q) -> !q.qiCompleted));
+    drawBtn(t, m, w - 190.0, 11.0, 58.0, 30.0, if (zh) "武学" else "Arts", 12.5, if (m.cmUi.uiDesktopDrawer == "arts") ToneActive else ToneGhost, false, HitUi("desktop_drawer", "arts", ""));
+    drawBtn(t, m, w - 124.0, 11.0, 60.0, 30.0, if (zh) "任务" else "Quests", 12.5, if (m.cmUi.uiDesktopDrawer == "quests") ToneActive else ToneGhost, false, HitUi("desktop_drawer", "quests", ""));
+    if (activeQ > 0) cmdCirc(t, w - 70.0, 17.0, 3.0, "#9e2a22", "", 0.0, 1.0) else ();
+    drawBtn(t, m, w - 54.0, 11.0, 38.0, 30.0, if (zh) "EN" else "中", 11.5, ToneGhost, false, HitUi("toggle_locale", "", ""))
+}
+
+def drawMobileHeader(t: Tape, m: ClientModel): Void = {
+    let w = m.cmVp.vpWidth;
+    let zh = isZh(m.cmVp.vpLocale);
+    let (presHp, presMaxHp, presQi, presMaxQi) = presentedVitals(m);
+    let hpPct = intToFloat(presHp) / intToFloat(maxInt(1, presMaxHp));
+    let qiPct = intToFloat(presQi) / intToFloat(maxInt(1, presMaxQi));
+    let mName = currentMapName(m);
+    let rName = m.cmWorld.wvRoomName;
+    let titleTxt =
+        if (m.cmBattle.btInBattle) {
+            match m.cmBattle.btSnap {
+                Some(bs) -> bs.bsEnemy.cbName,
+                None -> if (zh) "交锋" else "Battle",
+            }
+        } else if (strLen(mName) > 0 && mName != rName && strLen(rName) > 0) {
+            mName + " · " + rName
+        } else if (strLen(rName) > 0) {
+            rName
+        } else {
+            if (zh) "听风录" else "Tingfeng"
+        };
+
+    cmdRect(t, 0.0, 0.0, w, 54.0, 0.0, "#faf6ee", "", 0.0, 0.96);
+    cmdLine(t, 0.0, 54.0, w, 54.0, 0.8, "rgba(130,118,98,0.28)", 1.0, false);
+    cmdSerif(t, 14.0, 27.0, 15.5, "700", "left", "#1c1915", 1.0, truncateText(w - 144.0, 15.5, titleTxt));
+    pushHit(t, MkCanvasHitbox { chX: 0.0, chY: 0.0, chW: w, chH: 54.0, chTarget: HitSwallow, chCursor: "default" });
+
+    drawBtn(t, m, w - 124.0, 8.0, 76.0, 26.0, intToStr(presHp) + "/" + intToStr(presQi), 11.0, ToneGhost, false, HitUi("mobile_tab", "character", ""));
+    drawBtn(t, m, w - 42.0, 8.0, 32.0, 26.0, if (zh) "EN" else "中", 11.0, ToneGhost, false, HitUi("toggle_locale", "", ""));
+
+    let barW = (w - 34.0) * 0.5;
+    cmdBar(t, 14.0, 41.0, barW, 4.5, 2.0, clamp01(hpPct), 0.0, "#8e241c", "#bc3f32", "");
+    cmdBar(t, 20.0 + barW, 41.0, barW, 4.5, 2.0, clamp01(qiPct), 0.0, "#224a3f", "#3c7564", "")
+}
+
+def drawMobileTabbar(t: Tape, m: ClientModel): Void = {
+    let w = m.cmVp.vpWidth;
+    let h = m.cmVp.vpHeight;
+    let y0 = h - 54.0;
+    let zh = isZh(m.cmVp.vpLocale);
+    let tw = w / 5.0;
+    let activeQ = listLen(listFilter(m.cmHero.hsQuests, (q) -> !q.qiCompleted));
+    let ageS = maxFloat(0.0, (m.cmVp.vpClockMs - m.cmHero.hsStatsSyncedAtMs) / 1000.0);
+    let liveInj = maxInt(0, m.cmHero.hsStats.psInjuredSeconds - floorInt(ageS));
+    let inB = m.cmBattle.btInBattle;
+
+    let tabs = [
+        ("world", if (zh) (if (inB) "交锋" else "江湖") else (if (inB) "Duel" else "World"), inB && m.cmUi.uiMobileTab != "world", 0),
+        ("log", if (zh) "纪事" else "Log", false, m.cmUi.uiUnreadLogs),
+        ("arts", if (zh) "武学" else "Arts", optIsSome(m.cmHero.hsStats.psBusy), 0),
+        ("character", if (zh) "角色" else "Hero", liveInj > 0, 0),
+        ("quests", if (zh) "任务" else "Quests", false, activeQ)
+    ];
+
+    cmdRect(t, 0.0, y0, w, 54.0, 0.0, "#faf6ee", "", 0.0, 0.97);
+    cmdLine(t, 0.0, y0, w, y0, 0.75, "rgba(130,118,98,0.26)", 1.0, false);
+    pushHit(t, MkCanvasHitbox { chX: 0.0, chY: y0, chW: w, chH: 54.0, chTarget: HitSwallow, chCursor: "default" });
+
+    let idxCell = cellNew(0);
+    let cur = cellNew(tabs);
+    while (match cellGet(cur) { Nil -> false, _ -> true }) {
+        match cellGet(cur) {
+            Cons((tid, lbl, hasDot, badge), rest) -> {
+                let idx = cellGet(idxCell);
+                let tx = intToFloat(idx) * tw;
+                let cx = tx + tw * 0.5;
+                let act = m.cmUi.uiMobileTab == tid;
+                let col = if (act) "#a32c22" else "#5c5346";
+                if (act) cmdRect(t, tx + 12.0, y0, tw - 24.0, 2.5, 0.0, "#a32c22", "", 0.0, 1.0) else ();
+                match tid {
+                    "world" -> {
+                        cmdCirc(t, cx, y0 + 19.0, 7.5, "", col, 1.4, 0.95);
+                        cmdLine(t, cx - 3.5, y0 + 22.5, cx + 3.5, y0 + 15.5, 1.4, col, 0.95, false)
+                    },
+                    "log" -> {
+                        cmdRect(t, cx - 8.0, y0 + 12.0, 16.0, 12.0, 2.0, "", col, 1.3, 0.95);
+                        cmdLine(t, cx - 4.0, y0 + 16.5, cx + 4.0, y0 + 16.5, 1.2, col, 0.9, false);
+                        cmdLine(t, cx - 4.0, y0 + 20.0, cx + 2.0, y0 + 20.0, 1.2, col, 0.9, false)
+                    },
+                    "arts" -> {
+                        cmdRect(t, cx - 8.0, y0 + 12.0, 7.5, 13.0, 1.0, "", col, 1.3, 0.95);
+                        cmdRect(t, cx + 0.5, y0 + 12.0, 7.5, 13.0, 1.0, "", col, 1.3, 0.95)
+                    },
+                    "character" -> {
+                        cmdCirc(t, cx, y0 + 15.5, 3.6, "", col, 1.3, 0.95);
+                        cmdLine(t, cx - 6.0, y0 + 25.0, cx + 6.0, y0 + 25.0, 1.4, col, 0.95, false)
+                    },
+                    _ -> {
+                        cmdRect(t, cx - 6.5, y0 + 11.5, 13.0, 14.0, 1.5, "", col, 1.3, 0.95);
+                        cmdLine(t, cx - 3.5, y0 + 16.0, cx + 3.5, y0 + 16.0, 1.2, col, 0.9, false);
+                        cmdLine(t, cx - 3.5, y0 + 20.0, cx + 2.0, y0 + 20.0, 1.2, col, 0.9, false)
+                    },
+                };
+                if (badge > 0) {
+                    cmdRect(t, cx + 8.0, y0 + 6.0, 16.0, 14.0, 7.0, "#a32c22", "", 0.0, 0.95);
+                    cmdTx(t, cx + 16.0, y0 + 16.5, 9.5, "700", "center", "#f7f1e3", 1.0, if (badge > 9) "9+" else intToStr(badge))
+                } else if (hasDot) {
+                    cmdCirc(t, cx + 11.0, y0 + 11.0, 3.2, if (tid == "arts") "#2b594b" else "#a32c22", "", 0.0, 1.0)
+                } else ();
+                cmdTx(t, cx, y0 + 44.0, 10.5, if (act) "700" else "500", "center", col, 1.0, lbl);
+                pushHit(t, MkCanvasHitbox { chX: tx, chY: y0, chW: tw, chH: 54.0, chTarget: HitUi("mobile_tab", tid, ""), chCursor: "pointer" });
+                cellSet(idxCell, idx + 1);
+                cellSet(cur, rest)
+            },
+            Nil -> (),
+        }
+    }
+}
+
+def drawRoomCard(t: Tape, m: ClientModel, isMob: Bool): Void = {
+    let w = m.cmVp.vpWidth;
+    let x0 = if (isMob) 10.0 else 16.0;
+    let y0 = 64.0;
+    let cw = if (isMob) w - 20.0 else minFloat(420.0, w - 32.0);
+    let pad = if (isMob) 10.0 else 13.0;
+    let mName = currentMapName(m);
+    let descLines = listTake(wrapText(cw - pad * 2.0, 12.0, m.cmWorld.wvRoomDesc), if (isMob) 3 else 4);
+    let descH = intToFloat(listLen(descLines)) * 17.5;
+    let chars = m.cmWorld.wvRoomChars;
+    let chipStartY = y0 + 34.0 + descH + (if (listIsEmpty(chars)) 0.0 else 6.0);
+
+    // Measure chip rows first so card background draws behind NPC buttons
+    let curX = cellNew(x0 + pad);
+    let curY = cellNew(chipStartY);
+    let mcur = cellNew(chars);
+    while (match cellGet(mcur) { Nil -> false, _ -> true }) {
+        match cellGet(mcur) {
+            Cons(npc, rest) -> {
+                let isHostile = listContainsStr(npc.rcActions, "attack");
+                let bw = minFloat(cw - pad * 2.0, textWidth(12.0, npc.rcName) + (if (isHostile) 28.0 else 22.0));
+                let cx = cellGet(curX);
+                let cy = cellGet(curY);
+                let (nx, ny) = if (cx + bw > x0 + cw - pad && cx > x0 + pad) (x0 + pad, cy + 32.0) else (cx, cy);
+                cellSet(curX, nx + bw + 6.0);
+                cellSet(curY, ny);
+                cellSet(mcur, rest)
+            },
+            Nil -> (),
+        }
+    };
+    let endChipY = cellGet(curY);
+    let cardH = (if (listIsEmpty(chars)) y0 + 32.0 + descH + 10.0 else endChipY + 34.0) - y0;
+
+    cmdCard(t, x0, y0, cw, cardH, 3.0, "#faf6ee", "rgba(130,118,98,0.30)", 0.8, 0.96, 4.0, 14.0, false);
+    cmdRect(t, x0 + 1.0, y0 + 8.0, 2.5, cardH - 16.0, 1.0, "#9e2a22", "", 0.0, 0.78);
+    cmdSerif(t, x0 + pad + 3.0, y0 + 22.0, if (isMob) 15.0 else 16.0, "700", "left", "#1c1915", 1.0, m.cmWorld.wvRoomName);
+    pushHit(t, MkCanvasHitbox { chX: x0, chY: y0, chW: cw, chH: cardH, chTarget: HitSwallow, chCursor: "default" });
+
+    if (strLen(mName) > 0) {
+        let mw = textWidth(10.5, mName) + 14.0;
+        cmdRect(t, x0 + cw - pad - mw, y0 + 8.0, mw, 19.0, 2.0, "rgba(42,35,26,0.05)", "rgba(130,118,98,0.22)", 0.7, 1.0);
+        cmdTx(t, x0 + cw - pad - mw * 0.5, y0 + 20.5, 10.5, "600", "center", "#6b6255", 1.0, mName)
+    } else ();
+
+    let di = cellNew(0);
+    let dcur = cellNew(descLines);
+    while (match cellGet(dcur) { Nil -> false, _ -> true }) {
+        match cellGet(dcur) {
+            Cons(ln, rest) -> {
+                cmdTx(t, x0 + pad + 2.0, y0 + 42.0 + intToFloat(cellGet(di)) * 17.5, 12.0, "400", "left", "#4a4136", 1.0, ln);
+                cellSet(di, cellGet(di) + 1);
+                cellSet(dcur, rest)
+            },
+            Nil -> (),
+        }
+    };
+
+    let cx2 = cellNew(x0 + pad);
+    let cy2 = cellNew(chipStartY);
+    let ccur = cellNew(chars);
+    while (match cellGet(ccur) { Nil -> false, _ -> true }) {
+        match cellGet(ccur) {
+            Cons(npc, rest) -> {
+                let isHostile = listContainsStr(npc.rcActions, "attack");
+                let bw = minFloat(cw - pad * 2.0, textWidth(12.0, npc.rcName) + (if (isHostile) 28.0 else 22.0));
+                let cx = cellGet(cx2);
+                let cy = cellGet(cy2);
+                let (nx, ny) = if (cx + bw > x0 + cw - pad && cx > x0 + pad) (x0 + pad, cy + 32.0) else (cx, cy);
+                let sel = optStrEqLocal(m.cmUi.uiSelectedNpc, Some(npc.rcId));
+                let tone = if (sel) ToneActive else if (isHostile) ToneDanger else ToneJade;
+                drawBtn(t, m, nx, ny, bw, 26.0, npc.rcName, 11.5, tone, m.cmWorld.wvStoryActive, HitUi("select_npc", npc.rcId, ""));
+                cellSet(cx2, nx + bw + 6.0);
+                cellSet(cy2, ny);
+                cellSet(ccur, rest)
+            },
+            Nil -> (),
+        }
+    }
+}
+
+def drawMapControls(t: Tape, m: ClientModel, isMob: Bool): Void = {
+    let w = m.cmVp.vpWidth;
+    let zh = isZh(m.cmVp.vpLocale);
+    let rightEdge = if (!isMob && strLen(m.cmUi.uiDesktopDrawer) > 0) w - 394.0 else w - 14.0;
+    let y0 = if (isMob) 176.0 else 66.0;
+    drawBtn(t, m, rightEdge - 30.0, y0, 30.0, 28.0, "+", 15.0, ToneDefault, false, HitUi("zoom_in", "", ""));
+    drawBtn(t, m, rightEdge - 30.0, y0 + 34.0, 30.0, 28.0, "−", 15.0, ToneDefault, false, HitUi("zoom_out", "", ""));
+    if (isCameraPanned(m)) {
+        drawBtn(t, m, rightEdge - 56.0, y0 + 70.0, 56.0, 26.0, if (zh) "归位" else "Center", 11.0, TonePrimary, false, HitUi("reset_cam", "", ""))
+    } else ()
+}
+
+def drawNpcModal(t: Tape, m: ClientModel, isMob: Bool): Float = {
+    let mNpc = match m.cmUi.uiSelectedNpc {
+        Some(cid) -> listFind(m.cmWorld.wvRoomChars, (c) -> c.rcId == cid),
+        None -> None,
+    };
+    match mNpc {
+        None -> 0.0,
+        Some(npc) -> {
+            let w = m.cmVp.vpWidth;
+            let h = m.cmVp.vpHeight;
+            let zh = isZh(m.cmVp.vpLocale);
+            let idle = !m.cmWorld.wvStoryActive && optIsNone(m.cmHero.hsStats.psBusy);
+            let mw = minFloat(420.0, w - 28.0);
+            let maxH = h - (if (isMob) 140.0 else 130.0);
+            let mx = (w - mw) * 0.5;
+            let pad = 16.0;
+            let innerW = mw - pad * 2.0;
+
+            cmdRect(t, 0.0, 0.0, w, h, 0.0, "#1e1a16", "", 0.0, 0.32);
+            pushHit(t, MkCanvasHitbox { chX: 0.0, chY: 0.0, chW: w, chH: h, chTarget: HitUi("select_npc", "", ""), chCursor: "default" });
+
+            let descLines = if (strLen(npc.rcDesc) == 0) Nil else wrapText(innerW, 12.5, npc.rcDesc);
+            let canTalk = listContainsStr(npc.rcActions, "talk") || listContainsStr(npc.rcActions, "dialogue") || listIsEmpty(npc.rcActions);
+            let canAtk = listContainsStr(npc.rcActions, "attack");
+
+            let bodyH =
+                intToFloat(listLen(descLines)) * 18.0
+                    + 44.0
+                    + (if (listIsEmpty(npc.rcTeaches)) 0.0 else 28.0 + intToFloat(listLen(npc.rcTeaches)) * 34.0)
+                    + (if (listIsEmpty(npc.rcShop)) 0.0 else 28.0 + intToFloat(listLen(npc.rcShop)) * 34.0);
+            let mh = minFloat(maxH, maxFloat(150.0, 56.0 + bodyH + 14.0));
+            let my = maxFloat(62.0, (h - mh) * 0.45);
+            let viewH = mh - 56.0;
+            let maxS = maxFloat(0.0, bodyH - viewH);
+            let scrollY = clampFloat(0.0, maxS, m.cmScroll.shNpcScroll);
+
+            cmdRect(t, mx, my, mw, mh, 4.0, "#f6f0e2", "#946623", 1.4, 0.99);
+            cmdSerif(t, mx + pad, my + 30.0, 17.0, "700", "left", "#1e1a16", 1.0, npc.rcName);
+            cmdLine(t, mx + pad, my + 44.0, mx + mw - pad, my + 44.0, 1.0, "#d6cab2", 1.0, false);
+            pushHit(t, MkCanvasHitbox { chX: mx, chY: my, chW: mw, chH: mh, chTarget: HitSwallow, chCursor: "default" });
+            drawBtn(t, m, mx + mw - 40.0, my + 10.0, 28.0, 28.0, "×", 15.0, ToneGhost, false, HitUi("select_npc", "", ""));
+
+            let inner = tapeNew(true);
+            let yStart = my + 54.0 - scrollY;
+            let x0 = mx + pad;
+            let di = cellNew(0);
+            let dcur = cellNew(descLines);
+            while (match cellGet(dcur) { Nil -> false, _ -> true }) {
+                match cellGet(dcur) {
+                    Cons(ln, rest) -> {
+                        cmdTx(inner, x0, yStart + 14.0 + intToFloat(cellGet(di)) * 18.0, 12.5, "400", "left", "#4a4136", 1.0, ln);
+                        cellSet(di, cellGet(di) + 1);
+                        cellSet(dcur, rest)
+                    },
+                    Nil -> (),
+                }
+            };
+            let yAct = yStart + intToFloat(listLen(descLines)) * 18.0 + 6.0;
+            if (canTalk) drawBtn(inner, m, x0, yAct, 88.0, 30.0, if (zh) "交谈" else "Talk", 12.5, TonePrimary, m.cmWorld.wvStoryActive, HitUi("talk", npc.rcId, "")) else ();
+            if (canAtk) drawBtn(inner, m, x0 + (if (canTalk) 96.0 else 0.0), yAct, 96.0, 30.0, if (zh) "动手攻击" else "Attack", 12.5, ToneDanger, m.cmWorld.wvStoryActive, HitUi("attack", npc.rcId, "")) else ();
+
+            let yTeach0 = yAct + 42.0;
+            let yShop0 =
+                if (listIsEmpty(npc.rcTeaches)) yTeach0
+                else {
+                    cmdTx(inner, x0, yTeach0 + 12.0, 11.5, "700", "left", "#8b7f6e", 1.0, if (zh) "可传武学" else "Teaches");
+                    let ti = cellNew(0);
+                    let tcur = cellNew(npc.rcTeaches);
+                    while (match cellGet(tcur) { Nil -> false, _ -> true }) {
+                        match cellGet(tcur) {
+                            Cons(ta, rest) -> {
+                                let i = cellGet(ti);
+                                let ry = yTeach0 + 22.0 + intToFloat(i) * 34.0;
+                                let lbl = ta.taName + " (≤" + intToStr(ta.taMaxLevel) + ")";
+                                cmdTx(inner, x0, ry + 18.0, 12.5, "600", "left", "#1e1a16", 1.0, truncateText(innerW - 126.0, 12.5, lbl));
+                                drawBtn(inner, m, x0 + innerW - 122.0, ry, 56.0, 26.0, if (zh) "学艺" else "Learn", 11.5, ToneDefault, !idle, HitUi("learn", npc.rcId + ":" + ta.taId, "1"));
+                                drawBtn(inner, m, x0 + innerW - 60.0, ry, 60.0, 26.0, if (zh) "学十次" else "×10", 11.5, ToneDefault, !idle, HitUi("learn", npc.rcId + ":" + ta.taId, "10"));
+                                cellSet(ti, i + 1);
+                                cellSet(tcur, rest)
+                            },
+                            Nil -> (),
+                        }
+                    };
+                    yTeach0 + 28.0 + intToFloat(listLen(npc.rcTeaches)) * 34.0
+                };
+
+            if (!listIsEmpty(npc.rcShop)) {
+                cmdTx(inner, x0, yShop0 + 12.0, 11.5, "700", "left", "#8b7f6e", 1.0, if (zh) "行商货架" else "Shop");
+                let si = cellNew(0);
+                let scur = cellNew(npc.rcShop);
+                while (match cellGet(scur) { Nil -> false, _ -> true }) {
+                    match cellGet(scur) {
+                        Cons(s, rest) -> {
+                            let i = cellGet(si);
+                            let ry = yShop0 + 22.0 + intToFloat(i) * 34.0;
+                            let canAfford = m.cmHero.hsMoney >= s.siPrice && !m.cmWorld.wvStoryActive && !m.cmBattle.btInBattle;
+                            let lbl = s.siName + " (" + intToStr(s.siPrice) + (if (zh) "碎银)" else "s)");
+                            cmdTx(inner, x0, ry + 18.0, 12.5, "600", "left", "#1e1a16", 1.0, truncateText(innerW - 72.0, 12.5, lbl));
+                            drawBtn(inner, m, x0 + innerW - 64.0, ry, 64.0, 26.0, if (zh) "购买" else "Buy", 11.5, ToneJade, !canAfford, HitUi("buy", npc.rcId + ":" + s.siId, ""));
+                            cellSet(si, i + 1);
+                            cellSet(scur, rest)
+                        },
+                        Nil -> (),
+                    }
+                }
+            } else ();
+
+            let clipY = my + 48.0;
+            let clipH = mh - 54.0;
+            cmdClip(t, mx + 2.0, clipY, mw - 4.0, clipH);
+            mergeSubTapeClipped(t, inner, clipY, clipH);
+            cmdUnclip(t);
+            drawScrollbar(t, mx + mw - 7.0, clipY, clipH, scrollY, maxS, viewH);
+            pushZone(t, MkScrollZone { szX: mx, szY: clipY, szW: mw, szH: clipH, szTarget: ScrollNpc });
+            maxS
+        },
+    }
+}
+
+def lineColor(k: String): String = match k {
+    "move" -> "#946623",
+    "combat" -> "#a32c22",
+    "dialogue" -> "#2b594b",
+    "say" -> "#294e6d",
+    "reward" -> "#8f5f16",
+    "error" -> "#a32c22",
+    "system" -> "#5c5346",
+    _ -> "#1e1a16",
+}
+
+def drawMessageDock(t: Tape, m: ClientModel, isMob: Bool, dockY: Float, dockH: Float, compact: Bool): Float = {
+    let w = m.cmVp.vpWidth;
+    let zh = isZh(m.cmVp.vpLocale);
+    let dockW = if (isMob) w - 20.0 else minFloat(760.0, w - 32.0);
+    let dockX = (w - dockW) * 0.5;
+    let inpH = if (compact) 0.0 else 38.0;
+    let logViewH = maxFloat(36.0, dockH - inpH - 12.0);
+    let logX = dockX + 12.0;
+    let logY = dockY + 8.0;
+    let logW = dockW - 26.0;
+
+    let fontSz = 12.5;
+    let lineH = 18.0;
+    let wrapped = listConcatMap(m.cmUi.uiLogs, (l) ->
+        listMap(wrapText(logW, fontSz, l.llText), (ln) -> (l.llKind, ln))
+    );
+    let totalH = intToFloat(listLen(wrapped)) * lineH + 6.0;
+    let maxS = maxFloat(0.0, totalH - logViewH);
+    let scrollY = if (m.cmScroll.shLogStickBottom) maxS else clampFloat(0.0, maxS, m.cmScroll.shLogScroll);
+
+    cmdCard(t, dockX, dockY, dockW, dockH, 3.0, "#faf6ee", "rgba(130,118,98,0.28)", 0.8, 0.96, 4.0, 16.0, false);
+    pushHit(t, MkCanvasHitbox { chX: dockX, chY: dockY, chW: dockW, chH: dockH, chTarget: HitSwallow, chCursor: "default" });
+
+    cmdClip(t, dockX + 4.0, logY, dockW - 12.0, logViewH);
+    let li = cellNew(0);
+    let lcur = cellNew(wrapped);
+    while (match cellGet(lcur) { Nil -> false, _ -> true }) {
+        match cellGet(lcur) {
+            Cons((k, txt), rest) -> {
+                let i = cellGet(li);
+                let ly = logY + 13.0 + intToFloat(i) * lineH - scrollY;
+                if (ly >= logY - lineH && ly <= logY + logViewH + lineH) {
+                    cmdTx(t, logX, ly, fontSz, if (k == "move" || k == "reward") "600" else "400", "left", lineColor(k), 1.0, txt)
+                } else ();
+                cellSet(li, i + 1);
+                cellSet(lcur, rest)
+            },
+            Nil -> (),
+        }
+    };
+    cmdUnclip(t);
+    drawScrollbar(t, dockX + dockW - 7.0, logY, logViewH, scrollY, maxS, logViewH);
+    pushZone(t, MkScrollZone { szX: dockX, szY: logY, szW: dockW, szH: logViewH, szTarget: ScrollLog });
+
+    if (!m.cmScroll.shLogStickBottom && maxS > 10.0) {
+        drawBtn(t, m, dockX + dockW - 78.0, logY + logViewH - 26.0, 64.0, 22.0, if (zh) "↓ 最新" else "↓ Latest", 10.5, TonePrimary, false, HitUi("scroll_log_bottom", "", ""))
+    } else ();
+
+    let canAttachIme = optIsNone(m.cmUi.uiSelectedNpc) && (isMob || strLen(m.cmUi.uiDesktopDrawer) == 0) && !m.cmWorld.wvStoryActive;
+    if (!compact) {
+        let iy = dockY + dockH - inpH;
+        let ix = dockX + 8.0;
+        let iw = dockW - 128.0;
+        let focused = optStrEqLocal(m.cmUi.uiFocusedInput, Some("say"));
+        let draft = m.cmUi.uiSayDraft;
+        let blink = focused && (floorMod(floorInt(m.cmVp.vpClockMs / 520.0), 2) == 0);
+        let disp = if (strLen(draft) == 0) (if (zh) "输入发言，回车发送…" else "Say something…") else draft;
+        let caretX = ix + 8.0 + (if (strLen(draft) == 0) 0.0 else textWidth(12.0, draft));
+        cmdLine(t, dockX, iy, dockX + dockW, iy, 1.0, "#d6cab2", 1.0, false);
+        cmdRect(t, ix, iy + 6.0, iw, 26.0, 2.0, "#fcf9f2", if (focused) "#946623" else "#c5b9a0", if (focused) 1.5 else 1.0, 1.0);
+        cmdTx(t, ix + 8.0, iy + 23.0, 12.0, "400", "left", if (strLen(draft) == 0) "#8b7f6e" else "#1e1a16", 1.0, truncateText(iw - 14.0, 12.0, disp));
+        if (blink) {
+            let cx = minFloat(ix + iw - 6.0, caretX);
+            cmdLine(t, cx, iy + 10.0, cx, iy + 28.0, 1.3, "#1e1a16", 0.9, false)
+        } else ();
+        if (canAttachIme) cmdInput(t, "say", ix, iy + 6.0, iw, 26.0, draft) else ();
+        pushHit(t, MkCanvasHitbox { chX: ix, chY: iy + 6.0, chW: iw, chH: 26.0, chTarget: HitFocusInput("say"), chCursor: "text" });
+        drawBtn(t, m, ix + iw + 6.0, iy + 6.0, 52.0, 26.0, if (zh) "发送" else "Send", 11.5, TonePrimary, m.cmWorld.wvStoryActive, HitUi("send_say_draft", "", ""));
+        drawBtn(t, m, ix + iw + 62.0, iy + 6.0, 50.0, 26.0, if (zh) "清屏" else "Clear", 11.5, ToneGhost, false, HitUi("clear_logs", "", ""))
+    } else ();
+
+    maxS
+}
+
+// ============================================================================
+// Side Drawers (Character / Inventory, Martial Arts, Quests)
+// ============================================================================
+
+def buildCharDrawerBody(t: Tape, m: ClientModel, zh: Bool, x0: Float, y0: Float, w: Float): Float = {
+    let st = m.cmHero.hsStats;
+    let idle = m.cmAuth.auConnected && !m.cmBattle.btInBattle && !m.cmWorld.wvStoryActive && optIsNone(st.psBusy);
+    if (m.cmUi.uiCharSubTab == "inventory") {
+        cmdRect(t, x0, y0, w, 36.0, 3.0, "#efe7d4", "#c5b9a0", 1.0, 1.0);
+        cmdTx(t, x0 + 12.0, y0 + 23.0, 13.0, "600", "left", "#5c5346", 1.0, if (zh) "随身碎银" else "Silver");
+        cmdTx(t, x0 + w - 12.0, y0 + 23.0, 14.0, "700", "right", "#946623", 1.0, intToStr(m.cmHero.hsMoney));
+        if (listIsEmpty(m.cmHero.hsInventory)) {
+            cmdTx(t, x0, y0 + 62.0, 12.5, "400", "left", "#8b7f6e", 1.0, if (zh) "行囊空空如也。" else "Inventory is empty.");
+            76.0
+        } else {
+            let ay = cellNew(y0 + 44.0);
+            let cur = cellNew(m.cmHero.hsInventory);
+            while (match cellGet(cur) { Nil -> false, _ -> true }) {
+                match cellGet(cur) {
+                    Cons(it, rest) -> {
+                        let iy = cellGet(ay);
+                        let ih = 46.0;
+                        let lbl = it.iiName + " ×" + intToStr(it.iiAmount) + (if (it.iiEquipped) (if (zh) " · 已佩带" else " · Eq") else "");
+                        cmdRect(t, x0, iy, w, ih, 3.0, "#faf5e9", if (it.iiEquipped) "#946623" else "#c8bca4", 1.0, 1.0);
+                        cmdTx(t, x0 + 10.0, iy + 27.0, 12.5, "600", "left", "#1e1a16", 1.0, truncateText(w - 134.0, 12.5, lbl));
+                        let useLbl = if (optIsSome(it.iiEquipSlot)) (if (it.iiEquipped) (if (zh) "卸下" else "Unequip") else (if (zh) "佩带" else "Equip")) else (if (zh) "使用" else "Use");
+                        if (it.iiUsable) {
+                            drawBtn(t, m, x0 + w - (if (it.iiStudyable) 124.0 else 62.0), iy + 10.0, 54.0, 26.0, useLbl, 11.5, ToneDefault, m.cmBattle.btInBattle || m.cmWorld.wvStoryActive, HitUi("use", it.iiId, ""))
+                        } else ();
+                        if (it.iiStudyable) {
+                            drawBtn(t, m, x0 + w - 62.0, iy + 10.0, 54.0, 26.0, if (zh) "研读" else "Study", 11.5, ToneJade, !idle, HitUi("study", it.iiId, ""))
+                        } else ();
+                        cellSet(ay, iy + ih + 8.0);
+                        cellSet(cur, rest)
+                    },
+                    Nil -> (),
+                }
+            };
+            cellGet(ay) - y0
+        }
+    } else {
+        let (presHp, presMaxHp, presQi, presMaxQi) = presentedVitals(m);
+        let ageS = maxFloat(0.0, (m.cmVp.vpClockMs - m.cmHero.hsStatsSyncedAtMs) / 1000.0);
+        let liveInj = maxInt(0, st.psInjuredSeconds - floorInt(ageS));
+        let pEffs = liveEffectsOf(m, true);
+
+        cmdRect(t, x0, y0, w, 84.0, 3.0, "#efe7d4", "#c5b9a0", 1.0, 1.0);
+        cmdImg(t, portraitScoreFile(st.psGender, st.psAppearance, m.cmAuth.auUsername), x0 + 10.0, y0 + 10.0, 64.0, 64.0, 3.0);
+        cmdSerif(t, x0 + 84.0, y0 + 28.0, 15.5, "700", "left", "#1e1a16", 1.0, m.cmAuth.auUsername);
+        let appTxt = if (strLen(st.psAppearanceText) == 0) "容貌 " + intToStr(st.psAppearance) else st.psAppearanceText;
+        cmdTx(t, x0 + 84.0, y0 + 47.0, 12.0, "400", "left", "#5c5346", 1.0, tr(m.cmVp.vpLocale, "gender." + st.psGender) + " · " + appTxt);
+        if (liveInj > 0) {
+            cmdTx(t, x0 + 84.0, y0 + 66.0, 11.5, "700", "left", "#a32c22", 1.0, "重伤未愈 " + intToStr(liveInj) + "s")
+        } else if (st.psCombatInsight > 0) {
+            cmdTx(t, x0 + 84.0, y0 + 66.0, 11.5, "600", "left", "#2b594b", 1.0, "实战印证 " + intToStr(st.psCombatInsight) + " 层")
+        } else ();
+
+        let yM = y0 + 94.0;
+        cmdRect(t, x0, yM, w, 146.0, 3.0, "#faf5e9", "#c8bca4", 1.0, 1.0);
+        cmdTx(t, x0 + 10.0, yM + 18.0, 11.5, "600", "left", "#5c5346", 1.0, if (zh) "气血" else "HP");
+        drawMeter(t, x0 + 10.0, yM + 24.0, w - 20.0, 13.0, intToFloat(presHp) / intToFloat(maxInt(1, presMaxHp)), None, "#a32c22", "", intToStr(presHp) + "/" + intToStr(presMaxHp));
+        cmdTx(t, x0 + 10.0, yM + 52.0, 11.5, "600", "left", "#5c5346", 1.0, if (zh) "内力" else "Qi");
+        drawMeter(t, x0 + 10.0, yM + 58.0, w - 20.0, 13.0, intToFloat(presQi) / intToFloat(maxInt(1, presMaxQi)), None, "#2b594b", "", intToStr(presQi) + "/" + intToStr(presMaxQi));
+        cmdTx(t, x0 + 10.0, yM + 86.0, 11.5, "600", "left", "#5c5346", 1.0, if (zh) "精神" else "Spirit");
+        drawMeter(t, x0 + 10.0, yM + 92.0, w - 20.0, 13.0, intToFloat(st.psJing) / intToFloat(maxInt(1, st.psMaxJing)), None, "#946623", "", intToStr(st.psJing) + "/" + intToStr(st.psMaxJing));
+        drawBtn(t, m, x0 + 10.0, yM + 112.0, 124.0, 26.0, if (zh) "打坐周天" else "Meditate", 11.5, ToneJade, !idle || st.psQi < 20, HitUi("meditate", "", ""));
+        drawBtn(t, m, x0 + 142.0, yM + 112.0, 86.0, 26.0, if (zh) "刷新状态" else "Refresh", 11.5, ToneGhost, false, HitUi("refresh", "", ""));
+
+        let yG = yM + 156.0;
+        let cw = (w - 14.0) / 3.0;
+        let cells = [
+            (if (zh) "碎银" else "Silver", m.cmHero.hsMoney),
+            (if (zh) "潜能" else "Potential", st.psPotential),
+            (if (zh) "实战经验" else "Exp", st.psCombatExp),
+            (if (zh) "臂力" else "STR", st.psStrength),
+            (if (zh) "身法" else "AGI", st.psAgility),
+            (if (zh) "根骨" else "VIT", st.psVitality)
+        ];
+        let ci = cellNew(0);
+        let ccur = cellNew(cells);
+        while (match cellGet(ccur) { Nil -> false, _ -> true }) {
+            match cellGet(ccur) {
+                Cons((k, v), rest) -> {
+                    let i = cellGet(ci);
+                    let cx = x0 + intToFloat(i % 3) * (cw + 7.0);
+                    let cy = yG + intToFloat(i / 3) * 52.0;
+                    cmdRect(t, cx, cy, cw, 44.0, 3.0, "#faf5e9", "#c8bca4", 1.0, 1.0);
+                    cmdTx(t, cx + cw * 0.5, cy + 17.0, 11.0, "500", "center", "#6e6354", 1.0, k);
+                    cmdTx(t, cx + cw * 0.5, cy + 36.0, 14.5, "700", "center", "#1e1a16", 1.0, intToStr(v));
+                    cellSet(ci, i + 1);
+                    cellSet(ccur, rest)
+                },
+                Nil -> (),
+            }
+        };
+
+        let yEff = yG + 110.0;
+        let effH =
+            if (listIsEmpty(pEffs)) 0.0
+            else {
+                cmdTx(t, x0, yEff + 12.0, 11.5, "700", "left", "#6e6354", 1.0, if (zh) "当前状态" else "Effects");
+                let ei = cellNew(0);
+                let ecur = cellNew(pEffs);
+                while (match cellGet(ecur) { Nil -> false, _ -> true }) {
+                    match cellGet(ecur) {
+                        Cons((ef, remS), rest) -> {
+                            let i = cellGet(ei);
+                            let tx = x0 + intToFloat(i % 3) * (cw + 7.0);
+                            let ty = yEff + 20.0 + intToFloat(i / 3) * 26.0;
+                            let isBad = ef.efType == "dot" || ef.efType == "debuff";
+                            cmdRect(t, tx, ty, cw, 22.0, 2.0, if (isBad) "#f7e3e0" else "#e5f0eb", if (isBad) "#a32c22" else "#2b594b", 0.8, 1.0);
+                            cmdTx(t, tx + cw * 0.5, ty + 15.0, 11.0, "600", "center", if (isBad) "#8f1f16" else "#245243", 1.0, ef.efName + " " + intToStr(ceilInt(remS)) + "s");
+                            cellSet(ei, i + 1);
+                            cellSet(ecur, rest)
+                        },
+                        Nil -> (),
+                    }
+                };
+                24.0 + intToFloat((listLen(pEffs) + 2) / 3) * 26.0
+            };
+        (yEff + effH + 12.0) - y0
+    }
+}
+
+def fmtTenthSec(sec: Float): String = {
+    let tenths = roundInt(sec * 10.0);
+    let q = tenths / 10;
+    let r = if (tenths < 0) (-tenths) % 10 else tenths % 10;
+    intToStr(q) + "." + intToStr(r)
+}
+
+def buildArtsDrawerBody(t: Tape, m: ClientModel, zh: Bool, x0: Float, y0: Float, w: Float): Float = {
+    let st = m.cmHero.hsStats;
+    let idle = m.cmAuth.auConnected && !m.cmBattle.btInBattle && !m.cmWorld.wvStoryActive && optIsNone(st.psBusy);
+    let yList0 = match st.psBusy {
+        None -> y0,
+        Some(bi) -> {
+            let ageS = maxFloat(0.0, (m.cmVp.vpClockMs - m.cmHero.hsStatsSyncedAtMs) / 1000.0);
+            let remS = maxFloat(0.0, bi.biSeconds - ageS);
+            let stepS = maxFloat(0.2, bi.biStepSeconds);
+            let prog = clampFloat(0.04, 1.0, (stepS - remS) / stepS);
+            let tot = bi.biCompleted + bi.biRemaining;
+            let tName = match listFind(m.cmHero.hsArts, (a) -> a.aiId == bi.biTarget) {
+                Some(a) -> a.aiName,
+                None -> bi.biTarget,
+            };
+            let lbl = tr(m.cmVp.vpLocale, "training.action." + bi.biAction) + " " + tName + " " + intToStr(bi.biCompleted) + "/" + intToStr(tot);
+            cmdRect(t, x0, y0, w, 60.0, 3.0, "#f2e7cf", "#946623", 1.4, 1.0);
+            cmdTx(t, x0 + 10.0, y0 + 21.0, 12.5, "700", "left", "#5e3d0e", 1.0, truncateText(w - 78.0, 12.5, lbl + " · " + fmtTenthSec(remS) + "s"));
+            drawMeter(t, x0 + 10.0, y0 + 36.0, w - 20.0, 10.0, prog, None, "#946623", "", "");
+            drawBtn(t, m, x0 + w - 62.0, y0 + 8.0, 52.0, 24.0, if (zh) "停下" else "Stop", 11.5, ToneDanger, false, HitUi("halt", "", ""));
+            y0 + 70.0
+        },
+    };
+
+    if (listIsEmpty(m.cmHero.hsArts)) {
+        cmdTx(t, x0, yList0 + 20.0, 12.5, "400", "left", "#8b7f6e", 1.0, if (zh) "尚未习得武学。" else "No martial arts learned.");
+        (yList0 + 36.0) - y0
+    } else {
+        let ay = cellNew(yList0);
+        let cur = cellNew(m.cmHero.hsArts);
+        while (match cellGet(cur) { Nil -> false, _ -> true }) {
+            match cellGet(cur) {
+                Cons(a, rest) -> {
+                    let cy = cellGet(ay);
+                    let loc = m.cmVp.vpLocale;
+                    let blkTxt = match a.aiBlocker {
+                        Some("combat_exp") -> trParams(loc, "art.blocker.combat_exp", [("required", intToStr(a.aiNextCombatExp))]),
+                        Some("foundation") -> tr(loc, "art.blocker.foundation"),
+                        Some("max_level") -> tr(loc, "art.blocker.max_level"),
+                        _ -> "",
+                    };
+                    let movesTxt = strJoin(listAppend(a.aiUnlockedMoves, a.aiUnlockedSkills), " / ");
+                    let canRes = !a.aiIsFoundation && a.aiLevel >= a.aiResearchFrom && a.aiLevel < a.aiMaxLevel;
+                    let maxed = optStrEqLocal(a.aiBlocker, Some("max_level"));
+                    let hasProg = a.aiNextProgress > 0;
+                    let hasBlk = strLen(blkTxt) > 0;
+                    let hasMvs = strLen(movesTxt) > 0;
+                    let hasBtns = !a.aiIsFoundation;
+                    let ch =
+                        46.0
+                            + (if (hasProg) 16.0 else 0.0)
+                            + (if (hasBlk) 17.0 else 0.0)
+                            + (if (hasMvs) 17.0 else 0.0)
+                            + (if (hasBtns) 34.0 else 0.0);
+                    let bd = if (a.aiEnabled) "#946623" else "#c8bca4";
+                    cmdRect(t, x0, cy, w, ch, 3.0, if (a.aiEnabled) "#f3ead6" else "#faf5e9", bd, if (a.aiEnabled) 1.5 else 1.0, 1.0);
+                    cmdTx(t, x0 + 10.0, cy + 20.0, 13.5, "700", "left", "#1e1a16", 1.0, a.aiName);
+                    cmdTx(t, x0 + w - 10.0, cy + 20.0, 11.0, "600", "right", "#6e6354", 1.0, formatArtType(loc, a.aiType));
+                    cmdTx(t, x0 + 10.0, cy + 37.0, 11.5, "400", "left", "#5c5346", 1.0,
+                        artRankTitle(loc, a.aiLevel) + " · " + trParams(loc, "art.level", [("level", intToStr(a.aiLevel)), ("max", intToStr(a.aiMaxLevel))]));
+
+                    let y1 = cy + 44.0;
+                    if (hasProg) {
+                        drawMeter(t, x0 + 10.0, y1, w - 20.0, 7.0, intToFloat(a.aiProgress) / intToFloat(maxInt(1, a.aiNextProgress)), None, "#2b594b", "", "")
+                    } else ();
+                    let y2 = y1 + (if (hasProg) 16.0 else 0.0);
+                    if (hasBlk) cmdTx(t, x0 + 10.0, y2 + 10.0, 11.0, "600", "left", "#a32c22", 1.0, truncateText(w - 20.0, 11.0, blkTxt)) else ();
+                    let y3 = y2 + (if (hasBlk) 17.0 else 0.0);
+                    if (hasMvs) cmdTx(t, x0 + 10.0, y3 + 10.0, 11.0, "400", "left", "#6e6354", 1.0, truncateText(w - 20.0, 11.0, movesTxt)) else ();
+                    let y4 = y3 + (if (hasMvs) 17.0 else 0.0);
+
+                    if (hasBtns) {
+                        if (!maxed) {
+                            drawBtn(t, m, x0 + 10.0, y4, 54.0, 25.0, if (zh) "练功" else "Train", 11.5, ToneDefault, !idle, HitUi("practice", a.aiId, "1"));
+                            drawBtn(t, m, x0 + 70.0, y4, 60.0, 25.0, if (zh) "练十次" else "×10", 11.5, ToneDefault, !idle, HitUi("practice", a.aiId, "10"))
+                        } else ();
+                        let nx = x0 + (if (maxed) 10.0 else 136.0);
+                        if (canRes) {
+                            drawBtn(t, m, nx, y4, 52.0, 25.0, if (zh) "自研" else "Study", 11.5, ToneJade, !idle, HitUi("research", a.aiId, ""))
+                        } else ();
+                        let ex = nx + (if (canRes) 58.0 else 0.0);
+                        if (a.aiEnabled) {
+                            cmdTx(t, ex + 4.0, y4 + 17.0, 11.5, "700", "left", "#946623", 1.0, if (zh) "✓ 已启用" else "✓ On")
+                        } else {
+                            drawBtn(t, m, ex, y4, 54.0, 25.0, if (zh) "启用" else "Enable", 11.5, TonePrimary, m.cmBattle.btInBattle, HitUi("enable", a.aiType, a.aiId))
+                        }
+                    } else ();
+
+                    cellSet(ay, cy + ch + 8.0);
+                    cellSet(cur, rest)
+                },
+                Nil -> (),
+            }
+        };
+        cellGet(ay) - y0
+    }
+}
+
+def buildQuestsDrawerBody(t: Tape, m: ClientModel, zh: Bool, x0: Float, y0: Float, w: Float): Float =
+    if (listIsEmpty(m.cmHero.hsQuests)) {
+        cmdTx(t, x0, y0 + 20.0, 12.5, "400", "left", "#8b7f6e", 1.0, if (zh) "暂无江湖轶闻。" else "No quests yet.");
+        36.0
+    } else {
+        let ay = cellNew(y0);
+        let cur = cellNew(m.cmHero.hsQuests);
+        while (match cellGet(cur) { Nil -> false, _ -> true }) {
+            match cellGet(cur) {
+                Cons(q, rest) -> {
+                    let cy = cellGet(ay);
+                    let objLines = match q.qiObjective { Some(obj) -> wrapText(w - 20.0, 12.0, obj), None -> Nil };
+                    let rewTxt = strJoin(listMap(q.qiRewards, (r) -> r.rwName + " ×" + intToStr(r.rwAmount)), "、");
+                    let ch = 34.0 + intToFloat(listLen(objLines)) * 17.0 + (if (strLen(rewTxt) == 0) 6.0 else 22.0);
+                    cmdRect(t, x0, cy, w, ch, 3.0, "#faf5e9", if (q.qiCompleted) "#c8bca4" else "#946623", 1.0, 1.0);
+                    cmdTx(t, x0 + 10.0, cy + 21.0, 13.0, "700", "left", "#1e1a16", 1.0, q.qiName);
+                    cmdTx(t, x0 + w - 10.0, cy + 21.0, 11.0, "700", "right", if (q.qiCompleted) "#2b594b" else "#946623", 1.0,
+                        if (q.qiCompleted) (if (zh) "已完成" else "Done") else (if (zh) "进行中" else "Active"));
+                    let oi = cellNew(0);
+                    let ocur = cellNew(objLines);
+                    while (match cellGet(ocur) { Nil -> false, _ -> true }) {
+                        match cellGet(ocur) {
+                            Cons(ln, orest) -> {
+                                cmdTx(t, x0 + 10.0, cy + 39.0 + intToFloat(cellGet(oi)) * 17.0, 12.0, "400", "left", "#4a4136", 1.0, ln);
+                                cellSet(oi, cellGet(oi) + 1);
+                                cellSet(ocur, orest)
+                            },
+                            Nil -> (),
+                        }
+                    };
+                    if (strLen(rewTxt) > 0) {
+                        cmdTx(t, x0 + 10.0, cy + ch - 8.0, 11.0, "500", "left", "#8b7f6e", 1.0, truncateText(w - 20.0, 11.0, (if (zh) "奖励：" else "Reward: ") + rewTxt))
+                    } else ();
+                    cellSet(ay, cy + ch + 8.0);
+                    cellSet(cur, rest)
+                },
+                Nil -> (),
+            }
+        };
+        cellGet(ay) - y0
+    }
+
+def drawSideDrawer(t: Tape, m: ClientModel, isMob: Bool, drawerKind: String): Float = {
+    let w = m.cmVp.vpWidth;
+    let h = m.cmVp.vpHeight;
+    let zh = isZh(m.cmVp.vpLocale);
+    let dx = if (isMob) 0.0 else w - 380.0;
+    let dy = if (isMob) 56.0 else 52.0;
+    let dw = if (isMob) w else 380.0;
+    let dh = if (isMob) h - 110.0 else h - 52.0;
+    let pad = 14.0;
+    let innerW = dw - pad * 2.0;
+
+    if (!isMob) {
+        cmdRect(t, 0.0, 52.0, w - 380.0, h - 52.0, 0.0, "#1e1a16", "", 0.0, 0.22);
+        pushHit(t, MkCanvasHitbox { chX: 0.0, chY: 52.0, chW: w - 380.0, chH: h - 52.0, chTarget: HitUi("desktop_drawer", "", ""), chCursor: "default" })
+    } else ();
+
+    cmdRect(t, dx, dy, dw, dh, 0.0, "#f6f0e2", "", 0.0, 0.99);
+    if (!isMob) cmdLine(t, dx, dy, dx, dy + dh, 1.2, "#b8aa91", 1.0, false) else ();
+    cmdLine(t, dx + pad, dy + 48.0, dx + dw - pad, dy + 48.0, 1.0, "#d6cab2", 1.0, false);
+    pushHit(t, MkCanvasHitbox { chX: dx, chY: dy, chW: dw, chH: dh, chTarget: HitSwallow, chCursor: "default" });
+
+    match drawerKind {
+        "character" -> {
+            drawBtn(t, m, dx + pad, dy + 10.0, 92.0, 28.0, if (zh) "角色属性" else "Status", 12.0, if (m.cmUi.uiCharSubTab == "status") ToneActive else ToneGhost, false, HitUi("char_subtab", "status", ""));
+            let bagLbl = (if (zh) "行囊器物 " else "Bag ") + "(" + intToStr(listLen(m.cmHero.hsInventory)) + ")";
+            drawBtn(t, m, dx + pad + 98.0, dy + 10.0, 108.0, 28.0, bagLbl, 12.0, if (m.cmUi.uiCharSubTab == "inventory") ToneActive else ToneGhost, false, HitUi("char_subtab", "inventory", ""));
+            if (!isMob) drawBtn(t, m, dx + dw - 42.0, dy + 10.0, 28.0, 28.0, "×", 15.0, ToneGhost, false, HitUi("desktop_drawer", "", "")) else ()
+        },
+        "arts" -> {
+            cmdSerif(t, dx + pad, dy + 30.0, 16.0, "700", "left", "#1e1a16", 1.0, (if (zh) "武学修为" else "Martial Arts") + " (" + intToStr(listLen(m.cmHero.hsArts)) + ")");
+            if (!isMob) drawBtn(t, m, dx + dw - 42.0, dy + 10.0, 28.0, 28.0, "×", 15.0, ToneGhost, false, HitUi("desktop_drawer", "", "")) else ()
+        },
+        _ -> {
+            cmdSerif(t, dx + pad, dy + 30.0, 16.0, "700", "left", "#1e1a16", 1.0, (if (zh) "江湖轶闻" else "Quests") + " (" + intToStr(listLen(m.cmHero.hsQuests)) + ")");
+            if (!isMob) drawBtn(t, m, dx + dw - 42.0, dy + 10.0, 28.0, 28.0, "×", 15.0, ToneGhost, false, HitUi("desktop_drawer", "", "")) else ()
+        },
+    };
+
+    let clipY = dy + 54.0;
+    let clipH = maxFloat(60.0, dh - 60.0);
+    let buildBody = (sub: Tape, sy: Float) -> match drawerKind {
+        "character" -> buildCharDrawerBody(sub, m, zh, dx + pad, clipY + 4.0 - sy, innerW),
+        "arts" -> buildArtsDrawerBody(sub, m, zh, dx + pad, clipY + 4.0 - sy, innerW),
+        _ -> buildQuestsDrawerBody(sub, m, zh, dx + pad, clipY + 4.0 - sy, innerW),
+    };
+
+    let measureTape = tapeNew(false);
+    let totalH = buildBody(measureTape, 0.0);
+    let maxS = maxFloat(0.0, totalH - clipH + 12.0);
+    let scrollY = clampFloat(0.0, maxS, m.cmScroll.shDrawerScroll);
+
+    let bodyTape = tapeNew(true);
+    let _ = buildBody(bodyTape, scrollY);
+    cmdClip(t, dx + 2.0, clipY, dw - 4.0, clipH);
+    mergeSubTapeClipped(t, bodyTape, clipY, clipH);
+    cmdUnclip(t);
+    drawScrollbar(t, dx + dw - 7.0, clipY, clipH, scrollY, maxS, clipH);
+    pushZone(t, MkScrollZone { szX: dx, szY: clipY, szW: dw, szH: clipH, szTarget: ScrollDrawer });
+    maxS
+}
+
+def buildGameUi(m: ClientModel): UiOutput = {
+    let t = tapeNew(true);
+    let w = m.cmVp.vpWidth;
+    let h = m.cmVp.vpHeight;
+    let isMob = w <= 768.0;
+
+    if (isMob) drawMobileHeader(t, m) else drawDesktopHeader(t, m);
+
+    let showCenter = !isMob || m.cmUi.uiMobileTab == "world";
+    let logMaxCell = cellNew(m.cmScroll.shLogMaxScroll);
+    let npcMaxCell = cellNew(0.0);
+
+    if (showCenter) {
+        if (m.cmBattle.btInBattle) {
+            drawBattleTopBar(t, m, isMob, if (isMob) 62.0 else 64.0);
+            drawBattleSkills(t, m, isMob, if (isMob) h - 180.0 else h - 144.0);
+            let dockH = if (isMob) 112.0 else 124.0;
+            let dockY = if (isMob) h - 54.0 - dockH - 6.0 else h - dockH - 12.0;
+            cellSet(logMaxCell, drawMessageDock(t, m, isMob, dockY, dockH, true))
+        } else {
+            drawRoomCard(t, m, isMob);
+            drawMapControls(t, m, isMob);
+            let dockH = if (isMob) 164.0 else 196.0;
+            let dockY = if (isMob) h - 54.0 - dockH - 6.0 else h - dockH - 12.0;
+            cellSet(logMaxCell, drawMessageDock(t, m, isMob, dockY, dockH, false));
+            cellSet(npcMaxCell, drawNpcModal(t, m, isMob))
+        }
+    } else ();
+
+    let activeDrawer =
+        if (isMob) (if (m.cmUi.uiMobileTab == "world") "" else m.cmUi.uiMobileTab)
+        else m.cmUi.uiDesktopDrawer;
+
+    let drawerMaxCell = cellNew(0.0);
+    if (strLen(activeDrawer) > 0) {
+        if (isMob && activeDrawer == "log") {
+            cellSet(logMaxCell, drawMessageDock(t, m, true, 58.0, h - 114.0, false))
+        } else {
+            cellSet(drawerMaxCell, drawSideDrawer(t, m, isMob, activeDrawer))
+        }
+    } else ();
+
+    if (isMob) drawMobileTabbar(t, m) else ();
+
+    MkUiOutput {
+        uoBuf: t.tpBuf,
+        uoHits: vecToList(t.tpHits),
+        uoScrollZones: vecToList(t.tpZones),
+        uoLogMaxScroll: cellGet(logMaxCell),
+        uoDrawerMaxScroll: cellGet(drawerMaxCell),
+        uoOnboardMaxScroll: 0.0,
+        uoNpcMaxScroll: cellGet(npcMaxCell),
+        uoCmdCount: 140,
+    }
+}
+
+pub def buildUiOverlay(m: ClientModel): UiOutput = match m.cmVp.vpPage {
+    PagePoseSheet -> MkUiOutput {
+        uoBuf: bufNew(), uoHits: Nil, uoScrollZones: Nil,
+        uoLogMaxScroll: 0.0, uoDrawerMaxScroll: 0.0, uoOnboardMaxScroll: 0.0, uoNpcMaxScroll: 0.0,
+        uoCmdCount: 0,
+    },
+    PageBattleLab -> buildBattleLabUi(m),
+    PageGame ->
+        if (!m.cmAuth.auConnected && !m.cmBattle.btInBattle) buildOnboardingUi(m)
+        else buildGameUi(m),
+}

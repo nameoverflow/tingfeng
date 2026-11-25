@@ -1,0 +1,863 @@
+// Single-Pass Full-Canvas Command Tape Assembler (`render`):
+// Song-Dynasty Xuan-Paper Backdrop, Cartographic Map Stage, Ink-Wash Combat Stage & Pose Sheet.
+
+use std.option.{Option, Some, None}
+use std.list.{listLen, listAppend}
+use std.buf.{StringBuf, bufWithCap, bufPushByte, bufPushStr, bufPushInt, bufPushBuf, bufToString}
+use std.vec.{Vec, vecNew, vecPush, vecToList}
+use std.str.intToStr
+use prelude.{
+    sin, absFloat, minInt, maxInt, minFloat, maxFloat, clampFloat, clamp01,
+    floorInt, fmodPos, optOr, optIsSome, listNthOr, listFind, intRange,
+    utf8CharCount, bufPushF1, bufPushF2, bufPushSanitized
+}
+use ordmap.{OrdMap, mapLookup, mapFromList}
+use i18n.tr
+use protocol.{
+    Direction, dirEq, directionLabel, directionGridDelta,
+    RoomExit, MapRoom, MapEdge, MapOverview,
+    CombatResult, ResHit, ResDodge, ResParry, ResEffect
+}
+use pose.{
+    CombatStyle, StyleFist, StyleSword, styleEq, parseCombatStyle,
+    VisualProfile, ProfileMale, ProfileFemale, parseVisualProfile,
+    LookStyle, SvgPose, ShapePrim, SCircle, SPoly, JoinPatch, ActorPart,
+    allPoseIds, svgPose, blendPose, swordTipOf, buildActorParts
+}
+use catalog.{FrameHold, MkFrameHold, idleActionIdForStyle}
+use battle.{
+    BattleSide, SidePlayer, SideEnemy, sideEq, sideHome,
+    ActorVisual, MkActorVisual, ResolvedHit, ResolvedTimeline, InkParticle,
+    sampleSvgPose, sampleBattleScene
+}
+use state.{
+    AppPage, PageGame, PageBattleLab, PagePoseSheet, pageEq,
+    HitTarget, HitExit, optHitEq, CanvasHitbox, MkCanvasHitbox, ScrollZone,
+    ClientModel, worldPosFromGrid
+}
+use uicanvas.{UiOutput, buildUiOverlay}
+
+pub data FrameBatch {
+    MkFrameBatch {
+        fbText: String,
+        fbHits: List CanvasHitbox,
+        fbScrollZones: List ScrollZone,
+        fbLogMaxScroll: Float,
+        fbDrawerMaxScroll: Float,
+        fbOnboardMaxScroll: Float,
+        fbNpcMaxScroll: Float,
+        fbCmdCount: Int,
+    },
+}
+
+// ============================================================================
+// Streaming Primitive Helpers on `StringBuf`
+// ============================================================================
+
+def emitCirc(b: StringBuf, cx: Float, cy: Float, r: Float, fill: String, bd: String, lw: Float, al: Float): Void = {
+    bufPushStr(b, "CI|");
+    bufPushF1(b, cx); bufPushByte(b, 124);
+    bufPushF1(b, cy); bufPushByte(b, 124);
+    bufPushF1(b, r); bufPushByte(b, 124);
+    bufPushStr(b, fill); bufPushByte(b, 124);
+    bufPushStr(b, bd); bufPushByte(b, 124);
+    bufPushF1(b, lw); bufPushByte(b, 124);
+    bufPushF2(b, al);
+    bufPushByte(b, 10)
+}
+
+def emitEll(b: StringBuf, cx: Float, cy: Float, rx: Float, ry: Float, fill: String, alStr: String): Void = {
+    bufPushStr(b, "ELL|");
+    bufPushF1(b, cx); bufPushByte(b, 124);
+    bufPushF1(b, cy); bufPushByte(b, 124);
+    bufPushF1(b, rx); bufPushByte(b, 124);
+    bufPushF1(b, ry); bufPushByte(b, 124);
+    bufPushStr(b, fill); bufPushByte(b, 124);
+    bufPushStr(b, alStr);
+    bufPushByte(b, 10)
+}
+
+def emitLine(b: StringBuf, x1: Float, y1: Float, x2: Float, y2: Float, lw: Float, col: String, al: Float, dashed: Bool): Void = {
+    bufPushStr(b, "LN|");
+    bufPushF1(b, x1); bufPushByte(b, 124);
+    bufPushF1(b, y1); bufPushByte(b, 124);
+    bufPushF1(b, x2); bufPushByte(b, 124);
+    bufPushF1(b, y2); bufPushByte(b, 124);
+    bufPushF1(b, lw); bufPushByte(b, 124);
+    bufPushStr(b, col); bufPushByte(b, 124);
+    bufPushF2(b, al); bufPushByte(b, 124);
+    bufPushByte(b, if (dashed) 49 else 48);
+    bufPushByte(b, 10)
+}
+
+def emitRect(b: StringBuf, x: Float, y: Float, w: Float, h: Float, r: Float, fill: String, bd: String, lw: Float, al: Float): Void = {
+    bufPushStr(b, "RR|");
+    bufPushF1(b, x); bufPushByte(b, 124);
+    bufPushF1(b, y); bufPushByte(b, 124);
+    bufPushF1(b, w); bufPushByte(b, 124);
+    bufPushF1(b, h); bufPushByte(b, 124);
+    bufPushF1(b, r); bufPushByte(b, 124);
+    bufPushStr(b, fill); bufPushByte(b, 124);
+    bufPushStr(b, bd); bufPushByte(b, 124);
+    bufPushF1(b, lw); bufPushByte(b, 124);
+    bufPushF2(b, al);
+    bufPushByte(b, 10)
+}
+
+def emitCard(
+    b: StringBuf, x: Float, y: Float, w: Float, h: Float, r: Float,
+    fill: String, bd: String, lw: Float, alStr: String, shY: Float, shBlur: Float, dbl: String
+): Void = {
+    bufPushStr(b, "CARD|");
+    bufPushF1(b, x); bufPushByte(b, 124);
+    bufPushF1(b, y); bufPushByte(b, 124);
+    bufPushF1(b, w); bufPushByte(b, 124);
+    bufPushF1(b, h); bufPushByte(b, 124);
+    bufPushF1(b, r); bufPushByte(b, 124);
+    bufPushStr(b, fill); bufPushByte(b, 124);
+    bufPushStr(b, bd); bufPushByte(b, 124);
+    bufPushF1(b, lw); bufPushByte(b, 124);
+    bufPushStr(b, alStr); bufPushByte(b, 124);
+    bufPushF1(b, shY); bufPushByte(b, 124);
+    bufPushF1(b, shBlur); bufPushByte(b, 124);
+    bufPushStr(b, dbl);
+    bufPushByte(b, 10)
+}
+
+def emitTx(b: StringBuf, op: String, x: Float, y: Float, sz: Float, wt: String, align: String, col: String, al: Float, txt: String): Void = {
+    bufPushStr(b, op); bufPushByte(b, 124);
+    bufPushF1(b, x); bufPushByte(b, 124);
+    bufPushF1(b, y); bufPushByte(b, 124);
+    bufPushF1(b, sz); bufPushByte(b, 124);
+    bufPushStr(b, wt); bufPushByte(b, 124);
+    bufPushStr(b, align); bufPushByte(b, 124);
+    bufPushStr(b, col); bufPushByte(b, 124);
+    bufPushF2(b, al); bufPushByte(b, 124);
+    bufPushSanitized(b, txt);
+    bufPushByte(b, 10)
+}
+
+def emitMt(b: StringBuf, yBase: Float, amp: Float, parStr: String, camX: Float, col: String, alStr: String): Void = {
+    bufPushStr(b, "MT|");
+    bufPushF1(b, yBase); bufPushByte(b, 124);
+    bufPushF1(b, amp); bufPushByte(b, 124);
+    bufPushStr(b, parStr); bufPushByte(b, 124);
+    bufPushF1(b, camX); bufPushByte(b, 124);
+    bufPushStr(b, col); bufPushByte(b, 124);
+    bufPushStr(b, alStr);
+    bufPushByte(b, 10)
+}
+
+// ============================================================================
+// Ink Silhouette Actor Serialization (`encodeActor`)
+// ============================================================================
+
+def emitShape(b: StringBuf, s: ShapePrim, alpha: Float): Void = match s {
+    SCircle(cx, cy, r, mFill, op) -> {
+        bufPushStr(b, "ACIRC|");
+        bufPushF1(b, cx); bufPushByte(b, 124);
+        bufPushF1(b, cy); bufPushByte(b, 124);
+        bufPushF1(b, r); bufPushByte(b, 124);
+        bufPushStr(b, optOr(mFill, "")); bufPushByte(b, 124);
+        bufPushF2(b, op * alpha);
+        bufPushByte(b, 10)
+    },
+    SPoly(pts, mFill, op) -> {
+        bufPushStr(b, "APOLY|");
+        bufPushStr(b, optOr(mFill, "")); bufPushByte(b, 124);
+        bufPushF2(b, op * alpha); bufPushByte(b, 124);
+        let first = cellNew(true);
+        let cur = cellNew(pts);
+        while (match cellGet(cur) { Nil -> false, _ -> true }) {
+            match cellGet(cur) {
+                Cons((px, py), rest) -> {
+                    if (!cellGet(first)) bufPushByte(b, 44) else cellSet(first, false);
+                    bufPushF1(b, px); bufPushByte(b, 44); bufPushF1(b, py);
+                    cellSet(cur, rest)
+                },
+                Nil -> (),
+            }
+        };
+        bufPushByte(b, 10)
+    },
+}
+
+def emitShapeList(b: StringBuf, xs: List ShapePrim, alpha: Float): Void = {
+    let cur = cellNew(xs);
+    while (match cellGet(cur) { Nil -> false, _ -> true }) {
+        match cellGet(cur) {
+            Cons(s, rest) -> {
+                emitShape(b, s, alpha);
+                cellSet(cur, rest)
+            },
+            Nil -> (),
+        }
+    }
+}
+
+def encodeActor(
+    b: StringBuf,
+    wx: Float, wy: Float, scaleSign: Float, rotDeg: Float,
+    fillCol: String, outlineCol: String, flash: Float, alpha: Float,
+    pose: SvgPose, style: CombatStyle, prof: VisualProfile, look: LookStyle,
+    hairFlow: (Float, Float), clockMs: Float
+): Int = {
+    let parts = buildActorParts(pose, style, prof, look, hairFlow, clockMs);
+    bufPushStr(b, "ACTOR_BEGIN|");
+    bufPushF1(b, wx); bufPushByte(b, 124);
+    bufPushF1(b, wy); bufPushByte(b, 124);
+    bufPushF2(b, scaleSign); bufPushByte(b, 124);
+    bufPushF1(b, rotDeg); bufPushByte(b, 124);
+    bufPushStr(b, fillCol); bufPushByte(b, 124);
+    bufPushStr(b, outlineCol); bufPushByte(b, 124);
+    bufPushF2(b, flash);
+    bufPushByte(b, 10);
+
+    let cnt = cellNew(0);
+    let pcur = cellNew(parts);
+    while (match cellGet(pcur) { Nil -> false, _ -> true }) {
+        match cellGet(pcur) {
+            Cons(part, prest) -> {
+                bufPushStr(b, "APART_BEGIN|");
+                bufPushF2(b, alpha);
+                bufPushByte(b, 10);
+                emitShapeList(b, part.apShapes, alpha);
+                bufPushStr(b, "APART_FILL\n");
+                let jcur = cellNew(part.apJoins);
+                while (match cellGet(jcur) { Nil -> false, _ -> true }) {
+                    match cellGet(jcur) {
+                        Cons(jn, jrest) -> {
+                            let (jx, jy) = jn.jpAt;
+                            bufPushStr(b, "AJOIN_BEGIN|");
+                            bufPushF1(b, jx); bufPushByte(b, 124);
+                            bufPushF1(b, jy); bufPushByte(b, 124);
+                            bufPushF1(b, jn.jpRadius);
+                            bufPushByte(b, 10);
+                            emitShapeList(b, jn.jpShapes, alpha);
+                            bufPushStr(b, "AJOIN_END\n");
+                            cellSet(jcur, jrest)
+                        },
+                        Nil -> (),
+                    }
+                };
+                cellSet(cnt, cellGet(cnt) + listLen(part.apShapes) + listLen(part.apJoins) * 2);
+                cellSet(pcur, prest)
+            },
+            Nil -> (),
+        }
+    };
+    bufPushStr(b, "ACTOR_END\n");
+    cellGet(cnt)
+}
+
+// ============================================================================
+// Stage 1: Calm Ink-Wash Onboarding Backdrop
+// ============================================================================
+
+def buildOnboardingBackdrop(b: StringBuf, m: ClientModel): Int = {
+    let w = m.cmVp.vpWidth;
+    let h = m.cmVp.vpHeight;
+    let breath = if (m.cmVp.vpReducedMotion) 0.1 else sin(m.cmVp.vpClockMs / 540.0) * 0.14 + 0.14;
+    let cc = m.cmAuth.auCreateChoice;
+    let prof = if (m.cmAuth.auLoginMode == "create") parseVisualProfile(cc.ccGender) else ProfileFemale;
+    let pose = blendPose(m.cmPoseLib, "idle", "guard", breath, StyleSword);
+    let ax = if (w > 960.0) w * 0.80 else w * 0.5;
+    let ay = if (w > 960.0) h * 0.65 else h * 0.88;
+    let sc = if (w > 960.0) 1.04 else 0.72;
+    emitCirc(b, ax, ay - 84.0, 116.0, "#dfd4be", "", 0.0, 0.48);
+    let cnt = encodeActor(b, ax, ay, sc, 0.0, "#cfc4af", "#ece4d2", 0.0, 0.96, pose, StyleSword, prof, m.cmVp.vpLookStyle, (0.0, 0.0), m.cmVp.vpClockMs);
+    cnt + 1
+}
+
+// ============================================================================
+// Stage 2: Song-Dynasty Xuan-Paper Cartographic Map Stage
+// ============================================================================
+
+def posEq(a: (Int, Int), b: (Int, Int)): Bool = match (a, b) {
+    ((x1, y1), (x2, y2)) -> x1 == x2 && y1 == y2,
+}
+
+def dirInList(ds: List Direction, target: Direction): Bool = match ds {
+    Nil -> false,
+    Cons(h, t) -> if (dirEq(h, target)) true else dirInList(t, target),
+}
+
+def buildMapStage(b: StringBuf, hitsOut: Vec CanvasHitbox, m: ClientModel): Int = {
+    let w = m.cmVp.vpWidth;
+    let h = m.cmVp.vpHeight;
+    let loc = m.cmVp.vpLocale;
+    let isMobile = w <= 768.0;
+    let zoom = m.cmCam.mapZoom;
+    let effZoom = zoom * (if (isMobile) 0.72 else 1.0);
+    let centerX = w * 0.5 + m.cmCam.panX - m.cmCam.camX * effZoom;
+    let centerY = (if (isMobile) h * 0.46 else h * 0.45) + m.cmCam.panY - m.cmCam.camY * effZoom;
+    let tSec = m.cmVp.vpClockMs / 1000.0;
+    let pulse = if (m.cmVp.vpReducedMotion) 1.0 else 1.0 + 0.12 * sin(tSec * 2.8);
+    let inFrustum = (sx: Float, sy: Float) -> sx >= -160.0 && sx <= w + 160.0 && sy >= -100.0 && sy <= h + 100.0;
+
+    let rName = m.cmWorld.wvRoomName;
+    let mapValid = (mo: MapOverview) ->
+        !prelude.listIsEmpty(mo.moRooms)
+            && (strLen(rName) == 0 || optIsSome(listFind(mo.moRooms, (r) -> posEq(r.mrPos, mo.moCurrentPos) && r.mrRoomName == rName)));
+
+    match m.cmWorld.wvMapOverview {
+        Some(mo) if (mapValid(mo)) -> {
+            let curPos = mo.moCurrentPos;
+            let sameMapExit = (e: RoomExit) -> strLen(e.reMapId) == 0 || e.reMapId == mo.moMapId;
+            let exitByRoomId = mapFromList(prelude.listFilterMap(m.cmWorld.wvRoomExits, (e) ->
+                if (sameMapExit(e) && strLen(e.reRoomId) > 0) Some((e.reRoomId, e.reDirection)) else None
+            ));
+            let exitByPos = mapFromList(prelude.listFilterMap(m.cmWorld.wvRoomExits, (e) ->
+                if (sameMapExit(e)) match e.rePos { Some(p) -> Some((p, e.reDirection)), None -> None }
+                else None
+            ));
+
+            // 1. Same-map edges
+            let ecur = cellNew(mo.moEdges);
+            while (match cellGet(ecur) { Nil -> false, _ -> true }) {
+                match cellGet(ecur) {
+                    Cons(e, rest) -> {
+                        if (strLen(e.meToMapId) == 0 || e.meToMapId == mo.moMapId) {
+                            let (x1, y1) = worldPosFromGrid(e.meFrom);
+                            let (x2, y2) = worldPosFromGrid(e.meTo);
+                            let sx1 = centerX + x1 * effZoom;
+                            let sy1 = centerY + y1 * effZoom;
+                            let sx2 = centerX + x2 * effZoom;
+                            let sy2 = centerY + y2 * effZoom;
+                            if (inFrustum(sx1, sy1) || inFrustum(sx2, sy2)) {
+                                let isNear = posEq(e.meFrom, curPos) || posEq(e.meTo, curPos);
+                                let col = if (isNear) "#2a564a" else "#8f8575";
+                                let lw = (if (isNear) 1.8 else 0.9) * minFloat(1.2, zoom);
+                                let al = if (isNear) 0.72 else 0.30;
+                                emitLine(b, sx1, sy1, sx2, sy2, lw, col, al, false)
+                            } else ()
+                        } else ();
+                        cellSet(ecur, rest)
+                    },
+                    Nil -> (),
+                }
+            };
+
+            let coveredDirs: Cell (List Direction) = cellNew(Nil);
+            let nodeCnt = cellNew(0);
+
+            // 2. Map room plaques
+            let rcur = cellNew(mo.moRooms);
+            while (match cellGet(rcur) { Nil -> false, _ -> true }) {
+                match cellGet(rcur) {
+                    Cons(r, rest) -> {
+                        let pos = r.mrPos;
+                        let (wx, wy) = worldPosFromGrid(pos);
+                        let sx = centerX + wx * effZoom;
+                        let sy = centerY + wy * effZoom;
+                        if (inFrustum(sx, sy)) {
+                            let isCur = posEq(pos, curPos);
+                            let mDir = match mapLookup(exitByRoomId, r.mrRoomId) {
+                                Some(d) -> Some(d),
+                                None -> mapLookup(exitByPos, pos),
+                            };
+                            let hov = match mDir {
+                                Some(d) -> optHitEq(m.cmScroll.shHovered, Some(HitExit(d))),
+                                None -> false,
+                            };
+                            let fontSz = (if (isCur) 13.5 else 12.0) * clampFloat(0.82, 1.15, zoom);
+                            let nw = maxFloat(74.0, intToFloat(utf8CharCount(r.mrRoomName)) * (fontSz + 1.8) + 26.0);
+                            let nh = (if (isCur) 35.0 else 30.0) * clampFloat(0.84, 1.14, zoom);
+                            let rx = sx - nw * 0.5;
+                            let ry = sy - nh * 0.5;
+                            let kindAccent = match r.mrRoomKind {
+                                "landmark" -> "#9e2a22",
+                                "transit" -> "#a67c37",
+                                "building" -> "#8f8575",
+                                _ -> "#b5aa98",
+                            };
+                            let (bg, bd, txtCol, lw, shBlur, useDbl) =
+                                if (isCur) ("#1c1915", "#b89552", "#f8f4eb", 1.1, 14.0, "1")
+                                else if (hov) ("#fbf8f1", "#9e2a22", "#1c1915", 1.1, 12.0, "0")
+                                else if (optIsSome(mDir)) ("#faf6ee", "rgba(42,86,74,0.42)", "#1c1915", 0.9, 8.0, "0")
+                                else ("#f1eadc", "rgba(130,118,98,0.28)", "#6b6255", 0.75, 0.0, "0");
+
+                            if (isCur) {
+                                emitCirc(b, sx, sy, 24.0 * pulse * effZoom, "", "#b89552", 1.0, 0.28)
+                            } else ();
+                            emitCard(b, rx, ry, nw, nh, 3.0, bg, bd, lw, if (isCur || optIsSome(mDir)) "0.98" else "0.86", 3.0, shBlur, useDbl);
+                            if (isCur) {
+                                emitCirc(b, rx + 10.0, sy, 2.5, "#b33529", "", 0.0, 0.95)
+                            } else if (optIsSome(mDir)) {
+                                emitRect(b, rx + 1.0, ry + 5.0, 2.4, nh - 10.0, 1.0, "#2a564a", "", 0.0, 0.85)
+                            } else if (r.mrRoomKind == "landmark" || r.mrRoomKind == "transit") {
+                                emitCirc(b, rx + 8.0, sy, 2.0, kindAccent, "", 0.0, 0.55)
+                            } else ();
+                            emitTx(b, "TXS", if (isCur) sx + 3.0 else sx, sy + fontSz * 0.35, fontSz, if (isCur) "700" else "600", "center", txtCol, 1.0, r.mrRoomName);
+                            match mDir {
+                                Some(d) -> {
+                                    emitTx(b, "TX", sx, ry - 6.0, 10.0, "600", "center", "#2a564a", 0.82, directionLabel(loc, d));
+                                    vecPush(hitsOut, MkCanvasHitbox { chX: rx, chY: ry, chW: nw, chH: nh, chTarget: HitExit(d), chCursor: "pointer" });
+                                    cellSet(coveredDirs, Cons(d, cellGet(coveredDirs)))
+                                },
+                                None -> (),
+                            };
+                            cellSet(nodeCnt, cellGet(nodeCnt) + 1)
+                        } else ();
+                        cellSet(rcur, rest)
+                    },
+                    Nil -> (),
+                }
+            };
+
+            // 3. Cross-map portal edges & destination plaques
+            let pcur = cellNew(mo.moEdges);
+            while (match cellGet(pcur) { Nil -> false, _ -> true }) {
+                match cellGet(pcur) {
+                    Cons(e, rest) -> {
+                        if (strLen(e.meToMapId) > 0 && e.meToMapId != mo.moMapId) {
+                            let (wx0, wy0) = worldPosFromGrid(e.meFrom);
+                            let sx1 = centerX + wx0 * effZoom;
+                            let sy1 = centerY + wy0 * effZoom;
+                            if (inFrustum(sx1, sy1)) {
+                                let d = e.meDirection;
+                                let (fx, fy) = e.meFrom;
+                                let (dgx, dgy) = directionGridDelta(d);
+                                let (x2, y2) = worldPosFromGrid((fx + dgx, fy + dgy));
+                                let sx2 = centerX + x2 * effZoom;
+                                let sy2 = centerY + y2 * effZoom;
+                                let isFromCur = posEq(e.meFrom, curPos) && optIsSome(listFind(m.cmWorld.wvRoomExits, (ex) -> dirEq(ex.reDirection, d)));
+                                let hov = isFromCur && optHitEq(m.cmScroll.shHovered, Some(HitExit(d)));
+                                let destRoom =
+                                    if (strLen(e.meToRoomName) > 0) e.meToRoomName
+                                    else if (strLen(e.meToMapName) > 0) e.meToMapName
+                                    else e.meToMapId;
+                                let labelTxt = "⇄ " + destRoom;
+                                let fontSz = 12.0 * clampFloat(0.82, 1.14, zoom);
+                                let nw = maxFloat(86.0, intToFloat(utf8CharCount(labelTxt)) * (fontSz + 1.4) + 24.0);
+                                let nh = 30.0 * clampFloat(0.85, 1.12, zoom);
+                                let rx = sx2 - nw * 0.5;
+                                let ry = sy2 - nh * 0.5;
+                                let bg = if (hov) "#ebdcb9" else if (isFromCur) "#f3e8cf" else "#e9dfca";
+                                let bd = if (hov) "#a32c22" else if (isFromCur) "#946623" else "#9c8760";
+                                let txtCol = if (isFromCur) "#4f320d" else "#6f5d42";
+                                let lw = if (isFromCur) 1.6 else 1.1;
+                                let al = if (isFromCur) 0.92 else 0.58;
+
+                                emitLine(b, sx1, sy1, sx2, sy2, lw, "#946623", al, true);
+                                emitRect(b, rx, ry, nw, nh, 3.0, bg, bd, lw, 0.97);
+                                emitTx(b, "TX", sx2, sy2 + fontSz * 0.36, fontSz, "600", "center", txtCol, 1.0, labelTxt);
+                                if (isFromCur) {
+                                    emitTx(b, "TX", sx2, ry - 5.0, 10.5, "700", "center", "#946623", 0.95, directionLabel(loc, d));
+                                    vecPush(hitsOut, MkCanvasHitbox { chX: rx, chY: ry, chW: nw, chH: nh, chTarget: HitExit(d), chCursor: "pointer" });
+                                    cellSet(coveredDirs, Cons(d, cellGet(coveredDirs)))
+                                } else ();
+                                if (strLen(e.meToMapName) > 0 && e.meToMapName != destRoom) {
+                                    emitTx(b, "TX", sx2, ry + nh + 12.0, 10.0, "600", "center", "#8a5d1c", 0.88, e.meToMapName)
+                                } else ();
+                                cellSet(nodeCnt, cellGet(nodeCnt) + 1)
+                            } else ()
+                        } else ();
+                        cellSet(pcur, rest)
+                    },
+                    Nil -> (),
+                }
+            };
+
+            // 4. Extra exits not yet covered
+            let xcur = cellNew(m.cmWorld.wvRoomExits);
+            while (match cellGet(xcur) { Nil -> false, _ -> true }) {
+                match cellGet(xcur) {
+                    Cons(ex, rest) -> {
+                        let d = ex.reDirection;
+                        if (!dirInList(cellGet(coveredDirs), d)) {
+                            let (cx0, cy0) = worldPosFromGrid(curPos);
+                            let (cpx, cpy) = curPos;
+                            let (dgx, dgy) = directionGridDelta(d);
+                            let (tx0, ty0) = worldPosFromGrid((cpx + dgx, cpy + dgy));
+                            let sx1 = centerX + cx0 * effZoom;
+                            let sy1 = centerY + cy0 * effZoom;
+                            let sx2 = centerX + tx0 * effZoom;
+                            let sy2 = centerY + ty0 * effZoom;
+                            let hov = optHitEq(m.cmScroll.shHovered, Some(HitExit(d)));
+                            let isCross = strLen(ex.reMapId) > 0 && ex.reMapId != mo.moMapId;
+                            let lbl = (if (isCross) "⇄ " else "") + ex.reRoomName;
+                            let ew = maxFloat(78.0, intToFloat(utf8CharCount(lbl)) * 13.4 + 24.0);
+                            let eh = 30.0;
+                            let rx = sx2 - ew * 0.5;
+                            let ry = sy2 - eh * 0.5;
+                            let bg = if (hov) "#efe4cc" else if (isCross) "#f3e8cf" else "#f8f3e6";
+                            let bd = if (hov) "#946623" else if (isCross) "#946623" else "#2b594b";
+                            emitLine(b, sx1, sy1, sx2, sy2, 1.8, bd, 0.82, isCross);
+                            emitRect(b, rx, ry, ew, eh, 3.0, bg, bd, 1.6, 0.97);
+                            emitTx(b, "TX", sx2, sy2 + 4.5, 12.0, "600", "center", "#1e1a16", 1.0, lbl);
+                            emitTx(b, "TX", sx2, ry - 5.0, 10.5, "700", "center", bd, 0.94, directionLabel(loc, d));
+                            vecPush(hitsOut, MkCanvasHitbox { chX: rx, chY: ry, chW: ew, chH: eh, chTarget: HitExit(d), chCursor: "pointer" });
+                            cellSet(nodeCnt, cellGet(nodeCnt) + 1)
+                        } else ();
+                        cellSet(xcur, rest)
+                    },
+                    Nil -> (),
+                }
+            };
+
+            cellGet(nodeCnt) * 3 + 8
+        },
+        _ -> {
+            // Radial 8-direction fallback
+            let cx = w * 0.5 + m.cmCam.panX;
+            let cy = (if (isMobile) h * 0.46 else h * 0.45) + m.cmCam.panY;
+            let dispRoom = if (strLen(rName) == 0) tr(loc, "app.title") else rName;
+            let curW = maxFloat(92.0, intToFloat(utf8CharCount(dispRoom)) * 15.5 + 30.0);
+            emitCirc(b, cx, cy, 24.0 * pulse * effZoom, "", "#b89552", 1.0, 0.28);
+            emitCard(b, cx - curW * 0.5, cy - 17.5, curW, 35.0, 3.0, "#1c1915", "#b89552", 1.1, "0.98", 3.0, 14.0, "1");
+            emitCirc(b, cx - curW * 0.5 + 10.0, cy, 2.5, "#b33529", "", 0.0, 0.95);
+            emitTx(b, "TXS", cx + 3.0, cy + 5.0, 13.5, "700", "center", "#f8f4eb", 1.0, dispRoom);
+
+            let xcur = cellNew(m.cmWorld.wvRoomExits);
+            let exCnt = cellNew(0);
+            while (match cellGet(xcur) { Nil -> false, _ -> true }) {
+                match cellGet(xcur) {
+                    Cons(ex, rest) -> {
+                        let d = ex.reDirection;
+                        let (wx, wy) = worldPosFromGrid(directionGridDelta(d));
+                        let exX = cx + wx * effZoom;
+                        let exY = cy + wy * effZoom;
+                        let ew = maxFloat(74.0, intToFloat(utf8CharCount(ex.reRoomName)) * 13.8 + 26.0);
+                        let eh = 30.0;
+                        let rx = exX - ew * 0.5;
+                        let ry = exY - eh * 0.5;
+                        let hov = optHitEq(m.cmScroll.shHovered, Some(HitExit(d)));
+                        let bg = if (hov) "#fbf8f1" else "#faf6ee";
+                        let bd = if (hov) "#9e2a22" else "rgba(42,86,74,0.42)";
+                        emitLine(b, cx, cy, exX, exY, 1.8, "#2a564a", 0.72, false);
+                        emitCard(b, rx, ry, ew, eh, 3.0, bg, bd, 0.9, "0.98", 3.0, 8.0, "0");
+                        emitRect(b, rx + 1.0, ry + 5.0, 2.4, 20.0, 1.0, "#2a564a", "", 0.0, 0.85);
+                        emitTx(b, "TXS", exX, exY + 4.4, 12.0, "600", "center", "#1c1915", 1.0, ex.reRoomName);
+                        emitTx(b, "TX", exX, ry - 6.0, 10.0, "600", "center", "#2a564a", 0.82, directionLabel(loc, d));
+                        vecPush(hitsOut, MkCanvasHitbox { chX: rx, chY: ry, chW: ew, chH: eh, chTarget: HitExit(d), chCursor: "pointer" });
+                        cellSet(exCnt, cellGet(exCnt) + 1);
+                        cellSet(xcur, rest)
+                    },
+                    Nil -> (),
+                }
+            };
+            4 + cellGet(exCnt) * 5
+        },
+    }
+}
+
+// ============================================================================
+// Stage 3: Song-Dynasty Ink-Wash Combat Stage
+// ============================================================================
+
+def buildBattleStage(b: StringBuf, m: ClientModel): Int = {
+    let w = m.cmVp.vpWidth;
+    let h = m.cmVp.vpHeight;
+    let isMobile = w <= 768.0;
+    let pStyle = match m.cmBattle.btSnap { Some(bs) -> parseCombatStyle(bs.bsPlayer.cbStyle), None -> StyleFist };
+    let eStyle = match m.cmBattle.btSnap { Some(bs) -> parseCombatStyle(bs.bsEnemy.cbStyle), None -> StyleSword };
+    let pProf = match m.cmBattle.btSnap {
+        Some(bs) -> parseVisualProfile(bs.bsPlayer.cbGender),
+        None -> parseVisualProfile(m.cmHero.hsStats.psGender),
+    };
+    let eProf = match m.cmBattle.btSnap { Some(bs) -> parseVisualProfile(bs.bsEnemy.cbGender), None -> ProfileMale };
+
+    let idleP = MkActorVisual { avActionId: idleActionIdForStyle(pStyle), avProfile: pProf, avStyle: pStyle, avFrames: [MkFrameHold { fhFrameId: "idle", fhHoldMs: 640.0 }], avKeyPoses: None };
+    let idleE = MkActorVisual { avActionId: idleActionIdForStyle(eStyle), avProfile: eProf, avStyle: eStyle, avFrames: [MkFrameHold { fhFrameId: "idle", fhHoldMs: 640.0 }], avKeyPoses: None };
+    let mTl = m.cmBattle.btActiveTimeline;
+    let elapsed = m.cmBattle.btTimelineElapsedMs;
+    let reduced = m.cmVp.vpReducedMotion;
+    let scene = sampleBattleScene(mTl, elapsed, idleP, idleE, reduced);
+
+    let fitScale = minFloat(1.04, (w - 32.0) / 580.0) * scene.scCameraScale;
+    let stageCx = w * 0.5 + scene.scCameraX * fitScale;
+    let groundY = (if (isMobile) h * 0.51 else minFloat(h * 0.58, h - 230.0)) + scene.scShakeY * fitScale;
+
+    let pFig = scene.scPlayer;
+    let eFig = scene.scEnemy;
+    let pPose = sampleSvgPose(m.cmPoseLib, mTl, SidePlayer, elapsed, pFig.fsVisual.avStyle, pFig.fsFrameId, reduced);
+    let ePose = sampleSvgPose(m.cmPoseLib, mTl, SideEnemy, elapsed, eFig.fsVisual.avStyle, eFig.fsFrameId, reduced);
+
+    let px = stageCx + (sideHome(SidePlayer) + pFig.fsX) * fitScale;
+    let py = groundY + pFig.fsY * fitScale;
+    let ex = stageCx + (sideHome(SideEnemy) + eFig.fsX) * fitScale;
+    let ey = groundY + eFig.fsY * fitScale;
+
+    let inv = scene.scInvert > 0.5;
+    if (inv) {
+        emitRect(b, 0.0, 0.0, w, h, 0.0, "#1a1612", "", 0.0, 0.82)
+    } else if (scene.scShade > 0.01) {
+        emitRect(b, 0.0, 0.0, w, h, 0.0, "#2b241c", "", 0.0, minFloat(0.24, scene.scShade * 0.45))
+    } else ();
+
+    let moonCol = if (inv) "#352e26" else "#dfd4be";
+    let horizonCol = if (inv) "#d6cab2" else "#3a3228";
+    let shadowCol = if (inv) "#000000" else "#1e1a16";
+    let shadowAlpha = if (inv) "0.35" else "0.18";
+
+    emitCirc(b, w * 0.5, groundY - 90.0 * fitScale, 138.0 * fitScale, moonCol, "", 0.0, 0.55);
+    emitLine(b, w * 0.08, groundY + 2.0, w * 0.92, groundY + 2.0, 2.0, horizonCol, 0.58, false);
+    emitEll(b, px, groundY + 3.0, 28.0 * fitScale, 5.5 * fitScale, shadowCol, shadowAlpha);
+    emitEll(b, ex, groundY + 3.0, 28.0 * fitScale, 5.5 * fitScale, shadowCol, shadowAlpha);
+
+    if (scene.scGhost > 0.04) {
+        match mTl {
+            Some(tl) ->
+                if (sideEq(tl.tlTargetSide, SidePlayer)) {
+                    let _ = encodeActor(b, stageCx + sideHome(SidePlayer) * fitScale, groundY, fitScale, 0.0, "#2b594b", "#f6f0e2", 0.0, scene.scGhost * 0.65, pPose, pFig.fsVisual.avStyle, pProf, m.cmVp.vpLookStyle, (0.0, 0.0), m.cmVp.vpClockMs);
+                    ()
+                } else {
+                    let _ = encodeActor(b, stageCx + sideHome(SideEnemy) * fitScale, groundY, -fitScale, 0.0, "#6e6354", "#f6f0e2", 0.0, scene.scGhost * 0.65, ePose, eFig.fsVisual.avStyle, eProf, m.cmVp.vpLookStyle, (0.0, 0.0), m.cmVp.vpClockMs);
+                    ()
+                },
+            None -> (),
+        }
+    } else ();
+
+    let (pFill, eFill, outlineCol) =
+        if (inv) ("#f6f0e2", "#e6d8be", "#181410")
+        else ("#1b2521", "#2f221b", "#f6f0e2");
+    let pFlow = if (reduced) (0.0, 0.0) else (-pFig.fsX * 0.09, absFloat(pFig.fsY) * 0.2);
+    let eFlow = if (reduced) (0.0, 0.0) else (eFig.fsX * 0.09, absFloat(eFig.fsY) * 0.2);
+
+    let pCnt = encodeActor(b, px, py, fitScale, pFig.fsAngle, pFill, outlineCol, pFig.fsFlash, pFig.fsAlpha, pPose, pFig.fsVisual.avStyle, pProf, m.cmVp.vpLookStyle, pFlow, m.cmVp.vpClockMs);
+    let eCnt = encodeActor(b, ex, ey, -fitScale, eFig.fsAngle, eFill, outlineCol, eFig.fsFlash, eFig.fsAlpha, ePose, eFig.fsVisual.avStyle, eProf, m.cmVp.vpLookStyle, eFlow, m.cmVp.vpClockMs + 360.0);
+
+    // Slash arc ribbon, parry ring & focus aura
+    match mTl {
+        None -> (),
+        Some(tl) -> {
+            let actorIsP = sideEq(tl.tlActorSide, SidePlayer);
+            let aStyle = if (actorIsP) pFig.fsVisual.avStyle else eFig.fsVisual.avStyle;
+            let aPose = if (actorIsP) pPose else ePose;
+            let ax = if (actorIsP) px else ex;
+            let ay = if (actorIsP) py else ey;
+            let sgn = if (actorIsP) fitScale else -fitScale;
+            let (tipLx, tipLy) = if (styleEq(aStyle, StyleSword)) swordTipOf(aPose) else aPose.spHand;
+            let tipWx = ax + sgn * tipLx;
+            let tipWy = ay + absFloat(fitScale) * tipLy;
+            let (shLx, shLy) = aPose.spShoulder;
+            let shWx = ax + sgn * shLx;
+            let shWy = ay + absFloat(fitScale) * shLy;
+
+            if (scene.scTrail > 0.04) {
+                let midX = (shWx + tipWx) * 0.5 + (if (actorIsP) 18.0 else -18.0) * fitScale;
+                let midY = minFloat(shWy, tipWy) - 24.0 * fitScale;
+                let col =
+                    if (inv) "#f6f0e2"
+                    else if (tl.tlStaging.spForce >= 0.85) "#a32c22"
+                    else "#2b594b";
+                bufPushStr(b, "SLASH|");
+                bufPushStr(b, col); bufPushByte(b, 124);
+                bufPushF1(b, shWx); bufPushByte(b, 44); bufPushF1(b, shWy); bufPushByte(b, 44); bufPushF2(b, scene.scTrail * 0.28);
+                bufPushByte(b, 59);
+                bufPushF1(b, midX); bufPushByte(b, 44); bufPushF1(b, midY); bufPushByte(b, 44); bufPushF2(b, scene.scTrail * 0.72);
+                bufPushByte(b, 59);
+                bufPushF1(b, tipWx); bufPushByte(b, 44); bufPushF1(b, tipWy); bufPushByte(b, 44); bufPushF2(b, scene.scTrail);
+                bufPushByte(b, 10)
+            } else ();
+
+            let (cx0, cy0) = scene.scContact;
+            let cWx = stageCx + cx0 * fitScale * 0.65;
+            let cWy = groundY + cy0 * fitScale;
+            if (scene.scGuard > 0.04) {
+                emitCirc(b, cWx, cWy, (18.0 + (1.0 - scene.scGuard) * 26.0) * fitScale, "", "#946623", 2.6, scene.scGuard)
+            } else ();
+            if (scene.scAura > 0.04) {
+                let ux = if (actorIsP) px else ex;
+                emitCirc(b, ux, groundY - 58.0 * fitScale, 44.0 * fitScale, "#2b594b", "#386944", 1.6, scene.scAura * 0.28)
+            } else ()
+        },
+    };
+
+    // Impact shockwave ripple
+    let fx = m.cmFx;
+    if (!reduced && fx.fxShockAge < 0.44 && fx.fxShockPower > 0.05) {
+        let age = fx.fxShockAge;
+        let pwr = minFloat(1.2, fx.fxShockPower);
+        let (su, sv) = fx.fxShockPos;
+        let sx = su * w;
+        let sy = (1.0 - sv) * h;
+        let rad1 = (18.0 + age * 260.0) * fitScale;
+        let rad2 = (10.0 + age * 180.0) * fitScale;
+        let al1 = maxFloat(0.0, 1.0 - age / 0.44) * 0.45 * pwr;
+        let al2 = maxFloat(0.0, 1.0 - age / 0.34) * 0.28 * pwr;
+        let col1 = if (inv) "#f6f0e2" else "#a32c22";
+        let col2 = if (inv) "#d6cab2" else "#946623";
+        emitCirc(b, sx, sy, rad1, "", col1, 2.0, al1);
+        emitCirc(b, sx, sy, rad2, "", col2, 1.2, al2)
+    } else ();
+
+    // Ink particles
+    let ptCur = cellNew(fx.fxParticles);
+    while (match cellGet(ptCur) { Nil -> false, _ -> true }) {
+        match cellGet(ptCur) {
+            Cons(p, rest) -> {
+                let al = maxFloat(0.0, 1.0 - p.ipLife / maxFloat(0.01, p.ipMaxLife));
+                let rad = p.ipRadius * (0.55 + 0.45 * al);
+                emitCirc(b, p.ipX, p.ipY, rad, p.ipColor, "", 0.0, al);
+                cellSet(ptCur, rest)
+            },
+            Nil -> (),
+        }
+    };
+
+    // Move Stamp Seal + Floating Callout + Cinnabar Settlement Seal
+    match mTl {
+        None -> (),
+        Some(tl) ->
+            if (tl.tlKind == "settlement") {
+                let al = scene.scResultAlpha;
+                emitRect(b, w * 0.5 - 46.0, groundY - 130.0 * fitScale, 92.0, 92.0, 4.0, "#a32c22", "#f6f0e2", 2.5, al * 0.96);
+                emitTx(b, "TX", w * 0.5, groundY - 70.0 * fitScale, 42.0, "700", "center", "#f6f0e2", al, tl.tlLabel)
+            } else {
+                if (tl.tlKind != "effect_tick") {
+                    let lbl = tl.tlLabel;
+                    let bw = maxFloat(118.0, intToFloat(utf8CharCount(lbl)) * 18.5 + 40.0);
+                    let bannerY = if (isMobile) 186.0 else 156.0;
+                    emitRect(b, w * 0.5 - bw * 0.5, bannerY, bw, 34.0, 3.0, "#f7f1e3", "#a32c22", 1.5, 0.94);
+                    emitTx(b, "TX", w * 0.5, bannerY + 23.0, 15.5, "700", "center", "#1e1a16", 0.98, "「" + lbl + "」")
+                } else ();
+
+                let hIdx = scene.scHitIndex;
+                let curFloat =
+                    if (hIdx >= 0 && hIdx < listLen(tl.tlHits)) {
+                        match std.list.listNth(tl.tlHits, hIdx) {
+                            Some(rh) -> rh.rhFloatText,
+                            None -> tl.tlFloatText,
+                        }
+                    } else tl.tlFloatText;
+                if (scene.scTextAlpha > 0.03 && strLen(curFloat) > 0) {
+                    let tx = if (sideEq(tl.tlTargetSide, SidePlayer)) px else ex;
+                    let ty = groundY - (122.0 + scene.scTextLift) * fitScale;
+                    let fCol = match tl.tlResult {
+                        ResParry -> "#946623",
+                        ResDodge -> "#2b594b",
+                        ResEffect -> "#386944",
+                        ResHit -> if (inv) "#ffdf9e" else if (sideEq(tl.tlTargetSide, SideEnemy)) "#a32c22" else "#8f1f16",
+                    };
+                    emitTx(b, "TX", tx, ty, 22.0 * scene.scTextScale, "700", "center", fCol, scene.scTextAlpha, curFloat)
+                } else ()
+            },
+    };
+
+    14 + pCnt + eCnt + listLen(fx.fxParticles)
+}
+
+// ============================================================================
+// Pose Sheet Inspector Grid (`/pose-sheet.html`)
+// ============================================================================
+
+def buildPoseSheetBatch(m: ClientModel): FrameBatch = {
+    let b = bufWithCap(32768);
+    let w = m.cmVp.vpWidth;
+    let h = m.cmVp.vpHeight;
+    let pids = allPoseIds(m.cmPoseLib);
+    let cols = maxInt(2, floorInt((w - 40.0) / 176.0));
+    let cellW = (w - 40.0) / intToFloat(cols);
+    let cellH = 168.0;
+
+    bufPushStr(b, "BG|");
+    bufPushF1(b, w); bufPushByte(b, 124); bufPushF1(b, h); bufPushStr(b, "|0|0\n");
+    emitTx(b, "TX", w * 0.5, 42.0, 18.0, "700", "center", "#1e1a16", 1.0,
+        "听风录 · 宣纸剪影姿势总览（svg-poses.json 共 " + intToStr(listLen(pids)) + " 式）");
+
+    let idxCell = cellNew(0);
+    let cur = cellNew(pids);
+    while (match cellGet(cur) { Nil -> false, _ -> true }) {
+        match cellGet(cur) {
+            Cons(pid, rest) -> {
+                let idx = cellGet(idxCell);
+                let col = idx % cols;
+                let row = idx / cols;
+                if (72.0 + intToFloat(row) * cellH < h + 160.0) {
+                    let cx = 20.0 + intToFloat(col) * cellW + cellW * 0.5;
+                    let cy = 72.0 + intToFloat(row) * cellH + 126.0;
+                    let pose = svgPose(m.cmPoseLib, pid, StyleSword);
+                    emitRect(b, cx - cellW * 0.46, cy - 118.0, cellW * 0.92, 150.0, 3.0, "#f6f0e2", "#c8bca4", 1.1, 0.95);
+                    emitLine(b, cx - cellW * 0.36, cy, cx + cellW * 0.36, cy, 1.2, "#6e6354", 0.55, false);
+                    let _ = encodeActor(b, cx, cy, 0.58, 0.0, "#1e2320", "#f6f0e2", 0.0, 1.0, pose, StyleSword, ProfileFemale, m.cmVp.vpLookStyle, (0.0, 0.0), 0.0);
+                    emitTx(b, "TX", cx, cy + 22.0, 11.5, "600", "center", "#3d352c", 1.0, pid)
+                } else ();
+                cellSet(idxCell, idx + 1);
+                cellSet(cur, rest)
+            },
+            Nil -> (),
+        }
+    };
+
+    MkFrameBatch {
+        fbText: bufToString(b),
+        fbHits: Nil,
+        fbScrollZones: Nil,
+        fbLogMaxScroll: 0.0, fbDrawerMaxScroll: 0.0, fbOnboardMaxScroll: 0.0, fbNpcMaxScroll: 0.0,
+        fbCmdCount: listLen(pids) * 12,
+    }
+}
+
+// ============================================================================
+// Top-Level Frame Batch Builder (`buildFrameBatch`)
+// ============================================================================
+
+pub def buildFrameBatch(m: ClientModel): FrameBatch =
+    if (pageEq(m.cmVp.vpPage, PagePoseSheet)) buildPoseSheetBatch(m)
+    else {
+        let b = bufWithCap(16384);
+        let w = m.cmVp.vpWidth;
+        let h = m.cmVp.vpHeight;
+        let tSec = m.cmVp.vpClockMs / 1000.0;
+        let isBattle = m.cmBattle.btInBattle || pageEq(m.cmVp.vpPage, PageBattleLab);
+        let camShiftX = m.cmCam.camX - m.cmCam.panX;
+        let camShiftY = m.cmCam.camY - m.cmCam.panY;
+
+        bufPushStr(b, "BG|");
+        bufPushF1(b, w); bufPushByte(b, 124);
+        bufPushF1(b, h); bufPushByte(b, 124);
+        bufPushF2(b, tSec); bufPushByte(b, 124);
+        bufPushByte(b, if (isBattle) 49 else 48);
+        bufPushByte(b, 10);
+
+        emitMt(b, h * 0.48, 42.0, "0.05", camShiftX, "#9f9a8e", "0.20");
+        emitMt(b, h * 0.60, 28.0, "0.11", camShiftX + 280.0, "#878377", "0.22");
+        emitMt(b, h * 0.72, 20.0, "0.19", camShiftX + 560.0, "#716c61", "0.24");
+
+        if (!m.cmVp.vpReducedMotion) {
+            let i = cellNew(1);
+            while (cellGet(i) <= 12) {
+                let idx = cellGet(i);
+                let fi = intToFloat(idx);
+                let mx = fmodPos(fi * 211.3 - camShiftX * 0.18 + tSec * (6.5 + intToFloat(idx % 3) * 2.5), w);
+                let my = fmodPos(fi * 137.7 - camShiftY * 0.12 + sin(tSec * 0.55 + fi) * 12.0, h * 0.72);
+                let mr = 1.1 + intToFloat(idx % 3) * 0.65;
+                let ma = 0.08 + 0.04 * sin(tSec * 0.9 + fi);
+                emitCirc(b, mx, my, mr, "#6e6354", "", 0.0, ma);
+                cellSet(i, idx + 1)
+            }
+        } else ();
+
+        let sceneHitsVec: Vec CanvasHitbox = vecNew();
+        let sceneCnt =
+            if (!m.cmAuth.auConnected && pageEq(m.cmVp.vpPage, PageGame)) buildOnboardingBackdrop(b, m)
+            else if (isBattle) buildBattleStage(b, m)
+            else buildMapStage(b, sceneHitsVec, m);
+
+        match m.cmWorld.wvTransitionBanner {
+            None -> (),
+            Some((txt, remMs)) -> {
+                let al = minFloat(1.0, remMs / 350.0);
+                let bw = minFloat(w - 40.0, maxFloat(210.0, intToFloat(utf8CharCount(txt)) * 20.0 + 60.0));
+                emitRect(b, (w - bw) * 0.5, h * 0.22, bw, 44.0, 3.0, "#f7f1e3", "#a32c22", 1.6, al * 0.96);
+                emitTx(b, "TXS", w * 0.5, h * 0.22 + 28.0, 17.0, "700", "center", "#1e1a16", al, txt)
+            },
+        };
+
+        let ui = buildUiOverlay(m);
+        bufPushBuf(b, ui.uoBuf);
+
+        MkFrameBatch {
+            fbText: bufToString(b),
+            fbHits: listAppend(vecToList(sceneHitsVec), ui.uoHits),
+            fbScrollZones: ui.uoScrollZones,
+            fbLogMaxScroll: ui.uoLogMaxScroll,
+            fbDrawerMaxScroll: ui.uoDrawerMaxScroll,
+            fbOnboardMaxScroll: ui.uoOnboardMaxScroll,
+            fbNpcMaxScroll: ui.uoNpcMaxScroll,
+            fbCmdCount: 18 + sceneCnt + ui.uoCmdCount,
+        }
+    }

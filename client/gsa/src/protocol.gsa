@@ -1,0 +1,1099 @@
+// Network Protocol Models & 100% Aeson-Compatible Wire Codecs (`protocol`).
+// Built on Geisha's `std.codec` combinators (`:=`, `object`, `Decoder`) and `Monoid` algebra.
+
+use std.option.{Option, Some, None}
+use std.result.{Result, Ok, Err}
+use std.codec.{
+    Value, VNull, VBool, VInt, VFloat, VStr, VArr, VObj,
+    object, (:=),
+    Decoder, run, makeErr
+}
+use std.json.{parse, stringify}
+use prelude.{
+    Ord, Ordering, Lt, EqOrd, Gt, compare,
+    Semigroup, (<+>), Monoid, empty,
+    maxInt, maxFloat, roundInt, listFilterMap
+}
+use ordmap.{OrdMap, mapEmpty, mapFromList}
+use i18n.{Locale, Zh, En}
+
+// ============================================================================
+// Directions & Spatial Coordinates
+// ============================================================================
+
+pub data Direction {
+    North,
+    South,
+    East,
+    West,
+    NorthEast,
+    NorthWest,
+    SouthEast,
+    SouthWest,
+}
+
+def dirRank(d: Direction): Int = match d {
+    North -> 0,
+    South -> 1,
+    East -> 2,
+    West -> 3,
+    NorthEast -> 4,
+    NorthWest -> 5,
+    SouthEast -> 6,
+    SouthWest -> 7,
+}
+
+pub def dirEq(a: Direction, b: Direction): Bool = dirRank(a) == dirRank(b)
+
+instance Ord Direction {
+    def compare(a, b) = compare(dirRank(a), dirRank(b))
+}
+
+pub def directionText(d: Direction): String = match d {
+    North -> "North",
+    South -> "South",
+    East -> "East",
+    West -> "West",
+    NorthEast -> "NorthEast",
+    NorthWest -> "NorthWest",
+    SouthEast -> "SouthEast",
+    SouthWest -> "SouthWest",
+}
+
+pub def parseDirection(raw: String): Option Direction = match raw {
+    "North" -> Some(North),
+    "South" -> Some(South),
+    "East" -> Some(East),
+    "West" -> Some(West),
+    "NorthEast" -> Some(NorthEast),
+    "NorthWest" -> Some(NorthWest),
+    "SouthEast" -> Some(SouthEast),
+    "SouthWest" -> Some(SouthWest),
+    _ -> None,
+}
+
+pub def directionLabel(loc: Locale, d: Direction): String = match loc {
+    Zh -> match d {
+        North -> "北",
+        South -> "南",
+        East -> "东",
+        West -> "西",
+        NorthEast -> "东北",
+        NorthWest -> "西北",
+        SouthEast -> "东南",
+        SouthWest -> "西南",
+    },
+    En -> match d {
+        North -> "N",
+        South -> "S",
+        East -> "E",
+        West -> "W",
+        NorthEast -> "NE",
+        NorthWest -> "NW",
+        SouthEast -> "SE",
+        SouthWest -> "SW",
+    },
+}
+
+pub def directionGridDelta(d: Direction): (Int, Int) = match d {
+    North -> (0, 1),
+    South -> (0, -1),
+    East -> (1, 0),
+    West -> (-1, 0),
+    NorthEast -> (1, 1),
+    NorthWest -> (-1, 1),
+    SouthEast -> (1, -1),
+    SouthWest -> (-1, -1),
+}
+
+// ============================================================================
+// Client -> Server: `PlayerAction` & Login Requests
+// ============================================================================
+
+pub data PlayerAction {
+    ActGo(Direction),
+    ActTalk(String),
+    ActAttack(String),
+    ActPerform(String),
+    ActTrain(String),
+    ActPractice(String, Int),
+    ActLearn(String, String, Int),
+    ActStudy(String, Int),
+    ActResearch(String, Int),
+    ActMeditate(Int, Int),
+    ActEnable(String, String),
+    ActPrepare(String, String),
+    ActEquip(String),
+    ActUnequip(String),
+    ActBuy(Option String, String),
+    ActUse(String),
+    ActSay(String),
+    ActOther(String),
+}
+
+pub data CreationBonus {
+    MkCreationBonus {
+        cbStrength: Int,
+        cbAgilityValue: Int,
+        cbVitality: Int,
+        cbMaxQiBonus: Int,
+        cbAppearance: Int,
+    },
+}
+
+pub def emptyBonus(): CreationBonus = MkCreationBonus {
+    cbStrength: 0,
+    cbAgilityValue: 0,
+    cbVitality: 0,
+    cbMaxQiBonus: 0,
+    cbAppearance: 0,
+}
+
+pub def addBonus(a: CreationBonus, b: CreationBonus): CreationBonus = MkCreationBonus {
+    cbStrength: a.cbStrength + b.cbStrength,
+    cbAgilityValue: a.cbAgilityValue + b.cbAgilityValue,
+    cbVitality: a.cbVitality + b.cbVitality,
+    cbMaxQiBonus: a.cbMaxQiBonus + b.cbMaxQiBonus,
+    cbAppearance: a.cbAppearance + b.cbAppearance,
+}
+
+instance Semigroup CreationBonus {
+    def (<+>)(a, b) = addBonus(a, b)
+}
+
+instance Monoid CreationBonus {
+    def empty() = emptyBonus()
+}
+
+pub data CreationOption {
+    MkCreationOption {
+        coId: String,
+        coLabel: String,
+        coStory: String,
+        coBonus: CreationBonus,
+    },
+}
+
+pub data CreationConfig {
+    MkCreationConfig {
+        cfgBaseStats: CreationBonus,
+        cfgGenders: List (String, String),
+        cfgOrigins: List CreationOption,
+        cfgChildhood1: List CreationOption,
+        cfgChildhood2: List CreationOption,
+    },
+}
+
+pub data CreationChoice {
+    MkCreationChoice {
+        ccGender: String,
+        ccOrigin: String,
+        ccChildhood1: String,
+        ccChildhood2: String,
+    },
+}
+
+pub def encodeLogin(user: String, pass: String, mChoice: Option CreationChoice): String = {
+    let creationVal = match mChoice {
+        None -> VNull,
+        Some(cc) -> object([
+            "gender" := cc.ccGender,
+            "origin" := cc.ccOrigin,
+            "childhood1" := cc.ccChildhood1,
+            "childhood2" := cc.ccChildhood2,
+        ]),
+    };
+    stringify(object([
+        "tag" := "Login",
+        "username" := user,
+        "password" := pass,
+        "creation" := creationVal,
+    ]))
+}
+
+pub def encodeRequestCreationConfig(): String =
+    stringify(object(["tag" := "RequestCharacterCreationConfig"]))
+
+def encodeActionBody(act: PlayerAction): Value = match act {
+    ActGo(dir) -> object(["go" := directionText(dir)]),
+    ActTalk(cid) -> object(["talk" := cid]),
+    ActAttack(cid) -> object(["attack" := cid]),
+    ActPerform(sid) -> object(["perform" := sid]),
+    ActTrain(aid) -> object(["train" := aid]),
+    ActPractice(aid, n) -> object(["practice" := object(["art" := aid, "times" := n])]),
+    ActLearn(tid, aid, n) -> object(["learn" := object(["teacher" := tid, "art" := aid, "times" := n])]),
+    ActStudy(iid, n) -> object(["study" := object(["item" := iid, "times" := n])]),
+    ActResearch(aid, n) -> object(["research" := object(["art" := aid, "times" := n])]),
+    ActMeditate(amt, n) -> object(["meditate" := object(["amount" := amt, "times" := n])]),
+    ActEnable(ty, aid) -> object(["enable" := object(["type" := ty, "art" := aid])]),
+    ActPrepare(ty, aid) -> object(["prepare" := object(["type" := ty, "art" := aid])]),
+    ActEquip(iid) -> object(["equip" := iid]),
+    ActUnequip(slot) -> object(["unequip" := slot]),
+    ActBuy(mMerch, iid) -> match mMerch {
+        None -> object(["buy" := object(["item" := iid])]),
+        Some(merch) -> object(["buy" := object(["item" := iid, "merchant" := merch])]),
+    },
+    ActUse(iid) -> object(["use" := iid]),
+    ActSay(msg) -> object(["say" := msg]),
+    ActOther(cmd) -> object(["other" := cmd]),
+}
+
+pub def encodePlayerAction(act: PlayerAction): String =
+    stringify(object([
+        "tag" := "NetPlayerAction",
+        "contents" := encodeActionBody(act),
+    ]))
+
+// ============================================================================
+// Server -> Client Domain Models
+// ============================================================================
+
+pub data TeachableArt {
+    MkTeachableArt { taId: String, taName: String, taMaxLevel: Int },
+}
+
+pub data ShopItem {
+    MkShopItem { siId: String, siName: String, siPrice: Int },
+}
+
+pub data RoomChar {
+    MkRoomChar {
+        rcId: String,
+        rcName: String,
+        rcDesc: String,
+        rcActions: List String,
+        rcTeaches: List TeachableArt,
+        rcShop: List ShopItem,
+    },
+}
+
+pub data RoomExit {
+    MkRoomExit {
+        reDirection: Direction,
+        reMapId: String,
+        reRoomId: String,
+        reRoomName: String,
+        rePos: Option (Int, Int),
+    },
+}
+
+pub data MapRoom {
+    MkMapRoom {
+        mrRoomId: String,
+        mrRoomName: String,
+        mrRoomKind: String,
+        mrPos: (Int, Int),
+    },
+}
+
+pub data MapEdge {
+    MkMapEdge {
+        meDirection: Direction,
+        meFrom: (Int, Int),
+        meTo: (Int, Int),
+        meToRoomId: String,
+        meToRoomName: String,
+        meToMapId: String,
+        meToMapName: String,
+    },
+}
+
+pub data MapOverview {
+    MkMapOverview {
+        moMapId: String,
+        moMapName: String,
+        moCurrentPos: (Int, Int),
+        moRooms: List MapRoom,
+        moEdges: List MapEdge,
+    },
+}
+
+pub data EffectInfo {
+    MkEffectInfo {
+        efId: String,
+        efName: String,
+        efType: String,
+        efRemaining: Float,
+        efValue: Int,
+    },
+}
+
+pub data ActiveSkillInfo {
+    MkActiveSkillInfo {
+        asId: String,
+        asName: String,
+        asDesc: String,
+        asCost: Int,
+        asApReq: Int,
+        asUnlockLevel: Int,
+        asCooldown: Float,
+        asReqStatus: List String,
+        asReqStatusNames: List String,
+        asDamage: Option Int,
+        asHeal: Option Int,
+    },
+}
+
+pub data CombatantInfo {
+    MkCombatantInfo {
+        cbId: String,
+        cbName: String,
+        cbGender: String,
+        cbStyle: String,
+        cbHp: Int,
+        cbMaxHp: Int,
+        cbQi: Int,
+        cbMaxQi: Int,
+        cbAp: Int,
+        cbApProgress: Float,
+        cbAgility: Int,
+        cbEffects: List EffectInfo,
+    },
+}
+
+pub data BattleSnap {
+    MkBattleSnap {
+        bsPlayer: CombatantInfo,
+        bsEnemy: CombatantInfo,
+        bsCooldowns: OrdMap String Float,
+        bsActiveSkills: List ActiveSkillInfo,
+        bsActionLock: Float,
+        bsPendingSkillId: Option String,
+    },
+}
+
+pub data CombatResult {
+    ResHit,
+    ResDodge,
+    ResParry,
+    ResEffect,
+}
+
+def resRank(r: CombatResult): Int = match r {
+    ResHit -> 0,
+    ResDodge -> 1,
+    ResParry -> 2,
+    ResEffect -> 3,
+}
+
+pub def combatResEq(a: CombatResult, b: CombatResult): Bool = resRank(a) == resRank(b)
+
+instance Ord CombatResult {
+    def compare(a, b) = compare(resRank(a), resRank(b))
+}
+
+pub def combatResultText(r: CombatResult): String = match r {
+    ResHit -> "hit",
+    ResDodge -> "dodge",
+    ResParry -> "parry",
+    ResEffect -> "effect",
+}
+
+pub def parseCombatResult(raw: String): CombatResult = match raw {
+    "dodge" -> ResDodge,
+    "parry" -> ResParry,
+    "effect" -> ResEffect,
+    _ -> ResHit,
+}
+
+pub data CombatHit {
+    MkCombatHit {
+        chResult: CombatResult,
+        chDamage: Option Int,
+        chHeal: Option Int,
+    },
+}
+
+pub data CombatEvt {
+    MkCombatEvt {
+        ceKind: String,
+        ceActorName: String,
+        ceTargetName: String,
+        ceMsgKind: String,
+        ceText: String,
+        ceEffectKind: String,
+        ceEffectAmount: Int,
+        ceDamage: Option Int,
+        ceHeal: Option Int,
+        ceResult: CombatResult,
+        ceHits: List CombatHit,
+        ceActionId: String,
+        ceTags: List String,
+        ceLabel: Option String,
+        ceDurationMs: Option Float,
+        ceStagingOverride: Option Value,
+    },
+}
+
+pub data SkillFailReason {
+    FailNeedAp(Int, Int),
+    FailNeedQi(Int, Int),
+    FailCooldown(Int),
+    FailMissingStatus(List String),
+    FailUnavailable(String),
+}
+
+pub data BusyInfo {
+    MkBusyInfo {
+        biAction: String,
+        biTarget: String,
+        biCompleted: Int,
+        biRemaining: Int,
+        biSeconds: Float,
+        biStepSeconds: Float,
+    },
+}
+
+pub data PlayerStatsInfo {
+    MkPlayerStatsInfo {
+        psHp: Int,
+        psMaxHp: Int,
+        psQi: Int,
+        psMaxQi: Int,
+        psJing: Int,
+        psMaxJing: Int,
+        psAp: Int,
+        psStatus: String,
+        psGender: String,
+        psAppearance: Int,
+        psAppearanceText: String,
+        psPortraitKey: String,
+        psStrength: Int,
+        psAgility: Int,
+        psVitality: Int,
+        psPotential: Int,
+        psCombatExp: Int,
+        psInjuredSeconds: Int,
+        psCombatInsight: Int,
+        psBusy: Option BusyInfo,
+    },
+}
+
+pub data ArtInfo {
+    MkArtInfo {
+        aiId: String,
+        aiName: String,
+        aiType: String,
+        aiTier: String,
+        aiLevel: Int,
+        aiProgress: Int,
+        aiNextProgress: Int,
+        aiMaxLevel: Int,
+        aiIsFoundation: Bool,
+        aiEnabled: Bool,
+        aiResearchFrom: Int,
+        aiNextCombatExp: Int,
+        aiBlocker: Option String,
+        aiUnlockedMoves: List String,
+        aiUnlockedSkills: List String,
+    },
+}
+
+pub data InvItem {
+    MkInvItem {
+        iiId: String,
+        iiName: String,
+        iiAmount: Int,
+        iiUsable: Bool,
+        iiStudyable: Bool,
+        iiEquipped: Bool,
+        iiEquipSlot: Option String,
+    },
+}
+
+pub data RewardInfo {
+    MkRewardInfo { rwKind: String, rwName: String, rwAmount: Int },
+}
+
+pub data QuestItem {
+    MkQuestItem {
+        qiId: String,
+        qiName: String,
+        qiStage: String,
+        qiObjective: Option String,
+        qiCompleted: Bool,
+        qiRewards: List RewardInfo,
+    },
+}
+
+pub data ServerMsg {
+    SmMove(String),
+    SmView(String, String, List RoomChar, List RoomExit),
+    SmMapOverview(MapOverview),
+    SmAttack(String, String),
+    SmCombatEvent(CombatEvt),
+    SmCombatSettlement(String, String, Bool),
+    SmBattleState(BattleSnap),
+    SmActiveSkillFailure(SkillFailReason),
+    SmDialogue(String, String),
+    SmStory(String, String),
+    SmStorySequence(Bool),
+    SmStoryDelay(Int),
+    SmStoryTransition(String, Int),
+    SmSay(String, String),
+    SmUseItem(String, String),
+    SmPlayerStats(PlayerStatsInfo),
+    SmInventory(Int, List InvItem),
+    SmArts(List ArtInfo),
+    SmQuests(List QuestItem),
+    SmReward(List RewardInfo),
+    SmCreationConfig(CreationConfig),
+    SmSystem(String, OrdMap String String),
+    SmError(String, OrdMap String String),
+    SmIgnored(String),
+}
+
+// ============================================================================
+// Resilient `Value` Inspection Combinators (shared with `pose` & `catalog`)
+// ============================================================================
+
+pub def vLookup(fields: List (String, Value), key: String): Option Value = match fields {
+    Nil -> None,
+    Cons((k, v), rest) -> if (k == key) Some(v) else vLookup(rest, key),
+}
+
+pub def vObjFields(v: Value): Option (List (String, Value)) = match v {
+    VObj(fs) -> Some(fs),
+    _ -> None,
+}
+
+pub def vStr(v: Value): Option String = match v {
+    VStr(s) -> Some(s),
+    _ -> None,
+}
+
+pub def vBool(v: Value): Option Bool = match v {
+    VBool(b) -> Some(b),
+    _ -> None,
+}
+
+pub def vFloat(v: Value): Option Float = match v {
+    VFloat(f) -> Some(f),
+    VInt(n) -> Some(intToFloat(i64ToInt(n))),
+    _ -> None,
+}
+
+pub def vInt(v: Value): Option Int = match v {
+    VInt(n) -> Some(i64ToInt(n)),
+    VFloat(f) -> {
+        let r = roundInt(f);
+        if (intToFloat(r) == f) Some(r) else None
+    },
+    _ -> None,
+}
+
+pub def vArr(v: Value): Option (List Value) = match v {
+    VArr(xs) -> Some(xs),
+    _ -> None,
+}
+
+pub def fStr(fs: List (String, Value), key: String): Option String =
+    match vLookup(fs, key) {
+        Some(v) -> vStr(v),
+        None -> None,
+    }
+
+pub def fStrOr(fs: List (String, Value), key: String, defVal: String): String =
+    match fStr(fs, key) {
+        Some(s) -> s,
+        None -> defVal,
+    }
+
+pub def fBoolOr(fs: List (String, Value), key: String, defVal: Bool): Bool =
+    match vLookup(fs, key) {
+        Some(v) -> match vBool(v) { Some(b) -> b, None -> defVal },
+        None -> defVal,
+    }
+
+pub def fInt(fs: List (String, Value), key: String): Option Int =
+    match vLookup(fs, key) {
+        Some(v) -> vInt(v),
+        None -> None,
+    }
+
+pub def fIntOr(fs: List (String, Value), key: String, defVal: Int): Int =
+    match fInt(fs, key) {
+        Some(n) -> n,
+        None -> defVal,
+    }
+
+pub def fFloat(fs: List (String, Value), key: String): Option Float =
+    match vLookup(fs, key) {
+        Some(v) -> vFloat(v),
+        None -> None,
+    }
+
+pub def fFloatOr(fs: List (String, Value), key: String, defVal: Float): Float =
+    match fFloat(fs, key) {
+        Some(n) -> n,
+        None -> defVal,
+    }
+
+pub def fArr(fs: List (String, Value), key: String): List Value =
+    match vLookup(fs, key) {
+        Some(VArr(xs)) -> xs,
+        _ -> Nil,
+    }
+
+pub def fStrList(fs: List (String, Value), key: String): List String =
+    listFilterMap(fArr(fs, key), (v) -> vStr(v))
+
+// ============================================================================
+// Server Message Decoders
+// ============================================================================
+
+def decodePos(v: Value): Option (Int, Int) = match v {
+    VArr(Cons(a, Cons(b, Nil))) -> match (vInt(a), vInt(b)) {
+        (Some(x), Some(y)) -> Some((x, y)),
+        _ -> None,
+    },
+    VObj(fs) -> match (fInt(fs, "x"), fInt(fs, "y")) {
+        (Some(x), Some(y)) -> Some((x, y)),
+        _ -> None,
+    },
+    _ -> None,
+}
+
+def decStrMap(v: Value): OrdMap String String = match v {
+    VObj(fs) -> mapFromList(listFilterMap(fs, (p) -> match p {
+        (k, val) -> match vStr(val) {
+            Some(s) -> Some((k, s)),
+            None -> None,
+        },
+    })),
+    _ -> mapEmpty(),
+}
+
+def decTeach(v: Value): Option TeachableArt = match v {
+    VObj(fs) -> Some(MkTeachableArt {
+        taId: fStrOr(fs, "artId", ""),
+        taName: fStrOr(fs, "name", ""),
+        taMaxLevel: fIntOr(fs, "maxLevel", 1),
+    }),
+    _ -> None,
+}
+
+def decShop(v: Value): Option ShopItem = match v {
+    VObj(fs) -> Some(MkShopItem {
+        siId: fStrOr(fs, "itemId", ""),
+        siName: fStrOr(fs, "name", ""),
+        siPrice: fIntOr(fs, "price", 0),
+    }),
+    _ -> None,
+}
+
+def decChar(v: Value): Option RoomChar = match v {
+    VObj(fs) -> Some(MkRoomChar {
+        rcId: fStrOr(fs, "id", ""),
+        rcName: fStrOr(fs, "name", "无名氏"),
+        rcDesc: fStrOr(fs, "desc", ""),
+        rcActions: fStrList(fs, "actions"),
+        rcTeaches: listFilterMap(fArr(fs, "teaches"), decTeach),
+        rcShop: listFilterMap(fArr(fs, "shop"), decShop),
+    }),
+    _ -> None,
+}
+
+def decExit(v: Value): Option RoomExit = match v {
+    VObj(fs) -> match fStr(fs, "direction") {
+        None -> None,
+        Some(dirTxt) -> match parseDirection(dirTxt) {
+            None -> None,
+            Some(dir) -> {
+                let pos = match vLookup(fs, "position") {
+                    Some(pv) -> decodePos(pv),
+                    None -> None,
+                };
+                Some(MkRoomExit {
+                    reDirection: dir,
+                    reMapId: fStrOr(fs, "mapId", ""),
+                    reRoomId: fStrOr(fs, "roomId", ""),
+                    reRoomName: fStrOr(fs, "roomName", directionLabel(Zh, dir)),
+                    rePos: pos,
+                })
+            },
+        },
+    },
+    _ -> None,
+}
+
+def decMapRoom(v: Value): Option MapRoom = match v {
+    VObj(fs) -> match vLookup(fs, "position") {
+        None -> None,
+        Some(pv) -> match decodePos(pv) {
+            None -> None,
+            Some(pos) -> Some(MkMapRoom {
+                mrRoomId: fStrOr(fs, "roomId", ""),
+                mrRoomName: fStrOr(fs, "roomName", ""),
+                mrRoomKind: fStrOr(fs, "roomKind", "normal"),
+                mrPos: pos,
+            }),
+        },
+    },
+    _ -> None,
+}
+
+def decMapEdge(v: Value): Option MapEdge = match v {
+    VObj(fs) -> {
+        let mDir = match fStr(fs, "direction") { Some(dt) -> parseDirection(dt), None -> None };
+        let mFrom = match vLookup(fs, "from") { Some(fv) -> decodePos(fv), None -> None };
+        let mTo = match vLookup(fs, "to") { Some(tv) -> decodePos(tv), None -> None };
+        match (mDir, mFrom, mTo) {
+            (Some(dir), Some(fPos), Some(tPos)) -> Some(MkMapEdge {
+                meDirection: dir,
+                meFrom: fPos,
+                meTo: tPos,
+                meToRoomId: fStrOr(fs, "toRoomId", ""),
+                meToRoomName: fStrOr(fs, "toRoomName", ""),
+                meToMapId: fStrOr(fs, "toMapId", ""),
+                meToMapName: fStrOr(fs, "toMapName", ""),
+            }),
+            _ -> None,
+        }
+    },
+    _ -> None,
+}
+
+def decMapOverview(fs: List (String, Value)): Option MapOverview =
+    match vLookup(fs, "currentPosition") {
+        None -> None,
+        Some(cpv) -> match decodePos(cpv) {
+            None -> None,
+            Some(cPos) -> Some(MkMapOverview {
+                moMapId: fStrOr(fs, "mapId", ""),
+                moMapName: fStrOr(fs, "mapName", "江湖舆图"),
+                moCurrentPos: cPos,
+                moRooms: listFilterMap(fArr(fs, "rooms"), decMapRoom),
+                moEdges: listFilterMap(fArr(fs, "edges"), decMapEdge),
+            }),
+        },
+    }
+
+def decEffect(v: Value): Option EffectInfo = match v {
+    VObj(fs) -> Some(MkEffectInfo {
+        efId: fStrOr(fs, "effectSummaryId", ""),
+        efName: fStrOr(fs, "effectSummaryName", ""),
+        efType: fStrOr(fs, "effectSummaryType", "buff"),
+        efRemaining: fFloatOr(fs, "effectSummaryRemaining", 0.0),
+        efValue: fIntOr(fs, "effectSummaryValue", 0),
+    }),
+    _ -> None,
+}
+
+def decSkill(v: Value): Option ActiveSkillInfo = match v {
+    VObj(fs) -> Some(MkActiveSkillInfo {
+        asId: fStrOr(fs, "activeSkillSummaryId", ""),
+        asName: fStrOr(fs, "activeSkillSummaryName", ""),
+        asDesc: fStrOr(fs, "activeSkillSummaryDesc", ""),
+        asCost: fIntOr(fs, "activeSkillSummaryCost", 0),
+        asApReq: fIntOr(fs, "activeSkillSummaryApReq", 1),
+        asUnlockLevel: fIntOr(fs, "activeSkillSummaryUnlockLevel", 1),
+        asCooldown: fFloatOr(fs, "activeSkillSummaryCooldown", 0.0),
+        asReqStatus: fStrList(fs, "activeSkillSummaryReqStatus"),
+        asReqStatusNames: fStrList(fs, "activeSkillSummaryReqStatusNames"),
+        asDamage: fInt(fs, "activeSkillSummaryDamage"),
+        asHeal: fInt(fs, "activeSkillSummaryHeal"),
+    }),
+    _ -> None,
+}
+
+def decCombatant(v: Value): Option CombatantInfo = match v {
+    VObj(fs) -> {
+        let apInt = fIntOr(fs, "combatantSnapshotAp", 0);
+        Some(MkCombatantInfo {
+            cbId: fStrOr(fs, "combatantSnapshotId", ""),
+            cbName: fStrOr(fs, "combatantSnapshotName", "侠客"),
+            cbGender: fStrOr(fs, "combatantSnapshotGender", "male"),
+            cbStyle: fStrOr(fs, "combatantSnapshotCombatStyle", "fist"),
+            cbHp: fIntOr(fs, "combatantSnapshotHp", 100),
+            cbMaxHp: maxInt(1, fIntOr(fs, "combatantSnapshotMaxHp", 100)),
+            cbQi: fIntOr(fs, "combatantSnapshotQi", 100),
+            cbMaxQi: maxInt(1, fIntOr(fs, "combatantSnapshotMaxQi", 100)),
+            cbAp: apInt,
+            cbApProgress: fFloatOr(fs, "combatantSnapshotApProgress", intToFloat(apInt)),
+            cbAgility: fIntOr(fs, "combatantSnapshotAgility", 18),
+            cbEffects: listFilterMap(fArr(fs, "combatantSnapshotEffects"), decEffect),
+        })
+    },
+    _ -> None,
+}
+
+def decBattleSnap(fs: List (String, Value)): Option BattleSnap = {
+    let mPl = match vLookup(fs, "battleSnapshotPlayer") { Some(v) -> decCombatant(v), None -> None };
+    let mEn = match vLookup(fs, "battleSnapshotEnemy") { Some(v) -> decCombatant(v), None -> None };
+    match (mPl, mEn) {
+        (Some(pl), Some(en)) -> {
+            let cdPairs = listFilterMap(fArr(fs, "battleSnapshotActiveSkillCooldowns"), (cv) -> match cv {
+                VObj(cfs) -> Some((
+                    fStrOr(cfs, "activeSkillCooldownSummaryActiveSkillId", ""),
+                    fFloatOr(cfs, "activeSkillCooldownSummaryRemaining", 0.0)
+                )),
+                _ -> None,
+            });
+            Some(MkBattleSnap {
+                bsPlayer: pl,
+                bsEnemy: en,
+                bsCooldowns: mapFromList(cdPairs),
+                bsActiveSkills: listFilterMap(fArr(fs, "battleSnapshotActiveSkills"), decSkill),
+                bsActionLock: fFloatOr(fs, "battleSnapshotActionLockRemaining", 0.0),
+                bsPendingSkillId: fStr(fs, "battleSnapshotPendingActiveSkillId"),
+            })
+        },
+        _ -> None,
+    }
+}
+
+def decSkillFail(fs: List (String, Value)): SkillFailReason =
+    match fStrOr(fs, "reason", "unavailable") {
+        "need_ap" -> FailNeedAp(fIntOr(fs, "required", 0), fIntOr(fs, "current", 0)),
+        "need_qi" -> FailNeedQi(fIntOr(fs, "required", 0), fIntOr(fs, "current", 0)),
+        "cooldown" -> FailCooldown(fIntOr(fs, "remaining", 1)),
+        "missing_status" -> FailMissingStatus(fStrList(fs, "statuses")),
+        _ -> FailUnavailable(fStrOr(fs, "activeSkillId", "")),
+    }
+
+def decHit(v: Value): Option CombatHit = match v {
+    VObj(fs) -> Some(MkCombatHit {
+        chResult: parseCombatResult(fStrOr(fs, "result", "hit")),
+        chDamage: fInt(fs, "damage"),
+        chHeal: fInt(fs, "heal"),
+    }),
+    _ -> None,
+}
+
+def decCombatEvt(fs: List (String, Value)): CombatEvt = {
+    let (mKind, msgText, effKind, effAmt) = match vLookup(fs, "message") {
+        Some(VObj(mfs)) ->
+            if (fStrOr(mfs, "kind", "script") == "effect_tick") {
+                (
+                    "effect_tick",
+                    fStrOr(mfs, "effectName", "内息"),
+                    fStrOr(mfs, "effectKind", "dot"),
+                    fIntOr(mfs, "amount", 0)
+                )
+            } else {
+                ("script", fStrOr(mfs, "text", ""), "", 0)
+            },
+        _ -> ("script", "", "", 0),
+    };
+    let (actId, tags, mLbl, mDur, mStg) = match vLookup(fs, "visual") {
+        Some(VObj(vfs)) -> {
+            let (lbl, stg) = match vLookup(vfs, "params") {
+                Some(VObj(pfs)) -> (fStr(pfs, "label"), vLookup(pfs, "staging")),
+                _ -> (None, None),
+            };
+            (
+                fStrOr(vfs, "actionId", ""),
+                fStrList(vfs, "tags"),
+                lbl,
+                fFloat(vfs, "durationMs"),
+                stg
+            )
+        },
+        _ -> ("", Nil, None, None, None),
+    };
+    MkCombatEvt {
+        ceKind: fStrOr(fs, "kind", "normal"),
+        ceActorName: fStrOr(fs, "actorName", ""),
+        ceTargetName: fStrOr(fs, "targetName", ""),
+        ceMsgKind: mKind,
+        ceText: msgText,
+        ceEffectKind: effKind,
+        ceEffectAmount: effAmt,
+        ceDamage: fInt(fs, "damage"),
+        ceHeal: fInt(fs, "heal"),
+        ceResult: parseCombatResult(fStrOr(fs, "result", "hit")),
+        ceHits: listFilterMap(fArr(fs, "hits"), decHit),
+        ceActionId: actId,
+        ceTags: tags,
+        ceLabel: mLbl,
+        ceDurationMs: mDur,
+        ceStagingOverride: mStg,
+    }
+}
+
+def decStats(fs: List (String, Value)): PlayerStatsInfo = {
+    let mBusy = match vLookup(fs, "playerStatsSummaryBusy") {
+        Some(VObj(bfs)) -> {
+            let sec = fFloatOr(bfs, "busySummarySeconds", 0.0);
+            Some(MkBusyInfo {
+                biAction: fStrOr(bfs, "busySummaryAction", ""),
+                biTarget: fStrOr(bfs, "busySummaryTarget", ""),
+                biCompleted: fIntOr(bfs, "busySummaryCompleted", 0),
+                biRemaining: fIntOr(bfs, "busySummaryRemaining", 0),
+                biSeconds: sec,
+                biStepSeconds: fFloatOr(bfs, "busySummaryStepSeconds", maxFloat(0.5, sec)),
+            })
+        },
+        _ -> None,
+    };
+    MkPlayerStatsInfo {
+        psHp: fIntOr(fs, "playerStatsSummaryHp", 100),
+        psMaxHp: maxInt(1, fIntOr(fs, "playerStatsSummaryMaxHp", 100)),
+        psQi: fIntOr(fs, "playerStatsSummaryQi", 100),
+        psMaxQi: maxInt(1, fIntOr(fs, "playerStatsSummaryMaxQi", 100)),
+        psJing: fIntOr(fs, "playerStatsSummaryJing", 100),
+        psMaxJing: maxInt(1, fIntOr(fs, "playerStatsSummaryMaxJing", 100)),
+        psAp: fIntOr(fs, "playerStatsSummaryAp", 0),
+        psStatus: fStrOr(fs, "playerStatsSummaryStatus", "normal"),
+        psGender: fStrOr(fs, "playerStatsSummaryGender", "male"),
+        psAppearance: fIntOr(fs, "playerStatsSummaryAppearance", 5),
+        psAppearanceText: fStrOr(fs, "playerStatsSummaryAppearanceText", ""),
+        psPortraitKey: fStrOr(fs, "playerStatsSummaryPortraitKey", "beauty-score-06"),
+        psStrength: fIntOr(fs, "playerStatsSummaryStrength", 18),
+        psAgility: fIntOr(fs, "playerStatsSummaryAgility", 18),
+        psVitality: fIntOr(fs, "playerStatsSummaryVitality", 18),
+        psPotential: fIntOr(fs, "playerStatsSummaryPotential", 0),
+        psCombatExp: fIntOr(fs, "playerStatsSummaryCombatExp", 0),
+        psInjuredSeconds: fIntOr(fs, "playerStatsSummaryInjuredSeconds", 0),
+        psCombatInsight: fIntOr(fs, "playerStatsSummaryCombatInsight", 0),
+        psBusy: mBusy,
+    }
+}
+
+def decInv(v: Value): Option InvItem = match v {
+    VObj(fs) -> Some(MkInvItem {
+        iiId: fStrOr(fs, "inventoryItemSummaryId", ""),
+        iiName: fStrOr(fs, "inventoryItemSummaryName", ""),
+        iiAmount: fIntOr(fs, "inventoryItemSummaryAmount", 1),
+        iiUsable: fBoolOr(fs, "inventoryItemSummaryUsable", false),
+        iiStudyable: fBoolOr(fs, "inventoryItemSummaryStudyable", false),
+        iiEquipped: fBoolOr(fs, "inventoryItemSummaryEquipped", false),
+        iiEquipSlot: fStr(fs, "inventoryItemSummaryEquipSlot"),
+    }),
+    _ -> None,
+}
+
+def decArt(v: Value): Option ArtInfo = match v {
+    VObj(fs) -> Some(MkArtInfo {
+        aiId: fStrOr(fs, "artSummaryId", ""),
+        aiName: fStrOr(fs, "artSummaryName", ""),
+        aiType: fStrOr(fs, "artSummaryType", ""),
+        aiTier: fStrOr(fs, "artSummaryTier", ""),
+        aiLevel: fIntOr(fs, "artSummaryLevel", 1),
+        aiProgress: fIntOr(fs, "artSummaryProgress", 0),
+        aiNextProgress: fIntOr(fs, "artSummaryNextProgress", 0),
+        aiMaxLevel: fIntOr(fs, "artSummaryMaxLevel", 100),
+        aiIsFoundation: fBoolOr(fs, "artSummaryIsFoundation", false),
+        aiEnabled: fBoolOr(fs, "artSummaryEnabled", false),
+        aiResearchFrom: fIntOr(fs, "artSummaryResearchFrom", 9999),
+        aiNextCombatExp: fIntOr(fs, "artSummaryNextCombatExp", 0),
+        aiBlocker: fStr(fs, "artSummaryBlocker"),
+        aiUnlockedMoves: fStrList(fs, "artSummaryUnlockedAttackMoves"),
+        aiUnlockedSkills: fStrList(fs, "artSummaryUnlockedActiveSkills"),
+    }),
+    _ -> None,
+}
+
+def decReward(v: Value): Option RewardInfo = match v {
+    VObj(fs) -> Some(MkRewardInfo {
+        rwKind: fStrOr(fs, "rewardSummaryKind", ""),
+        rwName: fStrOr(fs, "rewardSummaryName", "奖励"),
+        rwAmount: fIntOr(fs, "rewardSummaryAmount", 1),
+    }),
+    _ -> None,
+}
+
+def decQuest(v: Value): Option QuestItem = match v {
+    VObj(fs) -> Some(MkQuestItem {
+        qiId: fStrOr(fs, "questLogEntryId", ""),
+        qiName: fStrOr(fs, "questLogEntryName", ""),
+        qiStage: fStrOr(fs, "questLogEntryStage", ""),
+        qiObjective: fStr(fs, "questLogEntryObjective"),
+        qiCompleted: fBoolOr(fs, "questLogEntryCompleted", false),
+        qiRewards: listFilterMap(fArr(fs, "questLogEntryRewards"), decReward),
+    }),
+    _ -> None,
+}
+
+def decBonus(v: Value): CreationBonus = match v {
+    VObj(fs) -> MkCreationBonus {
+        cbStrength: fIntOr(fs, "strength", 0),
+        cbAgilityValue: fIntOr(fs, "agility", 0),
+        cbVitality: fIntOr(fs, "vitality", 0),
+        cbMaxQiBonus: fIntOr(fs, "maxQi", 0),
+        cbAppearance: fIntOr(fs, "appearance", 0),
+    },
+    _ -> emptyBonus(),
+}
+
+def decCreationOpt(v: Value): Option CreationOption = match v {
+    VObj(fs) -> Some(MkCreationOption {
+        coId: fStrOr(fs, "id", ""),
+        coLabel: fStrOr(fs, "label", ""),
+        coStory: fStrOr(fs, "story", ""),
+        coBonus: match vLookup(fs, "bonus") { Some(bv) -> decBonus(bv), None -> emptyBonus() },
+    }),
+    _ -> None,
+}
+
+def decCreationConfig(fs: List (String, Value)): CreationConfig = {
+    let baseB = match vLookup(fs, "baseStats") { Some(bv) -> decBonus(bv), None -> emptyBonus() };
+    let genders = listFilterMap(fArr(fs, "genders"), (gv) -> match gv {
+        VObj(gfs) -> Some((fStrOr(gfs, "id", "male"), fStrOr(gfs, "label", "男"))),
+        _ -> None,
+    });
+    MkCreationConfig {
+        cfgBaseStats: baseB,
+        cfgGenders: genders,
+        cfgOrigins: listFilterMap(fArr(fs, "origins"), decCreationOpt),
+        cfgChildhood1: listFilterMap(fArr(fs, "childhood1"), decCreationOpt),
+        cfgChildhood2: listFilterMap(fArr(fs, "childhood2"), decCreationOpt),
+    }
+}
+
+def decodeByTag(tag: String, c: Value): ServerMsg = match (tag, c) {
+    ("MoveMsg", VStr(dst)) -> SmMove(dst),
+    ("ViewMsg", VArr(Cons(VStr(rName), Cons(VStr(rDesc), Cons(VArr(chars), Cons(VArr(exits), Nil)))))) ->
+        SmView(rName, rDesc, listFilterMap(chars, decChar), listFilterMap(exits, decExit)),
+    ("MapOverviewMsg", VObj(fs)) -> match decMapOverview(fs) {
+        Some(mo) -> SmMapOverview(mo),
+        None -> SmIgnored("MapOverviewMsg"),
+    },
+    ("AttackMsg", VArr(Cons(VStr(atk), Cons(VStr(dfd), Nil)))) -> SmAttack(atk, dfd),
+    ("CombatEventMsg", VObj(fs)) -> SmCombatEvent(decCombatEvt(fs)),
+    ("CombatSettlementMsg", VArr(Cons(VStr(atk), Cons(VStr(dfd), Cons(VBool(win), Nil))))) ->
+        SmCombatSettlement(atk, dfd, win),
+    ("BattleStateMsg", VObj(fs)) -> match decBattleSnap(fs) {
+        Some(bs) -> SmBattleState(bs),
+        None -> SmIgnored("BattleStateMsg"),
+    },
+    ("ActiveSkillFailureMsg", VObj(fs)) -> SmActiveSkillFailure(decSkillFail(fs)),
+    ("DialogueMsg", VArr(Cons(VStr(who), Cons(VStr(txt), Nil)))) -> SmDialogue(who, txt),
+    ("StoryMsg", VArr(Cons(VStr(speaker), Cons(VStr(txt), Nil)))) -> SmStory(speaker, txt),
+    ("StorySequenceMsg", VBool(active)) -> SmStorySequence(active),
+    ("StoryDelayMsg", nVal) -> SmStoryDelay(match vInt(nVal) { Some(n) -> n, None -> 0 }),
+    ("StoryTransitionMsg", VArr(Cons(VStr(txt), Cons(nVal, Nil)))) ->
+        SmStoryTransition(txt, match vInt(nVal) { Some(n) -> n, None -> 1200 }),
+    ("SayMsg", VArr(Cons(VStr(who), Cons(VStr(txt), Nil)))) -> SmSay(who, txt),
+    ("UseItemMsg", VArr(Cons(VStr(who), Cons(VStr(txt), Nil)))) -> SmUseItem(who, txt),
+    ("PlayerStatsMsg", VObj(fs)) -> SmPlayerStats(decStats(fs)),
+    ("InventoryMsg", VArr(Cons(moneyVal, Cons(VArr(items), Nil)))) ->
+        SmInventory(match vInt(moneyVal) { Some(m) -> m, None -> 0 }, listFilterMap(items, decInv)),
+    ("ArtsMsg", VArr(arts)) -> SmArts(listFilterMap(arts, decArt)),
+    ("QuestLogMsg", VArr(qs)) -> SmQuests(listFilterMap(qs, decQuest)),
+    ("RewardMsg", VArr(rs)) -> SmReward(listFilterMap(rs, decReward)),
+    ("CharacterCreationConfigMsg", VObj(fs)) -> SmCreationConfig(decCreationConfig(fs)),
+    ("SystemMsg", VObj(fs)) -> SmSystem(
+        fStrOr(fs, "systemMessageKey", ""),
+        match vLookup(fs, "systemMessageParams") { Some(pv) -> decStrMap(pv), None -> mapEmpty() }
+    ),
+    ("ErrorMsg", VObj(fs)) -> SmError(
+        fStrOr(fs, "errorSummaryCode", "other"),
+        match vLookup(fs, "errorSummaryParams") { Some(pv) -> decStrMap(pv), None -> mapEmpty() }
+    ),
+    _ -> SmIgnored(tag),
+}
+
+pub def decodeServerMsg(raw: String): Result ServerMsg String =
+    match parse(raw) {
+        Err(e) -> Err(e),
+        Ok(VObj(fs)) -> match fStr(fs, "tag") {
+            None -> Err("Missing tag"),
+            Some(tag) -> {
+                let c = match vLookup(fs, "contents") { Some(cv) -> cv, None -> VNull };
+                Ok(decodeByTag(tag, c))
+            },
+        },
+        Ok(_) -> Err("Server message is not an object"),
+    }

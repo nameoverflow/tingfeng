@@ -3,7 +3,7 @@
 ## Project and task routing
 
 听风录（Tingfeng）— a Wuxia MUD with a pure-Geisha WebSocket server (`server/src/`), YAML game content (`resources/scripts/`), and a
-Haskell GHC Wasm Canvas2D web client (`client/hs/`). Player persistence uses JSON saves (`saves/`).
+pure-Geisha Wasm Canvas2D web client (`client/gsa/`). Player persistence uses JSON saves (`saves/`).
 
 Read the documentation relevant to the change; a full documentation pass is
 not required. [docs/README.md](docs/README.md) indexes the rest.
