@@ -1546,13 +1546,14 @@ portraitScoreFile gender app playerName =
       twoDigit = if evenScore < 10 then "0" <> T.pack (show evenScore) else T.pack (show evenScore)
       variant = 1 + T.foldl' (\acc ch -> (acc * 31 + fromEnum ch) `mod` 4) 0 (T.strip playerName)
       variantText = "-0" <> T.pack (show variant)
+      version = if evenScore >= 8 then "v9" else "v8"
       portraitGender = case gender of
         "female" -> "female"
         "male" -> "male"
         -- Old saves without a gender used male-looking 0/2 and female-looking
         -- 4/6/8/10 portraits. Preserve that fallback while using the new style.
         _ -> if evenScore <= 2 then "male" else "female"
-   in "beauty-v8-" <> portraitGender <> "-" <> twoDigit <> variantText
+   in "beauty-" <> version <> "-" <> portraitGender <> "-" <> twoDigit <> variantText
 
 buildLabStateJson :: ClientModel -> Text
 buildLabStateJson m =

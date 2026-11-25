@@ -4,7 +4,7 @@ This document is the project-facing summary for character avatar portraits. The 
 
 ## Current State
 
-Current game set: `wuxia-avatar-beauty-scale-v8` (female and male, scores 0, 2, 4, 6, 8 and 10, with four different characters per gender and score). Full-size originals are in `docs/assets/character-portraits/wuxia-avatar-beauty-scale-v8/originals/`; derived 512×512 game images are in `client/public/portraits/`.
+Current game set: v8 for scores 0, 2, 4 and 6, and v9 for scores 8 and 10, with four different characters per gender and score. Full-size originals are in `docs/assets/character-portraits/wuxia-avatar-beauty-scale-v8/originals/` and `docs/assets/character-portraits/wuxia-avatar-beauty-scale-v9/originals/`; derived 512×512 game images are in `client/public/portraits/`.
 
 The creation preview, desktop header and character panel select portraits by gender and the existing even-score mapping (odd scores round up; scores are clamped to 0–10). For a given name, the variant is chosen deterministically and stays the same across reloads. Old saves without a gender use the new style with the earlier score-only fallback's presentation: male-looking 0/2 and female-looking 4/6/8/10. The client loads portrait images on demand instead of preloading all variants.
 
@@ -16,11 +16,11 @@ Do not crop, redraw, downsample, overwrite, or replace the v4 originals unless t
 
 Only full-size originals are stored as canonical assets. Thumbnail folders, contact sheets, preview grids, and rejected candidates are disposable QA artifacts and should not be treated as source assets.
 
-## V8 Game Originals
+## V8 and V9 Game Originals
 
-Files use `beauty-<gender>-<score>-<variant>-source.png`, where gender is `female` or `male`, score is `00`, `02`, `04`, `06`, `08`, or `10`, and variant is `01`–`04`. Game copies use `beauty-v8-<gender>-<score>-<variant>.png`. Each character has its own face, expression, hair silhouette and clothing; variants are not assigned a fixed set of personality labels.
+Files use `beauty-<gender>-<score>-<variant>-source.png`, where gender is `female` or `male`, score is `00`, `02`, `04`, `06`, `08`, or `10`, and variant is `01`–`04`. Game copies use `beauty-v8-<gender>-<score>-<variant>.png` for 0–6 and `beauty-v9-<gender>-<score>-<variant>.png` for 8–10. Each character has its own face, expression, hair silhouette and clothing; variants are not assigned a fixed set of personality labels.
 
-The generation prompts, brush sample, contact sheets and QA notes are under `harness/portrait-generation/jobs/v8-coarse-ink/`.
+The generation prompts, brush sample, contact sheets and QA notes are under `harness/portrait-generation/jobs/v8-coarse-ink/` and `harness/portrait-generation/jobs/v9-beauty/`.
 
 ## Previous V7 Originals
 
@@ -52,7 +52,7 @@ The v7 generation prompts, contact sheet and QA notes remain under `harness/port
 - Rough old Chinese wuxia mobile-game portrait feeling.
 - Thick uneven black ink brush lines, dry-brush texture, controlled roughness.
 - Muted flat watercolor on pale, low-saturation grey-ivory rice paper in v8; the locked v4 references use aged tan paper.
-- Low detail: broad solid ink hair masses, not individually drawn strands; sparse, expressive facial marks and a few bold costume folds.
+- Low detail: broad solid ink hair masses, not individually drawn strands; expressive facial marks and a few bold costume folds. The v9 high-score portraits use slightly more expressive eyes and muted facial washes while keeping the coarse hair and ink style.
 - Jianghu clothing only: cloth robes, collars, scarves, simple hairpins, small weapon hints when needed.
 - No UI frame, text, watermark, logo, scenery, modern props, 3D render, photorealism, polished anime cleanup, or ornate fantasy armor.
 

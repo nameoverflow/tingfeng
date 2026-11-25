@@ -1,0 +1,86 @@
+[
+  {
+    "gender": "female",
+    "score": "10",
+    "variant": "01",
+    "spec": "An exceptionally beautiful, cool and composed adult female sword adept with an elegant longer oval face, clear phoenix-shaped eyes and gently arched brows, a direct, luminous but restrained gaze. Long half-up hair in a broad asymmetric ink coil, a simple pale celadon pin, light blue and teal collar. Slight near-front turn."
+  },
+  {
+    "gender": "female",
+    "score": "10",
+    "variant": "03",
+    "spec": "An exceptionally beautiful, lively adult female traveler with a softly rounded face, sparkling expressive eyes, a bright but natural smile and graceful balanced features. Hair in TWO compact broad side coils with simple pale gold ties, no ponytail or red bow; coral and indigo collar. Slightly top-down front view."
+  },
+  {
+    "gender": "female",
+    "score": "10",
+    "variant": "04",
+    "spec": "An exceptionally beautiful theatrical adult female Jianghu rogue with high cheekbones, upward-set eyes and a poised mischievous half-smile. A single THICK dark side braid tied with wine-red cloth, bold plum and ochre high collar. Slight turn toward viewer's left."
+  },
+  {
+    "gender": "female",
+    "score": "08",
+    "variant": "01",
+    "spec": "A very beautiful adult female innkeeper with a sly, knowing smile, distinctive long almond eyes and calm charm. Hair in one broad low side knot with a restrained vermilion tie, deep wine-red collar. Slight turn left."
+  },
+  {
+    "gender": "female",
+    "score": "08",
+    "variant": "02",
+    "spec": "A very beautiful, bold female escort with a confident joyful smile, round expressive eyes and spirited presence. Dark hair mostly tucked beneath a broad ochre headwrap, no high ponytail; blue and rust-red collar. Near-front, chin slightly raised."
+  },
+  {
+    "gender": "female",
+    "score": "08",
+    "variant": "03",
+    "spec": "A very beautiful mature female sword teacher with a long balanced face, steady intelligent gaze and a composed, subtle smile. Broad dark hair in a horizontal low coil with one simple grey pin, dark green collar. Frontal pose."
+  },
+  {
+    "gender": "female",
+    "score": "08",
+    "variant": "04",
+    "spec": "A very beautiful mature female physician with soft laughing eyes, an individual oval face and a warm gentle smile. A single broad silver-grey streak in dark ink hair gathered into a compact low bun, muted plum and ivory collar. Slight turn toward viewer's right."
+  },
+  {
+    "gender": "male",
+    "score": "10",
+    "variant": "01",
+    "spec": "An exceptionally handsome adult male swordsman with dignified presence, bold masculine brows, vivid intelligent eyes, strong harmonious face and a restrained confident expression. Long dark hair in a broad high ponytail tied in wine-red cloth, charcoal and red collar. Near-front, chin slightly lifted."
+  },
+  {
+    "gender": "male",
+    "score": "10",
+    "variant": "03",
+    "spec": "An exceptionally handsome mature male hero with graceful masculine features, thoughtful eyes and a gentle confident smile. Dark hair with a SINGLE BROAD SILVER STREAK gathered in a low knot; pale ivory and deep green collar. Near-front slight turn."
+  },
+  {
+    "gender": "male",
+    "score": "10",
+    "variant": "04",
+    "spec": "An exceptionally handsome charismatic male performer with expressive narrow eyes, a defined but graceful jaw and a mischievous knowing smile. Dark hair slicked into a short wide knot with one large pale round ornament; plum and muted ochre-gold collar. Slight turn left."
+  },
+  {
+    "gender": "male",
+    "score": "08",
+    "variant": "01",
+    "spec": "A very handsome adult male traveler with a broad but harmonious face, warm expressive eyes and a friendly smile, individual not generic. Hair in a low wide knot held by a deep teal band; muted earthy-red and ivory collar. Near-front."
+  },
+  {
+    "gender": "male",
+    "score": "08",
+    "variant": "02",
+    "spec": "A very handsome carefree male musician with lively laughing eyes, a natural open smile and approachable charm. Broad dark hair held by an indigo headband, muted teal collar with rust-red edge. Slightly top-down front view."
+  },
+  {
+    "gender": "male",
+    "score": "08",
+    "variant": "03",
+    "spec": "A very handsome mature male martial artist with a strong square-oval face, composed gaze and subtle smile. Hair in a compact high knot with one simple grey pin; charcoal and rust collar. Near-front, slight low angle."
+  },
+  {
+    "gender": "male",
+    "score": "08",
+    "variant": "04",
+    "spec": "A very handsome elegant male traveler with a refined narrow face, bright intelligent eyes and an amused, confident half-smile. Long dark hair gathered into a broad low braid with a burgundy tie, jade-green and cream collar. Slight turn toward viewer's right."
+  }
+]

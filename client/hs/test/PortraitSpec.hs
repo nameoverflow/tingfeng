@@ -19,6 +19,8 @@ main = do
   assert "odd scores round up" (portraitScoreFile "female" 1 "A" == portraitScoreFile "female" 2 "A")
   assert "score clamps at zero" (portraitScoreFile "male" (-2) "B" == portraitScoreFile "male" 0 "B")
   assert "score clamps at ten" (portraitScoreFile "male" 12 "B" == portraitScoreFile "male" 10 "B")
+  assert "high scores use the updated portrait set" ("beauty-v9-" `T.isPrefixOf` portraitScoreFile "female" 8 "A")
+  assert "middle scores keep the existing portrait set" ("beauty-v8-" `T.isPrefixOf` portraitScoreFile "female" 6 "A")
   assert "trimmed names select the same portrait" (portraitScoreFile "female" 6 " 阿青 " == portraitScoreFile "female" 6 "阿青")
   assert "unknown gender uses the former male-looking low-score fallback" (portraitScoreFile "unknown" 2 "A" == portraitScoreFile "male" 2 "A")
   assert "unknown gender uses the former female-looking high-score fallback" (portraitScoreFile "unknown" 7 "A" == portraitScoreFile "female" 8 "A")
