@@ -1,0 +1,340 @@
+// Native Client Verification Suites (`spec`):
+// 1. Portrait Selection (`PortraitSpec`): deterministic Unicode name hashing, score boundaries, gender fallbacks & 48 PNG assets.
+// 2. Combat Choreography & 2-Bone IK (`BattleSpec`): < 1e-5 contact precision across hand/foot/blade, server duration scaling & multi-hit damage share splitting.
+
+use std.option.{Option, Some, None}
+use std.result.{Result, Ok, Err}
+use std.list.{listLen, listMap}
+use std.str.{intToStr, floatToStr, strStartsWith}
+use sys.fs.{readFile, fileExists}
+use sys.env.{argCount, argAt}
+use sys.io.eprintLn
+use sys.proc.exit
+use prelude.{
+    sin, cos, pi, absFloat, jsRound,
+    optOr, optIsSome, listFilter, listNthOr, listAll
+}
+use ordmap.{mapSize, mapElems, setFromList, setSize, setToAscList}
+use protocol.{CombatResult, ResHit, CombatEvt, MkCombatEvt}
+use pose.{
+    CombatStyle, StyleFist, StyleSword,
+    VisualProfile, ProfileMale, ProfileFemale,
+    allPoseIds, parsePoseLibrary, svgSwordLength
+}
+use catalog.{
+    PinPoint, PinFoot, PinBlade, pinEq,
+    PoseKey, MkPoseKey, ActionCatalog,
+    parseActionCatalog, battleActionFor, isTravelMotion
+}
+use battle.{
+    BattleSide, SidePlayer, SideEnemy,
+    resolveCombatTimeline, reachPointAt, actorOffsetAt, sampleSvgPose
+}
+use state.portraitScoreFile
+
+def ensure(msg: String, ok: Bool): Result Void String =
+    if (ok) Ok(())
+    else Err(msg)
+
+pub def runPortraitSpec(rootDir: String): Result Void String = {
+    let names = ["A", "B", "C", "D"];
+    let scores = [0, 2, 4, 6, 8, 10];
+    let genders = ["female", "male"];
+
+    ensure("odd scores round up", portraitScoreFile("female", 1, "A") == portraitScoreFile("female", 2, "A"))?;
+    ensure("score clamps at zero", portraitScoreFile("male", -2, "B") == portraitScoreFile("male", 0, "B"))?;
+    ensure("score clamps at ten", portraitScoreFile("male", 12, "B") == portraitScoreFile("male", 10, "B"))?;
+    ensure("high scores use the updated portrait set", strStartsWith(portraitScoreFile("female", 8, "A"), "beauty-v9-"))?;
+    ensure("middle scores keep the existing portrait set", strStartsWith(portraitScoreFile("female", 6, "A"), "beauty-v8-"))?;
+    ensure("trimmed names select the same portrait", portraitScoreFile("female", 6, " 阿青 ") == portraitScoreFile("female", 6, "阿青"))?;
+    ensure("unknown gender uses the former male-looking low-score fallback", portraitScoreFile("unknown", 2, "A") == portraitScoreFile("male", 2, "A"))?;
+    ensure("unknown gender uses the former female-looking high-score fallback", portraitScoreFile("unknown", 7, "A") == portraitScoreFile("female", 8, "A"))?;
+
+    let portraitDir =
+        if (fileExists(rootDir + "/client/public/portraits/beauty-v8-female-06-01.png"))
+            rootDir + "/client/public/portraits/"
+        else rootDir + "/public/portraits/";
+
+    let gCur = cellNew(genders);
+    let errOpt: Cell (Option String) = cellNew(None);
+    while (match cellGet(gCur) { Nil -> false, _ -> match cellGet(errOpt) { None -> true, Some(_) -> false } }) {
+        match cellGet(gCur) {
+            Cons(gender, gRest) -> {
+                let sCur = cellNew(scores);
+                while (match cellGet(sCur) { Nil -> false, _ -> match cellGet(errOpt) { None -> true, Some(_) -> false } }) {
+                    match cellGet(sCur) {
+                        Cons(score, sRest) -> {
+                            let ids = setFromList(listMap(names, (nm) -> portraitScoreFile(gender, score, nm)));
+                            if (setSize(ids) != 4) {
+                                cellSet(errOpt, Some("four names cover all four variants (" + gender + ", " + intToStr(score) + ")"))
+                            } else {
+                                let pCur = cellNew(setToAscList(ids));
+                                while (match cellGet(pCur) { Nil -> false, _ -> match cellGet(errOpt) { None -> true, Some(_) -> false } }) {
+                                    match cellGet(pCur) {
+                                        Cons(pid, pRest) -> {
+                                            let fpath = portraitDir + pid + ".png";
+                                            if (!fileExists(fpath)) {
+                                                cellSet(errOpt, Some("missing portrait: " + fpath))
+                                            } else ();
+                                            cellSet(pCur, pRest)
+                                        },
+                                        Nil -> (),
+                                    }
+                                }
+                            };
+                            cellSet(sCur, sRest)
+                        },
+                        Nil -> (),
+                    }
+                };
+                cellSet(gCur, gRest)
+            },
+            Nil -> (),
+        }
+    };
+
+    match cellGet(errOpt) {
+        Some(e) -> Err(e),
+        None -> {
+            printLn("Portrait selection: stable name mapping, score boundaries, fallback and 48 assets passed");
+            Ok(())
+        },
+    }
+}
+
+pub def runBattleSpec(rootDir: String): Result Void String = {
+    let resBase =
+        if (fileExists(rootDir + "/resources/scripts/combat_presentation/svg-poses.json"))
+            rootDir + "/resources/scripts"
+        else rootDir + "/../resources/scripts";
+
+    let poseRaw = readFile(resBase + "/combat_presentation/svg-poses.json")?;
+    let stagingRaw = readFile(resBase + "/combat_presentation/staging.json")?;
+    let fistRaw = readFile(resBase + "/combat_actions/fist.json")?;
+    let swordRaw = readFile(resBase + "/combat_actions/sword.json")?;
+    let effRaw = readFile(resBase + "/combat_actions/effects.json")?;
+
+    let poseLib = parsePoseLibrary(poseRaw)?;
+    let catalog: ActionCatalog = parseActionCatalog(stagingRaw, [fistRaw, swordRaw, effRaw])?;
+
+    let allActs = mapElems(catalog.acActions);
+    let attacks = listFilter(allActs, (a) -> isTravelMotion(a.adActorMotion));
+    ensure("loaded attack actions", listLen(attacks) >= 10)?;
+    printLn(
+        "✓ Loaded " + intToStr(mapSize(catalog.acActions))
+        + " actions & " + intToStr(listLen(allPoseIds(poseLib)))
+        + " SVG poses in Geisha"
+    );
+
+    // 1. Every contact lands fist, foot or blade tip on target within 1e-5
+    let errOpt: Cell (Option String) = cellNew(None);
+    let aCur = cellNew(attacks);
+    while (match cellGet(aCur) { Nil -> false, _ -> match cellGet(errOpt) { None -> true, Some(_) -> false } }) {
+        match cellGet(aCur) {
+            Cons(act, aRest) -> {
+                let ev = MkCombatEvt {
+                    ceKind: "normal",
+                    ceActorName: "行者",
+                    ceTargetName: "守擂人",
+                    ceMsgKind: "script",
+                    ceText: act.adLabel,
+                    ceEffectKind: "",
+                    ceEffectAmount: 0,
+                    ceDamage: Some(18),
+                    ceHeal: None,
+                    ceResult: ResHit,
+                    ceHits: Nil,
+                    ceActionId: act.adId,
+                    ceTags: Nil,
+                    ceLabel: None,
+                    ceDurationMs: Some(act.adDurationMs),
+                    ceStagingOverride: None,
+                };
+                let tl = resolveCombatTimeline(
+                    catalog, ev, 1, SidePlayer, SideEnemy, act.adLabel,
+                    ProfileFemale, ProfileMale, act.adStyle, StyleSword
+                );
+                let pinned = listFilter(tl.tlActor.raPoseKeys, (pk) -> optIsSome(pk.pkPin));
+                let hCur = cellNew(tl.tlHits);
+                let idxCell = cellNew(0);
+                while (match cellGet(hCur) { Nil -> false, _ -> match cellGet(errOpt) { None -> true, Some(_) -> false } }) {
+                    match cellGet(hCur) {
+                        Cons(hit, hRest) -> {
+                            let idx = cellGet(idxCell);
+                            let key = listNthOr(pinned, idx, MkPoseKey {
+                                pkAtMs: 0.0, pkPose: "idle", pkPin: None, pkReach: None, pkContactY: None,
+                            });
+                            let pose = sampleSvgPose(poseLib, Some(tl), SidePlayer, hit.rhAtMs, act.adStyle, "idle", false);
+                            let pin = reachPointAt(tl, hit.rhAtMs);
+                            let (lx, ly) = if (pinEq(pin, PinFoot)) pose.spFoot else pose.spHand;
+                            let bladeLen = if (pinEq(pin, PinBlade)) svgSwordLength() else 0.0;
+                            let (ox, oy, _) = actorOffsetAt(tl, hit.rhAtMs);
+                            let wx = ox + lx + bladeLen * cos(pose.spBlade * pi() / 180.0);
+                            let wy = oy + ly + bladeLen * sin(pose.spBlade * pi() / 180.0);
+                            let expX = optOr(key.pkReach, tl.tlChoreography.chReach);
+                            let expY = optOr(key.pkContactY, tl.tlChoreography.chContactY) - 176.0;
+                            if (absFloat(wx - expX) >= 0.00001) {
+                                cellSet(errOpt, Some(act.adId + " hit " + intToStr(idx) + " reach diff=" + floatToStr(absFloat(wx - expX))))
+                            } else if (absFloat(wy - expY) >= 0.00001) {
+                                cellSet(errOpt, Some(act.adId + " hit " + intToStr(idx) + " height diff=" + floatToStr(absFloat(wy - expY))))
+                            } else ();
+                            cellSet(idxCell, idx + 1);
+                            cellSet(hCur, hRest)
+                        },
+                        Nil -> (),
+                    }
+                };
+                cellSet(aCur, aRest)
+            },
+            Nil -> (),
+        }
+    };
+    match cellGet(errOpt) {
+        Some(e) -> returnErr(e)?,
+        None -> (),
+    };
+    printLn("✓ Every contact lands fist, foot or blade tip on target (< 1e-5)");
+
+    // 2. Server durations scale presentation and dash cleanly
+    let aCur2 = cellNew(attacks);
+    while (match cellGet(aCur2) { Nil -> false, _ -> match cellGet(errOpt) { None -> true, Some(_) -> false } }) {
+        match cellGet(aCur2) {
+            Cons(act, aRest) -> {
+                let fCur = cellNew([0.6, 1.8]);
+                while (match cellGet(fCur) { Nil -> false, _ -> match cellGet(errOpt) { None -> true, Some(_) -> false } }) {
+                    match cellGet(fCur) {
+                        Cons(factor, fRest) -> {
+                            let scaledDur = intToFloat(jsRound(act.adDurationMs * factor));
+                            let ev = MkCombatEvt {
+                                ceKind: "normal",
+                                ceActorName: "行者",
+                                ceTargetName: "守擂人",
+                                ceMsgKind: "script",
+                                ceText: act.adLabel,
+                                ceEffectKind: "",
+                                ceEffectAmount: 0,
+                                ceDamage: Some(18),
+                                ceHeal: None,
+                                ceResult: ResHit,
+                                ceHits: Nil,
+                                ceActionId: act.adId,
+                                ceTags: Nil,
+                                ceLabel: None,
+                                ceDurationMs: Some(scaledDur),
+                                ceStagingOverride: None,
+                            };
+                            let tl = resolveCombatTimeline(
+                                catalog, ev, 1, SidePlayer, SideEnemy, act.adLabel,
+                                ProfileFemale, ProfileMale, act.adStyle, StyleSword
+                            );
+                            let delayMs = tl.tlActor.raActionDelayMs;
+                            let hitsInside = listAll(tl.tlHits, (h) -> h.rhAtMs > delayMs && h.rhAtMs < tl.tlDurationMs);
+                            if (absFloat((tl.tlDurationMs - delayMs) - scaledDur) >= 0.000001) {
+                                cellSet(errOpt, Some("duration scaling failed for " + act.adId))
+                            } else if (delayMs <= 0.0) {
+                                cellSet(errOpt, Some("positive dash delay failed for " + act.adId))
+                            } else if (!hitsInside) {
+                                cellSet(errOpt, Some("hits inside window failed for " + act.adId))
+                            } else ();
+                            cellSet(fCur, fRest)
+                        },
+                        Nil -> (),
+                    }
+                };
+                cellSet(aCur2, aRest)
+            },
+            Nil -> (),
+        }
+    };
+    match cellGet(errOpt) {
+        Some(e) -> returnErr(e)?,
+        None -> (),
+    };
+    printLn("✓ Server durations scale presentation and dash cleanly");
+
+    // 3. Multi-hit damage splits by share and sums to server total
+    let comboAct = battleActionFor(catalog, "rig.fist.combo_a", StyleFist);
+    let comboEv = MkCombatEvt {
+        ceKind: "normal",
+        ceActorName: "行者",
+        ceTargetName: "守擂人",
+        ceMsgKind: "script",
+        ceText: comboAct.adLabel,
+        ceEffectKind: "",
+        ceEffectAmount: 0,
+        ceDamage: Some(18),
+        ceHeal: None,
+        ceResult: ResHit,
+        ceHits: Nil,
+        ceActionId: "rig.fist.combo_a",
+        ceTags: Nil,
+        ceLabel: None,
+        ceDurationMs: None,
+        ceStagingOverride: None,
+    };
+    let comboTl = resolveCombatTimeline(
+        catalog, comboEv, 1, SidePlayer, SideEnemy, "连环三捶",
+        ProfileFemale, ProfileMale, StyleFist, StyleSword
+    );
+    ensure("combo_a has 3 hits", listLen(comboTl.tlHits) == 3)?;
+    match comboTl.tlHits {
+        Cons(h0, Cons(h1, Cons(h2, Nil))) -> {
+            let dmgsOk = match (h0.rhDamage, h1.rhDamage, h2.rhDamage) {
+                (Some(5), Some(4), Some(9)) -> true,
+                _ -> false,
+            };
+            let txtsOk = h0.rhFloatText == "-5" && h1.rhFloatText == "-4" && h2.rhFloatText == "-9";
+            ensure("combo_a share split [5,4,9]", dmgsOk)?;
+            ensure("combo_a float texts", txtsOk)?
+        },
+        _ -> returnErr("unexpected hit count for combo_a")?,
+    };
+    printLn("✓ Multi-hit damage splits by share ([5, 4, 9]) and sums to server total");
+    Ok(())
+}
+
+def returnErr(msg: String): Result Void String = Err(msg)
+
+pub def runClientCli(): Void = {
+    let argc = argCount();
+    let mode = cellNew("all");
+    let rootDir = cellNew(".");
+    let i = cellNew(1);
+    while (cellGet(i) < argc) {
+        let a = argAt(cellGet(i));
+        if (a == "--portraits") {
+            cellSet(mode, "portraits");
+            cellSet(i, cellGet(i) + 1)
+        } else if (a == "--battle") {
+            cellSet(mode, "battle");
+            cellSet(i, cellGet(i) + 1)
+        } else if (a == "--all") {
+            cellSet(mode, "all");
+            cellSet(i, cellGet(i) + 1)
+        } else if (a == "--root" && cellGet(i) + 1 < argc) {
+            cellSet(rootDir, argAt(cellGet(i) + 1));
+            cellSet(i, cellGet(i) + 2)
+        } else {
+            cellSet(i, cellGet(i) + 1)
+        }
+    };
+
+    let m = cellGet(mode);
+    let root = cellGet(rootDir);
+    let res =
+        if (m == "portraits") runPortraitSpec(root)
+        else if (m == "battle") runBattleSpec(root)
+        else {
+            match runPortraitSpec(root) {
+                Err(e) -> Err(e),
+                Ok(_) -> runBattleSpec(root),
+            }
+        };
+    match res {
+        Ok(_) -> (),
+        Err(msg) -> {
+            eprintLn("✗ FAILED: " + msg);
+            exit(1)
+        },
+    }
+}

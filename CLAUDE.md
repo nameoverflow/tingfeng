@@ -4,11 +4,11 @@ This file provides guidance when working with code in this repository.
 
 ## Project Overview
 
-**听风录（Tingfeng）** is a Wuxia MUD with a **pure-Geisha WebSocket backend** (`server/src/`) and a **Haskell GHC Wasm Canvas2D web client** (`client/hs/`).
+**听风录（Tingfeng）** is a full-stack pure-Geisha Wuxia MUD with a **pure-Geisha WebSocket backend** (`server/src/`) and a **pure-Geisha Wasm Canvas2D web client** (`client/gsa/`).
 
 **Tech Stack:**
 - **Backend (`server/src/*.gsa`)**: Self-hosted Geisha (LLVM 20 native compilation), built on `std.control` HKT hierarchy (`Functor -> Applicative -> Monad`), multi-parameter `Concept`s with functional dependencies (`MonadState`, `MonadReader`, `MonadError`, `MonadWriter`, `MonadRng`), symmetric combat `Lens`, persistent AVL `OrdMap`/`OrdSet`, native indentation-aware YAML -> `std.codec.Value` parser + combinator `Decoder`/`Encode` pipelines, and sequential `std.actor.Actor` session/outbox concurrency.
-- **Client (`client/hs/`)**: Haskell GHC Wasm Canvas2D UI + animation presentation.
+- **Client (`client/gsa/src/*.gsa`)**: Self-hosted Geisha `--target wasm32` (`tingfeng.wasm` + freestanding segmented Mark-Sweep `wasm_rt.o`), streaming Canvas2D command tape UI & ink-wash silhouette combat choreographer (`2-Bone IK`, hit-stop, delayed presentation HP commit, and `/battle-lab.html` stage).
 - **Content (`resources/scripts/`)**: Data-driven YAML/JSON maps, NPCs, martial arts, items, effects, combat action timings, and quests.
 - **Persistence (`saves/`)**: PlayerSave v6 JSON files.
 
@@ -27,9 +27,12 @@ make run
 # One-command local dev mode (MUD_DEV_MODE=1 server + client dev server)
 make dev-test
 
-# Client checks & tests
+# Client checks, Wasm bundle & tests
 npm --prefix client run check
+npm --prefix client run build
+npm --prefix client run test:portraits
 npm --prefix client run test:battle
+npm --prefix client run test:battle:browser
 ```
 
 ## Backend Module Layout (`server/src/`)
@@ -51,3 +54,18 @@ npm --prefix client run test:battle
 - `logging.gsa` — Structured `$MUD_LOG_LEVEL` logger
 - `hub.gsa` — `Actor HubState` coordinator, per-client `Actor WsConn` FIFO outbox, and `1000ms` / `50ms` monotonic tickers
 - `spec.gsa` — Full gameplay, combat, progression, story, persistence & WebSocket loopback test suite
+
+## Frontend Module Layout (`client/gsa/src/`)
+
+- `mod.gsa` — 18 `tf_*` WebAssembly exports, browser host `extern`s, global `Cell` GC roots, and native CLI spec entry
+- `prelude.gsa` — `std.control` HKT re-exports, `Ord`/`Semigroup`/`Monoid`/`MonadWriter`, IEEE-754 math, UTF-8/CJK width & `StringBuf` tape formatters
+- `ordmap.gsa` — Persistent AVL `OrdMap k v` & `OrdSet k`
+- `i18n.gsa` — Bilingual (`Zh`/`En`) UI dictionary, martial art rank titles, and system/error message formatting
+- `protocol.gsa` — Wire codecs (`std.json` + `std.codec`) 100% compatible with `server/src/message.gsa`
+- `pose.gsa` — 41 SVG silhouette poses, rig inheritance/blending, 2-Bone analytic IK, and organic Catmull-Rom/Bezier rib/limb geometry
+- `catalog.gsa` — `combat_actions/*.json` & `staging.json` preset inheritance and choreography loading
+- `battle.gsa` — Deterministic combat timeline resolver, IK contact pinning (`PinHand`/`PinFoot`/`PinBlade`), hit-stop clock, and ink particle bursts
+- `state.gsa` — Pure `ClientM` (`MonadState ClientModel` + `MonadWriter (List ClientCmd)`) state machine across 12 cohesive domain sub-records
+- `uicanvas.gsa` — Streaming O(1) `StringBuf` full-canvas Song-dynasty Xuan-paper UI layout & hitbox collector
+- `render.gsa` — Single-pass backdrop, cartographic map stage, ink-wash combat stage, and `/pose-sheet.html` assembler
+- `spec.gsa` — Native portrait & combat IK/timeline/share-split verification suites

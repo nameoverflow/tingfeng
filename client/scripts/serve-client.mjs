@@ -8,7 +8,7 @@ import crypto from "node:crypto";
 
 const CLIENT_DIR = path.resolve(import.meta.dirname, "..");
 const REPO_ROOT = path.resolve(CLIENT_DIR, "..");
-const PUBLIC_DIR = fs.existsSync(path.join(CLIENT_DIR, "dist/wasm/tingfeng-hs.wasm"))
+const PUBLIC_DIR = fs.existsSync(path.join(CLIENT_DIR, "dist/wasm/tingfeng.wasm"))
   ? path.join(CLIENT_DIR, "dist")
   : path.join(CLIENT_DIR, "public");
 
@@ -214,5 +214,5 @@ server.on("upgrade", (req, clientSocket, head) => {
 });
 
 server.listen(portArg, "127.0.0.1", () => {
-  console.log(`Tingfeng Pure-Haskell Wasm client listening on http://127.0.0.1:${portArg}`);
+  console.log(`Tingfeng Pure-Geisha Wasm client listening on http://127.0.0.1:${portArg}`);
 });

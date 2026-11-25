@@ -12,7 +12,6 @@
     <canvas id="gl-stage" class="stage-canvas"></canvas>
   </div>
   <div id="ui-root" style="display:none;"></div>
-  <script>globalThis.setImmediate = (fn, ...args) => queueMicrotask(() => fn(...args));</script>
   <script type="module" src="/app.js"></script>
 </body>
 </html>

@@ -1,6 +1,6 @@
 # 听风录（Tingfeng）
 
-《听风录》是一款以 **Geisha 服务端**与 **Haskell Canvas2D Wasm 网页客户端**构建的写实武侠文字 MUD。
+《听风录》是一款前后端全栈采用 **Geisha** 构建的写实武侠文字 MUD（**Geisha 原生服务端** + **Geisha WebAssembly Canvas2D 网页客户端**）。
 
 The project has a playable local flow: WebSocket login, room movement through a clickable map, NPC popup interactions, multi-chapter story lines, AP/Qi combat, martial arts progression, item rewards, manual-based martial art learning, and JSON player saves.
 
@@ -9,7 +9,7 @@ The project has a playable local flow: WebSocket login, room movement through a 
 - Pure Geisha backend (`server/src/*.gsa` -> native LLVM 20 binary `server/build/tingfeng-server`)
 - WebSocket server on `127.0.0.1:9160`
 - YAML/JSON content under `resources/scripts/`
-- Haskell GHC Wasm Canvas2D client under `client/hs/`
+- Pure Geisha Wasm Canvas2D client under `client/gsa/` (`client/public/wasm/tingfeng.wasm`)
 - JSON player saves under `saves/`
 
 ## Run

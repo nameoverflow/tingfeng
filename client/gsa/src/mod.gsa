@@ -1,0 +1,423 @@
+// Tingfeng (《听风录》) Pure-Geisha Wasm Client Entry Point (`client/gsa/src/mod.gsa`).
+//
+// Exports 18 synchronous WebAssembly entry points (`tf_*`) matching the thin Canvas2D
+// & WebSocket host bridge in `client/public/app.js`, plus a native `--portraits` / `--battle`
+// spec runner when compiled to native code.
+
+mod prelude
+mod ordmap
+mod i18n
+mod protocol
+mod pose
+mod catalog
+mod battle
+mod state
+mod uicanvas
+mod render
+mod spec
+
+use std.option.{Option, Some, None}
+use std.result.{Ok, Err}
+use sys.env.argCount
+use prelude.{minFloat, maxFloat, utf8Trim}
+use protocol.{
+    CreationChoice,
+    encodeLogin, encodeRequestCreationConfig, decodeServerMsg
+}
+use pose.parsePoseLibrary
+use catalog.parseActionCatalog
+use state.{
+    AppPage, PageGame, PageBattleLab, PagePoseSheet, pageEq,
+    ClientCmd, CmdSendWs, CmdConnectWs, CmdOpenConfigWs, CmdSetCursor,
+    CmdPlaySfx, CmdSaveLocal, CmdFocusInput, CmdBlurInput,
+    ViewportState, MkViewportState, AuthState, MkAuthState,
+    WorldView, MkWorldView, ScrollHitState, MkScrollHitState,
+    ClientModel, withVp, withAuth, withWorld, withScroll, markDirty, clearDirty,
+    initClientModel, stepClientFrame, applyServerMessage, setDocumentHidden,
+    panCameraBy, zoomCameraBy, handlePointerMove, handlePointerClick,
+    handleDragAt, handleScrollAt, handleTextInput, handleTextSubmit,
+    handleFocusInputId, handleBlurInput, handleKeyDown, handleUiAction,
+    handleLabCommand, buildLabStateJson
+}
+use render.buildFrameBatch
+use spec.runClientCli
+
+// ============================================================================
+// Synchronous Browser Host Imports (`env.host_*`)
+// ============================================================================
+
+extern "host_now_ms" def hostNowMs(): Float
+extern "host_submit_frame" def hostSubmitFrame(batch: String): Void
+extern "host_sync_lab_state" def hostSyncLabState(json: String): Void
+extern "host_send_ws" def hostSendWs(payload: String): Void
+extern "host_connect_ws" def hostConnectWs(mode: String, user: String, pass: String): Void
+extern "host_set_cursor" def hostSetCursor(cur: String): Void
+extern "host_play_sfx" def hostPlaySfx(kind: String): Void
+extern "host_save_local" def hostSaveLocal(k: String, v: String): Void
+extern "host_focus_input" def hostFocusInput(inpId: String, val: String, x: Float, y: Float, w: Float, h: Float): Void
+extern "host_blur_input" def hostBlurInput(): Void
+
+// ============================================================================
+// Persistent Global Roots (Registered automatically with `wasm_rt` Mark-Sweep GC)
+// ============================================================================
+
+def globalModelRef: Cell (Option ClientModel) = cellNew(None)
+def pendingCreationRef: Cell (Option CreationChoice) = cellNew(None)
+def activeWsModeRef: Cell String = cellNew("")
+
+def runCmds(cmds: List ClientCmd): Void = {
+    let cur = cellNew(cmds);
+    while (match cellGet(cur) { Nil -> false, _ -> true }) {
+        match cellGet(cur) {
+            Cons(cmd, rest) -> {
+                match cmd {
+                    CmdSendWs(payload) -> hostSendWs(payload),
+                    CmdOpenConfigWs -> hostConnectWs("config_only", "", ""),
+                    CmdConnectWs(u, p, mChoice) -> {
+                        cellSet(pendingCreationRef, mChoice);
+                        let modeStr = match mChoice {
+                            None -> "login",
+                            Some(_) -> "create",
+                        };
+                        hostConnectWs(modeStr, u, p)
+                    },
+                    CmdSetCursor(curStr) -> hostSetCursor(curStr),
+                    CmdPlaySfx(sfx) -> hostPlaySfx(sfx),
+                    CmdSaveLocal(k, v) -> hostSaveLocal(k, v),
+                    CmdFocusInput(inpId, valStr, x, y, w, h) -> hostFocusInput(inpId, valStr, x, y, w, h),
+                    CmdBlurInput -> hostBlurInput(),
+                };
+                cellSet(cur, rest)
+            },
+            Nil -> (),
+        }
+    }
+}
+
+def flushState(m: ClientModel): ClientModel = {
+    hostSyncLabState(buildLabStateJson(m));
+    clearDirty(m)
+}
+
+// ============================================================================
+// Exported WebAssembly Entry Points (`tf_*`)
+// ============================================================================
+
+pub def tf_init_app(
+    pageStr: String,
+    poseStr: String,
+    stgStr: String,
+    fistStr: String,
+    swordStr: String,
+    effStr: String,
+    w: Float,
+    h: Float,
+    redInt: Int
+): Void = {
+    let page = match pageStr {
+        "lab" -> PageBattleLab,
+        "poses" -> PagePoseSheet,
+        _ -> PageGame,
+    };
+    match parsePoseLibrary(poseStr) {
+        Err(err) -> printLn("PoseLibrary error: " + err),
+        Ok(poseLib) -> match parseActionCatalog(stgStr, [fistStr, swordStr, effStr]) {
+            Err(err) -> printLn("ActionCatalog error: " + err),
+            Ok(cat) -> {
+                let m0 = initClientModel(page, poseLib, cat, w, h, redInt != 0);
+                let (m1, cmds) =
+                    if (pageEq(page, PageBattleLab))
+                        handleLabCommand("seed", "female", "male", "", 0.0, m0)
+                    else (m0, Nil);
+                runCmds(cmds);
+                let m2 = flushState(m1);
+                cellSet(globalModelRef, Some(m2))
+            },
+        },
+    }
+}
+
+pub def tf_step_frame(dtMs: Float, w: Float, h: Float, redInt: Int): Void =
+    match cellGet(globalModelRef) {
+        None -> (),
+        Some(m0) -> {
+            let t0 = hostNowMs();
+            let vp0 = m0.cmVp;
+            let mRed = withVp(m0, MkViewportState {
+                vpPage: vp0.vpPage,
+                vpLocale: vp0.vpLocale,
+                vpReducedMotion: redInt != 0,
+                vpDocHidden: vp0.vpDocHidden,
+                vpSoundOn: vp0.vpSoundOn,
+                vpLookStyle: vp0.vpLookStyle,
+                vpWidth: vp0.vpWidth,
+                vpHeight: vp0.vpHeight,
+                vpClockMs: vp0.vpClockMs,
+                vpLastSyncTickMs: vp0.vpLastSyncTickMs,
+                vpWasmStepMs: vp0.vpWasmStepMs,
+                vpDrawCmdCount: vp0.vpDrawCmdCount,
+            });
+            let (m1, cmds) = stepClientFrame(dtMs, w, h, mRed);
+            let fb = buildFrameBatch(m1);
+            let t1 = hostNowMs();
+            let elapsed = maxFloat(0.03, t1 - t0);
+            let vp1 = m1.cmVp;
+            let smoothMs = vp1.vpWasmStepMs * 0.88 + elapsed * 0.12;
+            let sh1 = m1.cmScroll;
+            let nextLogScroll =
+                if (sh1.shLogStickBottom) fb.fbLogMaxScroll
+                else minFloat(fb.fbLogMaxScroll, sh1.shLogScroll);
+            let m2 = withScroll(
+                withVp(m1, MkViewportState {
+                    vpPage: vp1.vpPage,
+                    vpLocale: vp1.vpLocale,
+                    vpReducedMotion: vp1.vpReducedMotion,
+                    vpDocHidden: vp1.vpDocHidden,
+                    vpSoundOn: vp1.vpSoundOn,
+                    vpLookStyle: vp1.vpLookStyle,
+                    vpWidth: vp1.vpWidth,
+                    vpHeight: vp1.vpHeight,
+                    vpClockMs: vp1.vpClockMs,
+                    vpLastSyncTickMs: vp1.vpLastSyncTickMs,
+                    vpWasmStepMs: smoothMs,
+                    vpDrawCmdCount: fb.fbCmdCount,
+                }),
+                MkScrollHitState {
+                    shLogScroll: nextLogScroll,
+                    shLogMaxScroll: fb.fbLogMaxScroll,
+                    shLogStickBottom: sh1.shLogStickBottom,
+                    shDrawerScroll: sh1.shDrawerScroll,
+                    shDrawerMaxScroll: fb.fbDrawerMaxScroll,
+                    shOnboardScroll: sh1.shOnboardScroll,
+                    shOnboardMaxScroll: fb.fbOnboardMaxScroll,
+                    shNpcScroll: sh1.shNpcScroll,
+                    shNpcMaxScroll: fb.fbNpcMaxScroll,
+                    shHovered: sh1.shHovered,
+                    shHitboxes: fb.fbHits,
+                    shScrollZones: fb.fbScrollZones,
+                }
+            );
+            hostSubmitFrame(fb.fbText);
+            runCmds(cmds);
+            let m3 = flushState(m2);
+            cellSet(globalModelRef, Some(m3))
+        },
+    }
+
+pub def tf_on_ws_open(mode: String, userRaw: String, pass: String): Void = {
+    let u = utf8Trim(userRaw);
+    cellSet(activeWsModeRef, mode);
+    if (mode == "config_only") {
+        hostSendWs(encodeRequestCreationConfig())
+    } else {
+        let mChoice = cellGet(pendingCreationRef);
+        cellSet(pendingCreationRef, None);
+        hostSendWs(encodeLogin(u, pass, mChoice));
+        match cellGet(globalModelRef) {
+            None -> (),
+            Some(m0) -> {
+                let au0 = m0.cmAuth;
+                let wv0 = m0.cmWorld;
+                let m1 = markDirty(withWorld(
+                    withAuth(m0, MkAuthState {
+                        auConnected: true,
+                        auConnecting: false,
+                        auUsername: u,
+                        auLastError: au0.auLastError,
+                        auLoginMode: au0.auLoginMode,
+                        auCreateStep: au0.auCreateStep,
+                        auCreationCfg: au0.auCreationCfg,
+                        auCreateChoice: au0.auCreateChoice,
+                        auDevReset: au0.auDevReset,
+                    }),
+                    MkWorldView {
+                        wvRoomName: wv0.wvRoomName,
+                        wvRoomDesc: wv0.wvRoomDesc,
+                        wvRoomChars: wv0.wvRoomChars,
+                        wvRoomExits: wv0.wvRoomExits,
+                        wvMapOverview: wv0.wvMapOverview,
+                        wvMapCache: wv0.wvMapCache,
+                        wvRequestedInit: false,
+                        wvStoryActive: wv0.wvStoryActive,
+                        wvStoryQueue: wv0.wvStoryQueue,
+                        wvStoryDelayRemMs: wv0.wvStoryDelayRemMs,
+                        wvTransitionBanner: wv0.wvTransitionBanner,
+                    }
+                ));
+                let m2 = flushState(m1);
+                cellSet(globalModelRef, Some(m2))
+            },
+        }
+    }
+}
+
+pub def tf_on_ws_message(raw: String): Void =
+    match cellGet(globalModelRef) {
+        None -> (),
+        Some(m0) -> match decodeServerMsg(raw) {
+            Err(_) -> (),
+            Ok(sm) -> {
+                let (m1, cmds) = applyServerMessage(sm, m0);
+                runCmds(cmds);
+                let m2 = flushState(m1);
+                cellSet(globalModelRef, Some(m2))
+            },
+        },
+    }
+
+pub def tf_on_ws_close(): Void = {
+    let lastMode = cellGet(activeWsModeRef);
+    match cellGet(globalModelRef) {
+        None -> (),
+        Some(m0) -> {
+            if (lastMode != "config_only" && m0.cmWorld.wvRoomName != "竹间试招") {
+                let au0 = m0.cmAuth;
+                let errMsg =
+                    if (au0.auConnecting || !au0.auConnected)
+                        Some("无法连接游戏服务端，请稍后重试。")
+                    else au0.auLastError;
+                let m1 = markDirty(withAuth(m0, MkAuthState {
+                    auConnected: false,
+                    auConnecting: false,
+                    auUsername: au0.auUsername,
+                    auLastError: errMsg,
+                    auLoginMode: au0.auLoginMode,
+                    auCreateStep: au0.auCreateStep,
+                    auCreationCfg: au0.auCreationCfg,
+                    auCreateChoice: au0.auCreateChoice,
+                    auDevReset: au0.auDevReset,
+                }));
+                let m2 = flushState(m1);
+                cellSet(globalModelRef, Some(m2))
+            } else ()
+        },
+    }
+}
+
+pub def tf_set_hidden(hiddenInt: Int): Void =
+    match cellGet(globalModelRef) {
+        None -> (),
+        Some(m0) -> {
+            let m1 = setDocumentHidden(hiddenInt != 0, m0);
+            let m2 = flushState(m1);
+            cellSet(globalModelRef, Some(m2))
+        },
+    }
+
+pub def tf_pointer_move(x: Float, y: Float): Void =
+    match cellGet(globalModelRef) {
+        None -> (),
+        Some(m0) -> {
+            let (m1, cmds) = handlePointerMove(x, y, m0);
+            runCmds(cmds);
+            cellSet(globalModelRef, Some(m1))
+        },
+    }
+
+pub def tf_pointer_click(x: Float, y: Float): Void =
+    match cellGet(globalModelRef) {
+        None -> (),
+        Some(m0) -> {
+            let (m1, cmds) = handlePointerClick(x, y, m0);
+            runCmds(cmds);
+            let m2 = flushState(m1);
+            cellSet(globalModelRef, Some(m2))
+        },
+    }
+
+pub def tf_pan_zoom(dx: Float, dy: Float, zFactor: Float): Void =
+    match cellGet(globalModelRef) {
+        None -> (),
+        Some(m0) -> {
+            let m1 = zoomCameraBy(zFactor, panCameraBy(dx, dy, m0));
+            let m2 = flushState(m1);
+            cellSet(globalModelRef, Some(m2))
+        },
+    }
+
+pub def tf_drag_at(x: Float, y: Float, dx: Float, dy: Float): Void =
+    match cellGet(globalModelRef) {
+        None -> (),
+        Some(m0) -> {
+            let m1 = handleDragAt(x, y, dx, dy, m0);
+            cellSet(globalModelRef, Some(m1))
+        },
+    }
+
+pub def tf_scroll_at(x: Float, y: Float, deltaY: Float): Void =
+    match cellGet(globalModelRef) {
+        None -> (),
+        Some(m0) -> {
+            let m1 = handleScrollAt(x, y, deltaY, m0);
+            cellSet(globalModelRef, Some(m1))
+        },
+    }
+
+pub def tf_text_input(inpId: String, valStr: String): Void =
+    match cellGet(globalModelRef) {
+        None -> (),
+        Some(m0) -> {
+            let m1 = handleTextInput(inpId, valStr, m0);
+            cellSet(globalModelRef, Some(m1))
+        },
+    }
+
+pub def tf_text_submit(inpId: String): Void =
+    match cellGet(globalModelRef) {
+        None -> (),
+        Some(m0) -> {
+            let (m1, cmds) = handleTextSubmit(inpId, m0);
+            runCmds(cmds);
+            let m2 = flushState(m1);
+            cellSet(globalModelRef, Some(m2))
+        },
+    }
+
+pub def tf_focus_input_id(inpId: String): Void =
+    match cellGet(globalModelRef) {
+        None -> (),
+        Some(m0) -> cellSet(globalModelRef, Some(handleFocusInputId(inpId, m0))),
+    }
+
+pub def tf_blur_input(): Void =
+    match cellGet(globalModelRef) {
+        None -> (),
+        Some(m0) -> cellSet(globalModelRef, Some(handleBlurInput(m0))),
+    }
+
+pub def tf_key_down(keyStr: String): Void =
+    match cellGet(globalModelRef) {
+        None -> (),
+        Some(m0) -> {
+            let (m1, cmds) = handleKeyDown(keyStr, m0);
+            runCmds(cmds);
+            let m2 = flushState(m1);
+            cellSet(globalModelRef, Some(m2))
+        },
+    }
+
+pub def tf_ui_action(kind: String, a1: String, a2: String): Void =
+    match cellGet(globalModelRef) {
+        None -> (),
+        Some(m0) -> {
+            let (m1, cmds) = handleUiAction(kind, a1, a2, m0);
+            runCmds(cmds);
+            let m2 = flushState(m1);
+            cellSet(globalModelRef, Some(m2))
+        },
+    }
+
+pub def tf_lab_cmd(cmd: String, a1: String, a2: String, a3: String, numArg: Float): Void =
+    match cellGet(globalModelRef) {
+        None -> (),
+        Some(m0) -> {
+            let (m1, cmds) = handleLabCommand(cmd, a1, a2, a3, numArg, m0);
+            runCmds(cmds);
+            let m2 = flushState(m1);
+            cellSet(globalModelRef, Some(m2))
+        },
+    }
+
+def main(): Void =
+    if (argCount() > 1) runClientCli()
+    else ()

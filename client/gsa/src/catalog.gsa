@@ -1,0 +1,531 @@
+// Combat Action Manifests (`fist.json`, `sword.json`, `effects.json`) & Staging Presets (`catalog`).
+
+use std.option.{Option, Some, None}
+use std.result.{Result, Ok, Err}
+use std.list.{listRev, listMap}
+use std.codec.{Value, VObj}
+use std.json.parse
+use prelude.{listIsEmpty, listFilterMap, listConcatMap}
+use ordmap.{OrdMap, mapEmpty, mapSingleton, mapLookup, mapLookupOr, mapKeys, mapFromList}
+use protocol.{
+    CombatResult, ResHit, ResDodge, ResParry, ResEffect,
+    vLookup, fStr, fStrOr, fIntOr, fFloat, fFloatOr, fArr, fStrList
+}
+use pose.{CombatStyle, StyleFist, StyleSword, parseCombatStyle}
+
+pub data PinPoint {
+    PinHand,
+    PinFoot,
+    PinBlade,
+}
+
+pub def pinEq(a: PinPoint, b: PinPoint): Bool = match (a, b) {
+    (PinHand, PinHand) -> true,
+    (PinFoot, PinFoot) -> true,
+    (PinBlade, PinBlade) -> true,
+    _ -> false,
+}
+
+pub def pinPointText(p: PinPoint): String = match p {
+    PinHand -> "hand",
+    PinFoot -> "foot",
+    PinBlade -> "blade",
+}
+
+def parsePin(raw: String): Option PinPoint = match raw {
+    "hand" -> Some(PinHand),
+    "foot" -> Some(PinFoot),
+    "blade" -> Some(PinBlade),
+    _ -> None,
+}
+
+pub data TargetReaction {
+    ReactHit,
+    ReactDodge,
+    ReactParry,
+    ReactEffect,
+    ReactNone,
+}
+
+pub def reactEq(a: TargetReaction, b: TargetReaction): Bool = match (a, b) {
+    (ReactHit, ReactHit) -> true,
+    (ReactDodge, ReactDodge) -> true,
+    (ReactParry, ReactParry) -> true,
+    (ReactEffect, ReactEffect) -> true,
+    (ReactNone, ReactNone) -> true,
+    _ -> false,
+}
+
+def parseReaction(raw: String): TargetReaction = match raw {
+    "hit" -> ReactHit,
+    "dodge" -> ReactDodge,
+    "parry" -> ReactParry,
+    "effect" -> ReactEffect,
+    _ -> ReactNone,
+}
+
+pub data FrameHold {
+    MkFrameHold { fhFrameId: String, fhHoldMs: Float },
+}
+
+pub data PoseKey {
+    MkPoseKey {
+        pkAtMs: Float,
+        pkPose: String,
+        pkPin: Option PinPoint,
+        pkReach: Option Float,
+        pkContactY: Option Float,
+    },
+}
+
+pub data OffsetEase {
+    EaseCut,
+    EaseLinear,
+    EaseOut,
+}
+
+pub def easeEq(a: OffsetEase, b: OffsetEase): Bool = match (a, b) {
+    (EaseCut, EaseCut) -> true,
+    (EaseLinear, EaseLinear) -> true,
+    (EaseOut, EaseOut) -> true,
+    _ -> false,
+}
+
+pub data OffsetKey {
+    MkOffsetKey {
+        okAtMs: Float,
+        okX: Float,
+        okY: Float,
+        okAngle: Float,
+        okEase: OffsetEase,
+    },
+}
+
+pub data HitDef {
+    MkHitDef {
+        hdAtMs: Float,
+        hdHitStopMs: Float,
+        hdShare: Float,
+        hdStaging: Option Value,
+    },
+}
+
+pub data ApproachDef {
+    MkApproachDef {
+        apPose: String,
+        apDurationMs: Float,
+        apLift: Float,
+    },
+}
+
+pub data KeyPosesDef {
+    MkKeyPosesDef {
+        kpPrepare: Option String,
+        kpContact: Option String,
+        kpFinish: Option String,
+        kpRetreat: Option String,
+        kpReachWith: Option PinPoint,
+    },
+}
+
+pub data Choreography {
+    MkChoreography {
+        chLaunchAtMs: Float,
+        chHitStopMs: Float,
+        chRecoverAtMs: Float,
+        chRestAtMs: Float,
+        chReach: Float,
+        chContactY: Float,
+        chWeight: String,
+    },
+}
+
+pub data CameraStaging {
+    MkCameraStaging {
+        csKick: Float,
+        csRebound: Float,
+        csLift: Float,
+        csZoom: Float,
+    },
+}
+
+pub data TrailStaging {
+    MkTrailStaging { tsLeadMs: Float, tsFadeMs: Float },
+}
+
+pub data ReactionLook {
+    MkReactionLook {
+        rlPush: Float,
+        rlTilt: Float,
+        rlLift: Float,
+        rlSnap: Float,
+        rlLeadMs: Float,
+        rlOnsetMs: Float,
+        rlGhost: Float,
+        rlHop: Float,
+        rlStandoff: Float,
+        rlPose: Option String,
+    },
+}
+
+pub data StagingProfile {
+    MkStagingProfile {
+        spForce: Float,
+        spCamera: CameraStaging,
+        spShade: Float,
+        spTilt: Float,
+        spFlash: Float,
+        spFallMs: Float,
+        spTrail: TrailStaging,
+        spReactHit: ReactionLook,
+        spReactDodge: ReactionLook,
+        spReactParry: ReactionLook,
+    },
+}
+
+pub data ActionDef {
+    MkActionDef {
+        adId: String,
+        adLabel: String,
+        adStyle: CombatStyle,
+        adFrames: List FrameHold,
+        adImpactFrame: Int,
+        adDurationMs: Float,
+        adTags: List String,
+        adActorMotion: String,
+        adKeyPoses: Option KeyPosesDef,
+        adApproach: Option ApproachDef,
+        adHits: List HitDef,
+        adPoseTrack: List PoseKey,
+        adOffsetTrack: List OffsetKey,
+        adTargetReaction: OrdMap CombatResult TargetReaction,
+        adChoreography: Choreography,
+        adStaging: Option Value,
+    },
+}
+
+pub data ActionCatalog {
+    MkActionCatalog {
+        acActions: OrdMap String ActionDef,
+        acOrder: List String,
+        acPresets: OrdMap String StagingProfile,
+    },
+}
+
+pub def isTravelMotion(m: String): Bool =
+    m == "approach" || m == "lunge" || m == "drive"
+
+def defaultLightStaging(): StagingProfile = MkStagingProfile {
+    spForce: 0.6,
+    spCamera: MkCameraStaging { csKick: 3.5, csRebound: 0.35, csLift: 0.35, csZoom: 0.02 },
+    spShade: 0.09,
+    spTilt: 0.0,
+    spFlash: 0.75,
+    spFallMs: 180.0,
+    spTrail: MkTrailStaging { tsLeadMs: 85.0, tsFadeMs: 170.0 },
+    spReactHit: MkReactionLook {
+        rlPush: 34.0, rlTilt: 0.0, rlLift: 4.0, rlSnap: 0.65,
+        rlLeadMs: 0.0, rlOnsetMs: 0.0, rlGhost: 0.0, rlHop: 0.0, rlStandoff: 0.0, rlPose: None,
+    },
+    spReactDodge: MkReactionLook {
+        rlPush: 80.0, rlTilt: 0.0, rlLift: 0.0, rlSnap: 1.0,
+        rlLeadMs: 110.0, rlOnsetMs: 120.0, rlGhost: 0.32, rlHop: 0.0, rlStandoff: 0.0, rlPose: None,
+    },
+    spReactParry: MkReactionLook {
+        rlPush: 4.0, rlTilt: 0.0, rlLift: 0.0, rlSnap: 1.0,
+        rlLeadMs: 50.0, rlOnsetMs: 65.0, rlGhost: 0.0, rlHop: 0.0, rlStandoff: 26.0, rlPose: None,
+    },
+}
+
+def mergeLook(fs: List (String, Value), rk: String, rBase: ReactionLook): ReactionLook =
+    match vLookup(fs, "reactions") {
+        Some(VObj(rfs)) -> match vLookup(rfs, rk) {
+            Some(VObj(rm)) -> MkReactionLook {
+                rlPush: fFloatOr(rm, "push", rBase.rlPush),
+                rlTilt: fFloatOr(rm, "tilt", rBase.rlTilt),
+                rlLift: fFloatOr(rm, "lift", rBase.rlLift),
+                rlSnap: fFloatOr(rm, "snap", rBase.rlSnap),
+                rlLeadMs: fFloatOr(rm, "leadMs", rBase.rlLeadMs),
+                rlOnsetMs: fFloatOr(rm, "onsetMs", rBase.rlOnsetMs),
+                rlGhost: fFloatOr(rm, "ghost", rBase.rlGhost),
+                rlHop: fFloatOr(rm, "hop", rBase.rlHop),
+                rlStandoff: fFloatOr(rm, "standoff", rBase.rlStandoff),
+                rlPose: match fStr(rm, "pose") { Some(p) -> Some(p), None -> rBase.rlPose },
+            },
+            _ -> rBase,
+        },
+        _ -> rBase,
+    }
+
+pub def applyStagingOverride(ov: Value, base: StagingProfile): StagingProfile = match ov {
+    VObj(fs) -> {
+        let cam = match vLookup(fs, "camera") {
+            Some(VObj(cm)) -> MkCameraStaging {
+                csKick: fFloatOr(cm, "kick", base.spCamera.csKick),
+                csRebound: fFloatOr(cm, "rebound", base.spCamera.csRebound),
+                csLift: fFloatOr(cm, "lift", base.spCamera.csLift),
+                csZoom: fFloatOr(cm, "zoom", base.spCamera.csZoom),
+            },
+            _ -> base.spCamera,
+        };
+        let trl = match vLookup(fs, "trail") {
+            Some(VObj(tm)) -> MkTrailStaging {
+                tsLeadMs: fFloatOr(tm, "leadMs", base.spTrail.tsLeadMs),
+                tsFadeMs: fFloatOr(tm, "fadeMs", base.spTrail.tsFadeMs),
+            },
+            _ -> base.spTrail,
+        };
+        MkStagingProfile {
+            spForce: fFloatOr(fs, "force", base.spForce),
+            spCamera: cam,
+            spShade: fFloatOr(fs, "shade", base.spShade),
+            spTilt: fFloatOr(fs, "tilt", base.spTilt),
+            spFlash: fFloatOr(fs, "flash", base.spFlash),
+            spFallMs: fFloatOr(fs, "fallMs", base.spFallMs),
+            spTrail: trl,
+            spReactHit: mergeLook(fs, "hit", base.spReactHit),
+            spReactDodge: mergeLook(fs, "dodge", base.spReactDodge),
+            spReactParry: mergeLook(fs, "parry", base.spReactParry),
+        }
+    },
+    _ -> base,
+}
+
+pub def stagingFor(cat: ActionCatalog, weight: String, overrides: List (Option Value)): StagingProfile = {
+    let base = mapLookupOr(cat.acPresets, weight, defaultLightStaging());
+    std.list.listFold(overrides, base, (acc, mOv) -> match mOv {
+        Some(ov) -> applyStagingOverride(ov, acc),
+        None -> acc,
+    })
+}
+
+def decFrame(v: Value): Option FrameHold = match v {
+    VObj(fs) -> Some(MkFrameHold {
+        fhFrameId: fStrOr(fs, "frameId", "idle"),
+        fhHoldMs: fFloatOr(fs, "holdMs", 200.0),
+    }),
+    _ -> None,
+}
+
+def decPoseKey(v: Value): Option PoseKey = match v {
+    VObj(fs) -> Some(MkPoseKey {
+        pkAtMs: fFloatOr(fs, "atMs", 0.0),
+        pkPose: fStrOr(fs, "pose", "idle"),
+        pkPin: match fStr(fs, "pin") { Some(p) -> parsePin(p), None -> None },
+        pkReach: fFloat(fs, "reach"),
+        pkContactY: fFloat(fs, "contactY"),
+    }),
+    _ -> None,
+}
+
+def decEase(m: Option String): OffsetEase = match m {
+    Some("linear") -> EaseLinear,
+    Some("out") -> EaseOut,
+    _ -> EaseCut,
+}
+
+def decOffsetKey(v: Value): Option OffsetKey = match v {
+    VObj(fs) -> Some(MkOffsetKey {
+        okAtMs: fFloatOr(fs, "atMs", 0.0),
+        okX: fFloatOr(fs, "x", 0.0),
+        okY: fFloatOr(fs, "y", 0.0),
+        okAngle: fFloatOr(fs, "angle", 0.0),
+        okEase: decEase(fStr(fs, "ease")),
+    }),
+    _ -> None,
+}
+
+def decHitDef(v: Value): Option HitDef = match v {
+    VObj(fs) -> Some(MkHitDef {
+        hdAtMs: fFloatOr(fs, "atMs", 0.0),
+        hdHitStopMs: fFloatOr(fs, "hitStopMs", 0.0),
+        hdShare: fFloatOr(fs, "share", 1.0),
+        hdStaging: vLookup(fs, "staging"),
+    }),
+    _ -> None,
+}
+
+def decApproach(v: Value): Option ApproachDef = match v {
+    VObj(fs) -> Some(MkApproachDef {
+        apPose: fStrOr(fs, "pose", "approach"),
+        apDurationMs: fFloatOr(fs, "durationMs", 260.0),
+        apLift: fFloatOr(fs, "lift", 10.0),
+    }),
+    _ -> None,
+}
+
+def decKeyPoses(v: Value): Option KeyPosesDef = match v {
+    VObj(fs) -> Some(MkKeyPosesDef {
+        kpPrepare: fStr(fs, "prepare"),
+        kpContact: fStr(fs, "contact"),
+        kpFinish: fStr(fs, "finish"),
+        kpRetreat: fStr(fs, "retreat"),
+        kpReachWith: match fStr(fs, "reachWith") { Some(r) -> parsePin(r), None -> None },
+    }),
+    _ -> None,
+}
+
+def defaultChoreo(): Choreography = MkChoreography {
+    chLaunchAtMs: 0.0,
+    chHitStopMs: 0.0,
+    chRecoverAtMs: 360.0,
+    chRestAtMs: 640.0,
+    chReach: 0.0,
+    chContactY: 110.0,
+    chWeight: "light",
+}
+
+def decChoreo(v: Value): Choreography = match v {
+    VObj(fs) -> MkChoreography {
+        chLaunchAtMs: fFloatOr(fs, "launchAtMs", 0.0),
+        chHitStopMs: fFloatOr(fs, "hitStopMs", 0.0),
+        chRecoverAtMs: fFloatOr(fs, "recoverAtMs", 360.0),
+        chRestAtMs: fFloatOr(fs, "restAtMs", 640.0),
+        chReach: fFloatOr(fs, "reach", 0.0),
+        chContactY: fFloatOr(fs, "contactY", 110.0),
+        chWeight: fStrOr(fs, "weight", "light"),
+    },
+    _ -> defaultChoreo(),
+}
+
+def decReactions(v: Value): OrdMap CombatResult TargetReaction = match v {
+    VObj(fs) -> mapFromList([
+        (ResHit, match fStr(fs, "hit") { Some(s) -> parseReaction(s), None -> ReactHit }),
+        (ResDodge, match fStr(fs, "dodge") { Some(s) -> parseReaction(s), None -> ReactDodge }),
+        (ResParry, match fStr(fs, "parry") { Some(s) -> parseReaction(s), None -> ReactParry }),
+        (ResEffect, match fStr(fs, "effect") { Some(s) -> parseReaction(s), None -> ReactEffect })
+    ]),
+    _ -> mapEmpty(),
+}
+
+def decAction(v: Value): Option ActionDef = match v {
+    VObj(fs) -> match fStr(fs, "id") {
+        None -> None,
+        Some(aid) -> {
+            let parsedFrames = listFilterMap(fArr(fs, "frames"), decFrame);
+            let frames = if (listIsEmpty(parsedFrames)) [MkFrameHold { fhFrameId: "idle", fhHoldMs: 640.0 }] else parsedFrames;
+            let choreo = match vLookup(fs, "choreography") { Some(cv) -> decChoreo(cv), None -> defaultChoreo() };
+            Some(MkActionDef {
+                adId: aid,
+                adLabel: fStrOr(fs, "label", aid),
+                adStyle: parseCombatStyle(fStrOr(fs, "style", "fist")),
+                adFrames: frames,
+                adImpactFrame: fIntOr(fs, "impactFrame", 0),
+                adDurationMs: fFloatOr(fs, "durationMs", 640.0),
+                adTags: fStrList(fs, "tags"),
+                adActorMotion: fStrOr(fs, "actorMotion", "none"),
+                adKeyPoses: match vLookup(fs, "keyPoses") { Some(kv) -> decKeyPoses(kv), None -> None },
+                adApproach: match vLookup(fs, "approach") { Some(av) -> decApproach(av), None -> None },
+                adHits: listFilterMap(fArr(fs, "hits"), decHitDef),
+                adPoseTrack: listFilterMap(fArr(fs, "poseTrack"), decPoseKey),
+                adOffsetTrack: listFilterMap(fArr(fs, "offsetTrack"), decOffsetKey),
+                adTargetReaction: match vLookup(fs, "targetReaction") { Some(tv) -> decReactions(tv), None -> mapEmpty() },
+                adChoreography: choreo,
+                adStaging: vLookup(fs, "staging"),
+            })
+        },
+    },
+    _ -> None,
+}
+
+def parseManifestsLoop(raws: List String, accRev: List Value): Result (List Value) String = match raws {
+    Nil -> Ok(listRev(accRev)),
+    Cons(r, rest) -> {
+        let v = parse(r)?;
+        parseManifestsLoop(rest, Cons(v, accRev))
+    },
+}
+
+pub def parseActionCatalog(stagingRaw: String, manifestRaws: List String): Result ActionCatalog String = {
+    let stgVal = parse(stagingRaw)?;
+    let presets = match stgVal {
+        VObj(sm) -> match vLookup(sm, "presets") {
+            Some(VObj(pfs)) -> {
+                let pm = mapFromList(pfs);
+                let light = match mapLookup(pm, "light") {
+                    Some(lv) -> applyStagingOverride(lv, defaultLightStaging()),
+                    None -> defaultLightStaging(),
+                };
+                let keys = mapKeys(pm);
+                mapFromList(listMap(keys, (k) -> {
+                    let prof = match mapLookup(pm, k) {
+                        Some(VObj(vfs)) -> {
+                            let parent = match fStr(vfs, "extends") {
+                                Some("light") -> light,
+                                _ -> defaultLightStaging(),
+                            };
+                            applyStagingOverride(VObj(vfs), parent)
+                        },
+                        _ -> light,
+                    };
+                    (k, prof)
+                }))
+            },
+            _ -> mapSingleton("light", defaultLightStaging()),
+        },
+        _ -> mapSingleton("light", defaultLightStaging()),
+    };
+    let manifests = parseManifestsLoop(manifestRaws, Nil)?;
+    let actions = listConcatMap(manifests, (mv) -> match mv {
+        VObj(mfs) -> listFilterMap(fArr(mfs, "actions"), decAction),
+        _ -> Nil,
+    });
+    let order = listMap(actions, (a) -> a.adId);
+    let mp = mapFromList(listMap(actions, (a) -> (a.adId, a)));
+    Ok(MkActionCatalog {
+        acActions: mp,
+        acOrder: order,
+        acPresets: presets,
+    })
+}
+
+pub def defaultActionIdForStyle(style: CombatStyle): String = match style {
+    StyleSword -> "rig.sword.chop_a",
+    StyleFist -> "rig.fist.punch_a",
+}
+
+pub def idleActionIdForStyle(style: CombatStyle): String = match style {
+    StyleSword -> "rig.sword.idle",
+    StyleFist -> "rig.fist.idle",
+}
+
+pub def reactionActionIdForStyle(react: TargetReaction, style: CombatStyle): String = match (react, style) {
+    (ReactHit, StyleSword) -> "rig.sword.hurt",
+    (ReactHit, StyleFist) -> "rig.fist.hurt",
+    (ReactDodge, StyleSword) -> "rig.sword.dodge",
+    (ReactDodge, StyleFist) -> "rig.fist.dodge",
+    (ReactParry, StyleSword) -> "rig.sword.parry",
+    (ReactParry, StyleFist) -> "rig.fist.parry",
+    _ -> idleActionIdForStyle(style),
+}
+
+def fallbackAction(style: CombatStyle): ActionDef = MkActionDef {
+    adId: idleActionIdForStyle(style),
+    adLabel: "待机",
+    adStyle: style,
+    adFrames: [MkFrameHold { fhFrameId: "idle", fhHoldMs: 640.0 }],
+    adImpactFrame: 0,
+    adDurationMs: 640.0,
+    adTags: Nil,
+    adActorMotion: "none",
+    adKeyPoses: None,
+    adApproach: None,
+    adHits: Nil,
+    adPoseTrack: Nil,
+    adOffsetTrack: Nil,
+    adTargetReaction: mapEmpty(),
+    adChoreography: MkChoreography {
+        chLaunchAtMs: 0.0, chHitStopMs: 0.0, chRecoverAtMs: 360.0, chRestAtMs: 640.0,
+        chReach: 0.0, chContactY: 110.0, chWeight: "quiet",
+    },
+    adStaging: None,
+}
+
+pub def battleActionFor(cat: ActionCatalog, aid: String, fallbackStyle: CombatStyle): ActionDef =
+    match mapLookup(cat.acActions, aid) {
+        Some(a) -> a,
+        None -> match mapLookup(cat.acActions, defaultActionIdForStyle(fallbackStyle)) {
+            Some(defAct) -> defAct,
+            None -> fallbackAction(fallbackStyle),
+        },
+    }
