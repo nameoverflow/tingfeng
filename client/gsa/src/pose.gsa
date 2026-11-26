@@ -23,11 +23,17 @@ pub data HandShape {
 pub data CombatStyle {
     StyleFist,
     StyleSword,
+    StyleBlade,
+    StyleSpear,
+    StyleStaff,
 }
 
 def styleRank(s: CombatStyle): Int = match s {
     StyleFist -> 0,
     StyleSword -> 1,
+    StyleBlade -> 2,
+    StyleSpear -> 3,
+    StyleStaff -> 4,
 }
 
 pub def styleEq(a: CombatStyle, b: CombatStyle): Bool = styleRank(a) == styleRank(b)
@@ -39,10 +45,127 @@ instance Ord CombatStyle {
 pub def combatStyleText(s: CombatStyle): String = match s {
     StyleFist -> "fist",
     StyleSword -> "sword",
+    StyleBlade -> "blade",
+    StyleSpear -> "spear",
+    StyleStaff -> "staff",
 }
 
 pub def parseCombatStyle(raw: String): CombatStyle =
-    if (raw == "sword") StyleSword else StyleFist
+    if (raw == "sword") StyleSword
+    else if (raw == "blade") StyleBlade
+    else if (raw == "spear") StyleSpear
+    else if (raw == "staff") StyleStaff
+    else StyleFist
+
+pub data WeaponVisual {
+    WeaponUnarmed,
+    WeaponBracers,
+    WeaponGauntlets,
+    WeaponJian,
+    WeaponNarrowSword,
+    WeaponSaber,
+    WeaponSpear,
+    WeaponStaff,
+}
+
+def weaponRank(w: WeaponVisual): Int = match w {
+    WeaponUnarmed -> 0,
+    WeaponBracers -> 1,
+    WeaponGauntlets -> 2,
+    WeaponJian -> 3,
+    WeaponNarrowSword -> 4,
+    WeaponSaber -> 5,
+    WeaponSpear -> 6,
+    WeaponStaff -> 7,
+}
+
+pub def weaponEq(a: WeaponVisual, b: WeaponVisual): Bool = weaponRank(a) == weaponRank(b)
+
+pub def allWeaponVisuals(): List WeaponVisual = [
+    WeaponUnarmed,
+    WeaponBracers,
+    WeaponGauntlets,
+    WeaponJian,
+    WeaponNarrowSword,
+    WeaponSaber,
+    WeaponSpear,
+    WeaponStaff
+]
+
+pub def weaponVisualText(w: WeaponVisual): String = match w {
+    WeaponUnarmed -> "unarmed",
+    WeaponBracers -> "bracers",
+    WeaponGauntlets -> "gauntlets",
+    WeaponJian -> "jian",
+    WeaponNarrowSword -> "narrow_sword",
+    WeaponSaber -> "saber",
+    WeaponSpear -> "spear",
+    WeaponStaff -> "staff",
+}
+
+pub def weaponVisualLabel(w: WeaponVisual): String = match w {
+    WeaponUnarmed -> "空手",
+    WeaponBracers -> "精铁护腕",
+    WeaponGauntlets -> "裂石护手",
+    WeaponJian -> "青钢剑",
+    WeaponNarrowSword -> "白刃剑",
+    WeaponSaber -> "雁翎刀",
+    WeaponSpear -> "红缨枪",
+    WeaponStaff -> "齐眉棍",
+}
+
+pub def defaultWeaponForStyle(s: CombatStyle): WeaponVisual = match s {
+    StyleSword -> WeaponJian,
+    StyleBlade -> WeaponSaber,
+    StyleSpear -> WeaponSpear,
+    StyleStaff -> WeaponStaff,
+    StyleFist -> WeaponUnarmed,
+}
+
+pub def parseWeaponVisual(raw: String, fallbackStyle: CombatStyle): WeaponVisual =
+    if (raw == "unarmed" || raw == "fist") WeaponUnarmed
+    else if (raw == "bracers") WeaponBracers
+    else if (raw == "gauntlets") WeaponGauntlets
+    else if (raw == "jian" || raw == "sword") WeaponJian
+    else if (raw == "narrow_sword") WeaponNarrowSword
+    else if (raw == "saber" || raw == "blade" || raw == "dao") WeaponSaber
+    else if (raw == "spear") WeaponSpear
+    else if (raw == "staff" || raw == "stick") WeaponStaff
+    else defaultWeaponForStyle(fallbackStyle)
+
+pub def weaponUsesGrip(w: WeaponVisual): Bool = match w {
+    WeaponJian -> true,
+    WeaponNarrowSword -> true,
+    WeaponSaber -> true,
+    WeaponSpear -> true,
+    WeaponStaff -> true,
+    _ -> false,
+}
+
+pub def weaponRigStyle(w: WeaponVisual): CombatStyle = match w {
+    WeaponJian -> StyleSword,
+    WeaponNarrowSword -> StyleSword,
+    WeaponSaber -> StyleBlade,
+    WeaponSpear -> StyleSpear,
+    WeaponStaff -> StyleStaff,
+    _ -> StyleFist,
+}
+
+pub def weaponTipLength(w: WeaponVisual): Float = match w {
+    WeaponJian -> svgSwordLength(),
+    WeaponNarrowSword -> 80.0,
+    WeaponSaber -> 68.0,
+    WeaponSpear -> 100.0,
+    WeaponStaff -> 92.0,
+    _ -> 0.0,
+}
+
+pub def weaponTasselKind(w: WeaponVisual): String = match w {
+    WeaponJian -> "sword",
+    WeaponNarrowSword -> "sword",
+    WeaponSpear -> "spear",
+    _ -> "",
+}
 
 pub data VisualProfile {
     ProfileMale,
@@ -444,7 +567,10 @@ def decodeRigsMap(v: Value): OrdMap CombatStyle PartialParams = match v {
     VObj(rfs) -> {
         let fp = match vLookup(rfs, "fist") { Some(fv) -> decodePartial(fv), None -> emptyPartial() };
         let sp = match vLookup(rfs, "sword") { Some(sv) -> decodePartial(sv), None -> emptyPartial() };
-        mapFromList([(StyleFist, fp), (StyleSword, sp)])
+        let bp = match vLookup(rfs, "blade") { Some(bv) -> decodePartial(bv), None -> sp };
+        let pp = match vLookup(rfs, "spear") { Some(pv) -> decodePartial(pv), None -> sp };
+        let stp = match vLookup(rfs, "staff") { Some(stv) -> decodePartial(stv), None -> sp };
+        mapFromList([(StyleFist, fp), (StyleSword, sp), (StyleBlade, bp), (StyleSpear, pp), (StyleStaff, stp)])
     },
     _ -> mapEmpty(),
 }
@@ -522,12 +648,13 @@ pub def parsePoseLibrary(raw: String): Result PoseLibrary String = {
                 _ -> { let _ = Err("Missing poses map")?; mapEmpty() },
             };
             let pids = mapKeys(posesDefs);
-            let fistPairs = listMap(pids, (pid) -> ((StyleFist, pid), resolveOnePose(posesDefs, rigsMap, baseParams, StyleFist, pid, Nil)));
-            let swordPairs = listMap(pids, (pid) -> ((StyleSword, pid), resolveOnePose(posesDefs, rigsMap, baseParams, StyleSword, pid, Nil)));
+            let pairsFor = (st: CombatStyle) ->
+                listMap(pids, (pid) -> ((st, pid), resolveOnePose(posesDefs, rigsMap, baseParams, st, pid, Nil)));
+            let allPairs = listConcatMap([StyleFist, StyleSword, StyleBlade, StyleSpear, StyleStaff], pairsFor);
             Ok(MkPoseLibrary {
                 plBones: bones,
                 plPoseOrder: pids,
-                plResolved: mapFromList(listAppend(fistPairs, swordPairs)),
+                plResolved: mapFromList(allPairs),
             })
         },
         _ -> Err("svg-poses.json root is not an object"),
@@ -621,6 +748,18 @@ pub def swordTipOf(p: SvgPose): (Float, Float) =
 
 pub def swordPommelOf(p: SvgPose): (Float, Float) =
     ptAdd(p.spHand, dirVec(p.spBlade), -9.0)
+
+pub def weaponTipOf(p: SvgPose, w: WeaponVisual): (Float, Float) = {
+    let l = weaponTipLength(w);
+    if (l > 0.5) ptAdd(p.spHand, dirVec(p.spBlade), l) else p.spHand
+}
+
+pub def weaponTasselAnchor(p: SvgPose, w: WeaponVisual): Option (Float, Float) = match w {
+    WeaponJian -> Some(ptAdd(p.spHand, dirVec(p.spBlade), -9.0)),
+    WeaponNarrowSword -> Some(ptAdd(p.spHand, dirVec(p.spBlade), -8.5)),
+    WeaponSpear -> Some(ptAdd(p.spHand, dirVec(p.spBlade), 74.0)),
+    _ -> None,
+}
 
 // ============================================================================
 // Organic Ink-Wash Silhouette Geometry (`buildActorParts`)
@@ -916,9 +1055,103 @@ def projectFarLimb(shapes: List ShapePrim, dy: Float): List ShapePrim = {
     })
 }
 
+def forearmArmorShapes(elbow: (Float, Float), wrist: (Float, Float), w: WeaponVisual, k: Float): List ShapePrim =
+    match w {
+        WeaponBracers -> {
+            let (ex, ey) = elbow;
+            let (wx, wy) = wrist;
+            let a = (ex + (wx - ex) * 0.52, ey + (wy - ey) * 0.52);
+            let b = (ex + (wx - ex) * 0.94, ey + (wy - ey) * 0.94);
+            let cuff = taperPts(a, b, 6.9 * k, 5.8 * k);
+            [SPoly(cuff, Some("#526065"), 1.0)]
+        },
+        WeaponGauntlets -> {
+            let (ex, ey) = elbow;
+            let (wx, wy) = wrist;
+            let dir = ptUnit(ptSub(wrist, elbow));
+            let a = (ex + (wx - ex) * 0.42, ey + (wy - ey) * 0.42);
+            let b = ptAdd(wrist, dir, 6.2 * k);
+            let cuff = taperPts(a, wrist, 7.6 * k, 6.8 * k);
+            let knuck = taperPts(ptAdd(wrist, dir, -1.0), b, 6.4 * k, 5.4 * k);
+            let (kx, ky) = ptAdd(wrist, dir, 4.5 * k);
+            [
+                SPoly(cuff, Some("#3e484c"), 1.0),
+                SPoly(knuck, Some("#58666b"), 1.0),
+                SCircle(kx, ky, 5.6 * k, Some("#3e484c"), 1.0)
+            ]
+        },
+        _ -> Nil,
+    }
+
+def heldWeaponShapes(p: SvgPose, w: WeaponVisual): List ShapePrim = {
+    let rp = (pts: List (Float, Float)) -> rotatedPoly(p.spHand, p.spBlade, pts);
+    match w {
+        WeaponJian -> {
+            let l = weaponTipLength(w);
+            [
+                sPoly(rp([(-9.0, -2.0), (5.0, -2.0), (5.0, 2.0), (-9.0, 2.0)])),
+                sPoly(rp([(4.0, -7.0), (7.0, -7.0), (7.0, 7.0), (4.0, 7.0)])),
+                SPoly(rp([(7.0, -2.0), (l - 8.0, -2.0), (l, 0.0), (l - 8.0, 2.0), (7.0, 2.0)]), Some("#4a575b"), 1.0)
+            ]
+        },
+        WeaponNarrowSword -> {
+            let l = weaponTipLength(w);
+            [
+                sPoly(rp([(-8.5, -1.6), (5.0, -1.6), (5.0, 1.6), (-8.5, 1.6)])),
+                SPoly(rp([(3.8, -5.6), (6.5, -4.6), (6.5, 4.6), (3.8, 5.6)]), Some("#6a777b"), 1.0),
+                SPoly(rp([(6.5, -1.35), (l - 10.0, -1.1), (l, 0.0), (l - 10.0, 1.1), (6.5, 1.35)]), Some("#829094"), 1.0)
+            ]
+        },
+        WeaponSaber -> {
+            let l = weaponTipLength(w);
+            let (rcx, rcy) = ptAdd(p.spHand, dirVec(p.spBlade), -11.5);
+            [
+                SCircle(rcx, rcy, 3.6, Some("#4a575b"), 1.0),
+                sPoly(rp([(-9.0, -2.3), (5.0, -2.3), (5.0, 2.3), (-9.0, 2.3)])),
+                sPoly(rp([(4.2, -6.4), (7.4, -6.4), (7.4, 6.4), (4.2, 6.4)])),
+                SPoly(rp([
+                    (7.0, -2.2),
+                    (32.0, -2.8),
+                    (56.0, -4.2),
+                    (l, -3.5),
+                    (l - 4.0, 2.6),
+                    (l - 12.0, 6.8),
+                    (40.0, 5.2),
+                    (20.0, 3.4),
+                    (7.0, 2.4)
+                ]), Some("#4d5a5f"), 1.0)
+            ]
+        },
+        WeaponSpear -> {
+            let l = weaponTipLength(w);
+            [
+                SPoly(rp([(-24.0, -1.9), (75.0, -1.9), (75.0, 1.9), (-24.0, 1.9)]), Some("#4a3a2b"), 1.0),
+                SPoly(rp([(-26.0, -2.6), (-21.0, -2.6), (-21.0, 2.6), (-26.0, 2.6)]), Some("#6b5c43"), 1.0),
+                SPoly(rp([(73.0, -3.2), (77.0, -3.2), (77.0, 3.2), (73.0, 3.2)]), Some("#8f261e"), 1.0),
+                SPoly(rp([
+                    (77.0, -2.2),
+                    (84.0, -4.8),
+                    (l, 0.0),
+                    (84.0, 4.8),
+                    (77.0, 2.2)
+                ]), Some("#66767c"), 1.0)
+            ]
+        },
+        WeaponStaff -> {
+            let l = weaponTipLength(w);
+            [
+                SPoly(rp([(-34.0, -2.5), (l, -2.5), (l, 2.5), (-34.0, 2.5)]), Some("#5a4733"), 1.0),
+                SPoly(rp([(-35.0, -3.1), (-26.0, -3.1), (-26.0, 3.1), (-35.0, 3.1)]), Some("#85714c"), 1.0),
+                SPoly(rp([(l - 9.0, -3.1), (l + 1.0, -3.1), (l + 1.0, 3.1), (l - 9.0, 3.1)]), Some("#85714c"), 1.0)
+            ]
+        },
+        _ -> Nil,
+    }
+}
+
 pub def buildActorParts(
     p: SvgPose,
-    style: CombatStyle,
+    weapon: WeaponVisual,
     profile: VisualProfile,
     look: LookStyle,
     hairBend: (Float, Float),
@@ -973,7 +1206,10 @@ pub def buildActorParts(
         organicLimb(p.spShoulder, p.spBackElbow, upperArmProf(), k),
         listAppend(
             organicLimb(p.spBackElbow, p.spBackHand, forearmProf(), k),
-            handShapes(p.spBackElbow, p.spBackHand, handB, k)
+            listAppend(
+                forearmArmorShapes(p.spBackElbow, p.spBackHand, weapon, k),
+                handShapes(p.spBackElbow, p.spBackHand, handB, k)
+            )
         )
     ), -4.0);
 
@@ -996,23 +1232,18 @@ pub def buildActorParts(
         )
     );
 
-    let swordShapes =
-        if (styleEq(style, StyleSword)) {
-            let l = svgSwordLength();
-            [
-                sPoly(rotatedPoly(p.spHand, p.spBlade, [(-9.0, -2.0), (5.0, -2.0), (5.0, 2.0), (-9.0, 2.0)])),
-                sPoly(rotatedPoly(p.spHand, p.spBlade, [(4.0, -7.0), (7.0, -7.0), (7.0, 7.0), (4.0, 7.0)])),
-                SPoly(rotatedPoly(p.spHand, p.spBlade, [(7.0, -2.0), (l - 8.0, -2.0), (l, 0.0), (l - 8.0, 2.0), (7.0, 2.0)]), Some("#4a575b"), 1.0)
-            ]
-        } else Nil;
-
+    let weaponShapes = heldWeaponShapes(p, weapon);
+    let frontArmor = forearmArmorShapes(p.spElbow, p.spHand, weapon, k);
     let frontArmShapes = listAppend(
         organicLimb(p.spShoulder, p.spElbow, upperArmProf(), k),
         listAppend(
             organicLimb(p.spElbow, p.spHand, forearmProf(), k),
             listAppend(
-                swordShapes,
-                handShapes(p.spElbow, p.spHand, if (styleEq(style, StyleSword)) HandFist else handF, k)
+                frontArmor,
+                listAppend(
+                    weaponShapes,
+                    handShapes(p.spElbow, p.spHand, if (weaponUsesGrip(weapon)) HandFist else handF, k)
+                )
             )
         )
     );

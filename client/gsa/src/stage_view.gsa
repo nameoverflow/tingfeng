@@ -28,14 +28,15 @@ use protocol.{
 }
 use pose.{
     CombatStyle, StyleFist, StyleSword, styleEq, parseCombatStyle,
+    WeaponVisual, WeaponJian, parseWeaponVisual, weaponRigStyle, weaponTipOf, weaponTasselAnchor, weaponTasselKind,
     VisualProfile, ProfileMale, ProfileFemale, parseVisualProfile, profileEq,
     LookStyle, SvgPose, ShapePrim, SCircle, SPoly,
     allPoseIds, svgPose, blendPose, swordTipOf, swordPommelOf, buildActorParts
 }
-use catalog.{MkFrameHold, idleActionIdForStyle}
+use catalog.{MkFrameHold, PinFoot, PinHand, PinBlade, pinEq, idleActionIdForStyle}
 use battle.{
     BattleSide, SidePlayer, SideEnemy, sideEq, sideHome,
-    ActorVisual, MkActorVisual, sampleSvgPose, sampleBattleScene
+    ActorVisual, MkActorVisual, visualTimeAt, reachPointAt, sampleSvgPose, sampleBattleScene
 }
 use state.{ClientModel, worldPosFromGrid}
 use theme.{ClientMsg, MsgGoExit}
@@ -126,26 +127,42 @@ pub def drawInkActor(
     scaleSign: Float, rotDeg: Float,
     fillCol: Color, outlineCol: Color,
     flash: Float, alpha: Float,
-    pose: SvgPose, style: CombatStyle, prof: VisualProfile, look: LookStyle,
+    pose: SvgPose, weapon: WeaponVisual, prof: VisualProfile, look: LookStyle,
     hairBend: (Float, Float), tasselAngles: (Float, Float), clockMs: Float
 ): Void = {
-    let parts = buildActorParts(pose, style, prof, look, hairBend, clockMs);
+    let parts = buildActorParts(pose, weapon, prof, look, hairBend, clockMs);
     pushTransform(dl, wx, wy, scaleSign, absFloat(scaleSign), rotDeg);
     let outCol = withAlpha(outlineCol, alpha);
     let pcur = cellNew(parts);
     while (match cellGet(pcur) { Nil -> false, _ -> true }) {
         match cellGet(pcur) {
             Cons(part, prest) -> {
-                if (part.apKey == "front-arm" && styleEq(style, StyleSword)) {
-                    let (hx, hy) = swordPommelOf(pose);
-                    let (cordAngle, silkAngle) = tasselAngles;
-                    let localTilt = if (scaleSign < 0.0) -rotDeg else rotDeg;
-                    pushTransform(dl, hx, hy, 1.0, 1.0, cordAngle - localTilt);
-                    drawImage(dl, "/battle/tassel-cord.png", rect(-4.0, -0.3, 8.0, 12.0), 0.0, alpha);
-                    pushTransform(dl, 0.0, 11.55, 1.0, 1.0, silkAngle - cordAngle);
-                    drawImage(dl, "/battle/tassel-silk.png", rect(-4.0, -0.2, 8.0, 20.0), 0.0, alpha);
-                    popTransform(dl);
-                    popTransform(dl)
+                if (part.apKey == "front-arm") {
+                    match weaponTasselAnchor(pose, weapon) {
+                        Some((hx, hy)) -> {
+                            let kind = weaponTasselKind(weapon);
+                            let (cordAngle, silkAngle) = tasselAngles;
+                            let localTilt = if (scaleSign < 0.0) -rotDeg else rotDeg;
+                            if (kind == "sword") {
+                                pushTransform(dl, hx, hy, 1.0, 1.0, cordAngle - localTilt);
+                                drawImage(dl, "/battle/tassel-cord.png", rect(-4.0, -0.3, 8.0, 12.0), 0.0, alpha);
+                                pushTransform(dl, 0.0, 11.55, 1.0, 1.0, silkAngle - cordAngle);
+                                drawImage(dl, "/battle/tassel-silk.png", rect(-4.0, -0.2, 8.0, 20.0), 0.0, alpha);
+                                popTransform(dl);
+                                popTransform(dl)
+                            } else if (kind == "spear") {
+                                pushTransform(dl, hx, hy, 1.0, 1.0, cordAngle - localTilt);
+                                let tuftCol = withAlpha(hexColor("#a32c22"), alpha * 0.94);
+                                let tuftDark = withAlpha(hexColor("#751b14"), alpha * 0.9);
+                                drawPolygon(dl, [vec2(-2.2, 0.0), vec2(2.2, 0.0), vec2(5.2, 11.0), vec2(0.0, 14.0), vec2(-4.5, 10.5)], tuftCol, 0, 0.0);
+                                pushTransform(dl, 0.0, 9.5, 1.0, 1.0, silkAngle - cordAngle);
+                                drawPolygon(dl, [vec2(-3.2, 0.0), vec2(3.2, 0.0), vec2(4.2, 11.5), vec2(0.0, 15.5), vec2(-3.8, 11.0)], tuftDark, 0, 0.0);
+                                popTransform(dl);
+                                popTransform(dl)
+                            } else ()
+                        },
+                        None -> (),
+                    }
                 } else ();
                 // Pass A: outer halo stroke across all shapes of the body part
                 let s1 = cellNew(part.apShapes);
@@ -219,7 +236,7 @@ pub def renderOnboardingStage(stageRect: Rect, _ptr: Vec2, dl: DrawList, m: Clie
     drawInkActor(
         dl, ax, ay, sc, 0.0,
         hexColor("#cfc4af"), hexColor("#ece4d2"),
-        0.0, 0.96, pose, StyleSword, prof, m.cmVp.vpLookStyle,
+        0.0, 0.96, pose, WeaponJian, prof, m.cmVp.vpLookStyle,
         (0.0, 0.0), (0.0, 0.0), m.cmVp.vpClockMs
     );
     Nil
@@ -781,14 +798,16 @@ pub def renderBattleStage(stageRect: Rect, _ptr: Vec2, dl: DrawList, m: ClientMo
     let isMobile = m.cmVp.vpWidth <= 768.0;
     let pStyle = match m.cmBattle.btSnap { Some(bs) -> parseCombatStyle(bs.bsPlayer.cbStyle), None -> StyleFist };
     let eStyle = match m.cmBattle.btSnap { Some(bs) -> parseCombatStyle(bs.bsEnemy.cbStyle), None -> StyleSword };
+    let pWeapon = match m.cmBattle.btSnap { Some(bs) -> parseWeaponVisual(bs.bsPlayer.cbWeaponVisual, pStyle), None -> parseWeaponVisual("", pStyle) };
+    let eWeapon = match m.cmBattle.btSnap { Some(bs) -> parseWeaponVisual(bs.bsEnemy.cbWeaponVisual, eStyle), None -> parseWeaponVisual("", eStyle) };
     let pProf = match m.cmBattle.btSnap {
         Some(bs) -> parseVisualProfile(bs.bsPlayer.cbGender),
         None -> parseVisualProfile(m.cmHero.hsStats.psGender),
     };
     let eProf = match m.cmBattle.btSnap { Some(bs) -> parseVisualProfile(bs.bsEnemy.cbGender), None -> ProfileMale };
 
-    let idleP = MkActorVisual { avActionId: idleActionIdForStyle(pStyle), avProfile: pProf, avStyle: pStyle, avFrames: [MkFrameHold { fhFrameId: "idle", fhHoldMs: 640.0 }], avKeyPoses: None };
-    let idleE = MkActorVisual { avActionId: idleActionIdForStyle(eStyle), avProfile: eProf, avStyle: eStyle, avFrames: [MkFrameHold { fhFrameId: "idle", fhHoldMs: 640.0 }], avKeyPoses: None };
+    let idleP = MkActorVisual { avActionId: idleActionIdForStyle(pStyle), avProfile: pProf, avStyle: weaponRigStyle(pWeapon), avWeapon: pWeapon, avFrames: [MkFrameHold { fhFrameId: "idle", fhHoldMs: 640.0 }], avKeyPoses: None };
+    let idleE = MkActorVisual { avActionId: idleActionIdForStyle(eStyle), avProfile: eProf, avStyle: weaponRigStyle(eWeapon), avWeapon: eWeapon, avFrames: [MkFrameHold { fhFrameId: "idle", fhHoldMs: 640.0 }], avKeyPoses: None };
     let mTl = m.cmBattle.btActiveTimeline;
     let elapsed = m.cmBattle.btTimelineElapsedMs;
     let reduced = m.cmVp.vpReducedMotion;
@@ -801,8 +820,8 @@ pub def renderBattleStage(stageRect: Rect, _ptr: Vec2, dl: DrawList, m: ClientMo
 
     let pFig = scene.scPlayer;
     let eFig = scene.scEnemy;
-    let pPose = sampleSvgPose(m.cmPoseLib, mTl, SidePlayer, elapsed, pFig.fsVisual.avStyle, pFig.fsFrameId, reduced);
-    let ePose = sampleSvgPose(m.cmPoseLib, mTl, SideEnemy, elapsed, eFig.fsVisual.avStyle, eFig.fsFrameId, reduced);
+    let pPose = sampleSvgPose(m.cmPoseLib, mTl, SidePlayer, elapsed, pFig.fsVisual.avStyle, pFig.fsVisual.avWeapon, pFig.fsFrameId, reduced);
+    let ePose = sampleSvgPose(m.cmPoseLib, mTl, SideEnemy, elapsed, eFig.fsVisual.avStyle, eFig.fsVisual.avWeapon, eFig.fsFrameId, reduced);
 
     let pWorldX = sideHome(SidePlayer) + pFig.fsX;
     let eWorldX = sideHome(SideEnemy) + eFig.fsX;
@@ -834,9 +853,9 @@ pub def renderBattleStage(stageRect: Rect, _ptr: Vec2, dl: DrawList, m: ClientMo
         match mTl {
             Some(tl) ->
                 if (sideEq(tl.tlTargetSide, SidePlayer)) {
-                    drawInkActor(dl, stageCx + sideHome(SidePlayer) * fitScale, floorAt(sideHome(SidePlayer)), fitScale, 0.0, hexColor("#2b594b"), hexColor("#f6f0e2"), 0.0, scene.scGhost * 0.65, pPose, pFig.fsVisual.avStyle, pProf, m.cmVp.vpLookStyle, (0.0, 0.0), (0.0, 0.0), m.cmVp.vpClockMs)
+                    drawInkActor(dl, stageCx + sideHome(SidePlayer) * fitScale, floorAt(sideHome(SidePlayer)), fitScale, 0.0, hexColor("#2b594b"), hexColor("#f6f0e2"), 0.0, scene.scGhost * 0.65, pPose, pFig.fsVisual.avWeapon, pProf, m.cmVp.vpLookStyle, (0.0, 0.0), (0.0, 0.0), m.cmVp.vpClockMs)
                 } else {
-                    drawInkActor(dl, stageCx + sideHome(SideEnemy) * fitScale, floorAt(sideHome(SideEnemy)), 0.0 - fitScale, 0.0, hexColor("#6e6354"), hexColor("#f6f0e2"), 0.0, scene.scGhost * 0.65, ePose, eFig.fsVisual.avStyle, eProf, m.cmVp.vpLookStyle, (0.0, 0.0), (0.0, 0.0), m.cmVp.vpClockMs)
+                    drawInkActor(dl, stageCx + sideHome(SideEnemy) * fitScale, floorAt(sideHome(SideEnemy)), 0.0 - fitScale, 0.0, hexColor("#6e6354"), hexColor("#f6f0e2"), 0.0, scene.scGhost * 0.65, ePose, eFig.fsVisual.avWeapon, eProf, m.cmVp.vpLookStyle, (0.0, 0.0), (0.0, 0.0), m.cmVp.vpClockMs)
                 },
             None -> (),
         }
@@ -856,8 +875,8 @@ pub def renderBattleStage(stageRect: Rect, _ptr: Vec2, dl: DrawList, m: ClientMo
     let far = historyAt(200.0);
     let attachmentAngles = (side: BattleSide, pose: SvgPose, fig: battle.FigureSample, prof: VisualProfile) -> {
         let hair = profileEq(prof, ProfileFemale);
-        let sword = styleEq(fig.fsVisual.avStyle, StyleSword);
-        if (reduced || !optIsSome(mTl) || (!hair && !sword)) ((0.0, 0.0), (0.0, 0.0))
+        let hasTassel = optIsSome(weaponTasselAnchor(pose, fig.fsVisual.avWeapon));
+        if (reduced || !optIsSome(mTl) || (!hair && !hasTassel)) ((0.0, 0.0), (0.0, 0.0))
         else {
             let sign = if (sideEq(side, SidePlayer)) 1.0 else -1.0;
             let anchors = (p: SvgPose, f: battle.FigureSample) -> {
@@ -870,13 +889,13 @@ pub def renderBattleStage(stageRect: Rect, _ptr: Vec2, dl: DrawList, m: ClientMo
                 let x = hx + 0.6 * (hy - ny);
                 let y = hy - 0.6 * (hx - nx);
                 let head = sign * f.fsX + x * c - y * s + 0.22 * (f.fsY + x * s + y * c);
-                let (px, py) = swordPommelOf(p);
+                let (px, py) = optOr(weaponTasselAnchor(p, f.fsVisual.avWeapon), swordPommelOf(p));
                 (head, sign * f.fsX + px * c - py * s)
             };
             let priorAnchors = (sample: (Float, battle.SceneSample)) -> match sample {
                 (t, sc) -> {
                     let f = if (sideEq(side, SidePlayer)) sc.scPlayer else sc.scEnemy;
-                    let p = sampleSvgPose(m.cmPoseLib, mTl, side, t, f.fsVisual.avStyle, f.fsFrameId, false);
+                    let p = sampleSvgPose(m.cmPoseLib, mTl, side, t, f.fsVisual.avStyle, f.fsVisual.avWeapon, f.fsFrameId, false);
                     anchors(p, f)
                 },
             };
@@ -895,7 +914,7 @@ pub def renderBattleStage(stageRect: Rect, _ptr: Vec2, dl: DrawList, m: ClientMo
                 (bend(1.25 * v1 + 0.22 * v2 - 0.23 * v3),
                  bend(0.24 * v1 + 1.05 * v2 - 0.18 * v3))
             } else (0.0, 0.0);
-            let tassel = if (sword) {
+            let tassel = if (hasTassel) {
                 let d1 = p0 - p1;
                 let d2 = p0 - p2;
                 (clampFloat(-66.0, 66.0, d1 * 1.4), clampFloat(-82.0, 82.0, d1 * 0.36 + d2 * 0.86))
@@ -906,20 +925,24 @@ pub def renderBattleStage(stageRect: Rect, _ptr: Vec2, dl: DrawList, m: ClientMo
     let (eHair, eTassel) = attachmentAngles(SideEnemy, ePose, eFig, eProf);
     let (pHair, pTassel) = attachmentAngles(SidePlayer, pPose, pFig, pProf);
     let hairClock = if (reduced) 0.0 else if (optIsSome(mTl)) elapsed else m.cmVp.vpClockMs;
-    drawInkActor(dl, ex, ey, 0.0 - fitScale, eFig.fsAngle, eFill, outlineCol, eFig.fsFlash, eFig.fsAlpha, ePose, eFig.fsVisual.avStyle, eProf, m.cmVp.vpLookStyle, eHair, eTassel, hairClock + 360.0);
-    drawInkActor(dl, px, py, fitScale, pFig.fsAngle, pFill, outlineCol, pFig.fsFlash, pFig.fsAlpha, pPose, pFig.fsVisual.avStyle, pProf, m.cmVp.vpLookStyle, pHair, pTassel, hairClock);
+    drawInkActor(dl, ex, ey, 0.0 - fitScale, eFig.fsAngle, eFill, outlineCol, eFig.fsFlash, eFig.fsAlpha, ePose, eFig.fsVisual.avWeapon, eProf, m.cmVp.vpLookStyle, eHair, eTassel, hairClock + 360.0);
+    drawInkActor(dl, px, py, fitScale, pFig.fsAngle, pFill, outlineCol, pFig.fsFlash, pFig.fsAlpha, pPose, pFig.fsVisual.avWeapon, pProf, m.cmVp.vpLookStyle, pHair, pTassel, hairClock);
 
     // Tapered slash ribbon (`OP_RIBBON`), parry guard ring & focus aura
     match mTl {
         None -> (),
         Some(tl) -> {
             let actorIsP = sideEq(tl.tlActorSide, SidePlayer);
-            let aStyle = if (actorIsP) pFig.fsVisual.avStyle else eFig.fsVisual.avStyle;
+            let aWeapon = if (actorIsP) pFig.fsVisual.avWeapon else eFig.fsVisual.avWeapon;
             let aPose = if (actorIsP) pPose else ePose;
             let ax = if (actorIsP) px else ex;
             let ay = if (actorIsP) py else ey;
             let sgn = if (actorIsP) fitScale else 0.0 - fitScale;
-            let (tipLx, tipLy) = if (styleEq(aStyle, StyleSword)) swordTipOf(aPose) else aPose.spHand;
+            let pin = reachPointAt(tl, visualTimeAt(tl, elapsed));
+            let (tipLx, tipLy) =
+                if (pinEq(pin, PinFoot)) aPose.spFoot
+                else if (pinEq(pin, PinHand)) aPose.spHand
+                else weaponTipOf(aPose, aWeapon);
             let tipWx = ax + sgn * tipLx;
             let tipWy = ay + absFloat(fitScale) * tipLy;
             let (shLx, shLy) = aPose.spShoulder;
@@ -1056,7 +1079,7 @@ pub def viewPoseSheet(_vp: Rect, m: ClientModel): Element ClientMsg =
                         let pose = svgPose(m.cmPoseLib, pid, StyleSword);
                         drawRect(dl, rect(cx - cellW * 0.46, cy - 118.0, cellW * 0.92, 150.0), 3.0, withAlpha(hexColor("#f6f0e2"), 0.96), hexColor("#c8bca4"), 1.1);
                         drawLine(dl, cx - cellW * 0.36, cy, cx + cellW * 0.36, cy, 1.2, withAlpha(hexColor("#6e6354"), 0.55), false);
-                        drawInkActor(dl, cx, cy, 0.58, 0.0, hexColor("#1e2320"), hexColor("#f6f0e2"), 0.0, 1.0, pose, StyleSword, ProfileFemale, m.cmVp.vpLookStyle, (0.0, 0.0), (0.0, 0.0), 0.0);
+                        drawInkActor(dl, cx, cy, 0.58, 0.0, hexColor("#1e2320"), hexColor("#f6f0e2"), 0.0, 1.0, pose, WeaponJian, ProfileFemale, m.cmVp.vpLookStyle, (0.0, 0.0), (0.0, 0.0), 0.0);
                         drawText(dl, cx, cy + 22.0, fontSans(11.5, 600), AlignCenter, hexColor("#3d352c"), pid)
                     } else ();
                     cellSet(idxCell, idx + 1);

@@ -276,6 +276,7 @@ pub data CombatantSnapshot {
         combatantSnapshotName: String,
         combatantSnapshotGender: String,
         combatantSnapshotCombatStyle: String,
+        combatantSnapshotWeaponVisual: String,
         combatantSnapshotHp: Int,
         combatantSnapshotMaxHp: Int,
         combatantSnapshotQi: Int,
@@ -289,18 +290,19 @@ pub data CombatantSnapshot {
 
 instance Encode CombatantSnapshot {
     def encode(c) = object([
-        "combatantSnapshotId"          := c.combatantSnapshotId,
-        "combatantSnapshotName"        := c.combatantSnapshotName,
-        "combatantSnapshotGender"      := c.combatantSnapshotGender,
-        "combatantSnapshotCombatStyle" := c.combatantSnapshotCombatStyle,
-        "combatantSnapshotHp"          := c.combatantSnapshotHp,
-        "combatantSnapshotMaxHp"       := c.combatantSnapshotMaxHp,
-        "combatantSnapshotQi"          := c.combatantSnapshotQi,
-        "combatantSnapshotMaxQi"       := c.combatantSnapshotMaxQi,
-        "combatantSnapshotAp"          := c.combatantSnapshotAp,
-        "combatantSnapshotApProgress"  := c.combatantSnapshotApProgress,
-        "combatantSnapshotAgility"     := c.combatantSnapshotAgility,
-        "combatantSnapshotEffects"     := c.combatantSnapshotEffects,
+        "combatantSnapshotId"           := c.combatantSnapshotId,
+        "combatantSnapshotName"         := c.combatantSnapshotName,
+        "combatantSnapshotGender"       := c.combatantSnapshotGender,
+        "combatantSnapshotCombatStyle"  := c.combatantSnapshotCombatStyle,
+        "combatantSnapshotWeaponVisual" := c.combatantSnapshotWeaponVisual,
+        "combatantSnapshotHp"           := c.combatantSnapshotHp,
+        "combatantSnapshotMaxHp"        := c.combatantSnapshotMaxHp,
+        "combatantSnapshotQi"           := c.combatantSnapshotQi,
+        "combatantSnapshotMaxQi"        := c.combatantSnapshotMaxQi,
+        "combatantSnapshotAp"           := c.combatantSnapshotAp,
+        "combatantSnapshotApProgress"   := c.combatantSnapshotApProgress,
+        "combatantSnapshotAgility"      := c.combatantSnapshotAgility,
+        "combatantSnapshotEffects"      := c.combatantSnapshotEffects,
     ])
 }
 

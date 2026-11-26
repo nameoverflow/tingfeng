@@ -17,7 +17,9 @@ use prelude.{
 use ordmap.{mapSize, mapElems, setFromList, setSize, setToAscList}
 use protocol.{CombatResult, ResHit, CombatEvt, MkCombatEvt}
 use pose.{
-    CombatStyle, StyleFist, StyleSword,
+    CombatStyle, StyleFist, StyleSword, StyleBlade, StyleSpear, StyleStaff,
+    WeaponVisual, WeaponUnarmed, WeaponJian, WeaponSaber, WeaponSpear, WeaponStaff,
+    weaponEq, defaultWeaponForStyle, weaponTipLength, weaponRigStyle,
     VisualProfile, ProfileMale, ProfileFemale,
     allPoseIds, parsePoseLibrary, svgSwordLength
 }
@@ -112,10 +114,11 @@ pub def runBattleSpec(rootDir: String): Result Void String = {
     let stagingRaw = readFile(resBase + "/combat_presentation/staging.json")?;
     let fistRaw = readFile(resBase + "/combat_actions/fist.json")?;
     let swordRaw = readFile(resBase + "/combat_actions/sword.json")?;
+    let weaponsRaw = readFile(resBase + "/combat_actions/weapons.json")?;
     let effRaw = readFile(resBase + "/combat_actions/effects.json")?;
 
     let poseLib = parsePoseLibrary(poseRaw)?;
-    let catalog: ActionCatalog = parseActionCatalog(stagingRaw, [fistRaw, swordRaw, effRaw])?;
+    let catalog: ActionCatalog = parseActionCatalog(stagingRaw, [fistRaw, swordRaw, weaponsRaw, effRaw])?;
 
     let allActs = mapElems(catalog.acActions);
     let attacks = listFilter(allActs, (a) -> isTravelMotion(a.adActorMotion));
@@ -150,9 +153,11 @@ pub def runBattleSpec(rootDir: String): Result Void String = {
                     ceDurationMs: Some(act.adDurationMs),
                     ceStagingOverride: None,
                 };
+                let actorWpn = defaultWeaponForStyle(act.adStyle);
                 let tl = resolveCombatTimeline(
                     catalog, ev, 1, SidePlayer, SideEnemy, act.adLabel,
-                    ProfileFemale, ProfileMale, act.adStyle, StyleSword
+                    ProfileFemale, ProfileMale, act.adStyle, StyleSword,
+                    actorWpn, WeaponJian
                 );
                 let pinned = listFilter(tl.tlActor.raPoseKeys, (pk) -> optIsSome(pk.pkPin));
                 let hCur = cellNew(tl.tlHits);
@@ -164,10 +169,10 @@ pub def runBattleSpec(rootDir: String): Result Void String = {
                             let key = listNthOr(pinned, idx, MkPoseKey {
                                 pkAtMs: 0.0, pkPose: "idle", pkPin: None, pkReach: None, pkContactY: None,
                             });
-                            let pose = sampleSvgPose(poseLib, Some(tl), SidePlayer, hit.rhAtMs, act.adStyle, "idle", false);
+                            let pose = sampleSvgPose(poseLib, Some(tl), SidePlayer, hit.rhAtMs, weaponRigStyle(actorWpn), actorWpn, "idle", false);
                             let pin = reachPointAt(tl, hit.rhAtMs);
                             let (lx, ly) = if (pinEq(pin, PinFoot)) pose.spFoot else pose.spHand;
-                            let bladeLen = if (pinEq(pin, PinBlade)) svgSwordLength() else 0.0;
+                            let bladeLen = if (pinEq(pin, PinBlade)) weaponTipLength(actorWpn) else 0.0;
                             let (ox, oy, _) = actorOffsetAt(tl, hit.rhAtMs);
                             let wx = ox + lx + bladeLen * cos(pose.spBlade * pi() / 180.0);
                             let wy = oy + ly + bladeLen * sin(pose.spBlade * pi() / 180.0);
@@ -223,9 +228,11 @@ pub def runBattleSpec(rootDir: String): Result Void String = {
                                 ceDurationMs: Some(scaledDur),
                                 ceStagingOverride: None,
                             };
+                            let actorWpn = defaultWeaponForStyle(act.adStyle);
                             let tl = resolveCombatTimeline(
                                 catalog, ev, 1, SidePlayer, SideEnemy, act.adLabel,
-                                ProfileFemale, ProfileMale, act.adStyle, StyleSword
+                                ProfileFemale, ProfileMale, act.adStyle, StyleSword,
+                                actorWpn, WeaponJian
                             );
                             let delayMs = tl.tlActor.raActionDelayMs;
                             let hitsInside = listAll(tl.tlHits, (h) -> h.rhAtMs > delayMs && h.rhAtMs < tl.tlDurationMs);
@@ -274,7 +281,8 @@ pub def runBattleSpec(rootDir: String): Result Void String = {
     };
     let comboTl = resolveCombatTimeline(
         catalog, comboEv, 1, SidePlayer, SideEnemy, "连环三捶",
-        ProfileFemale, ProfileMale, StyleFist, StyleSword
+        ProfileFemale, ProfileMale, StyleFist, StyleSword,
+        WeaponUnarmed, WeaponJian
     );
     ensure("combo_a has 3 hits", listLen(comboTl.tlHits) == 3)?;
     match comboTl.tlHits {
@@ -290,6 +298,37 @@ pub def runBattleSpec(rootDir: String): Result Void String = {
         _ -> returnErr("unexpected hit count for combo_a")?,
     };
     printLn("✓ Multi-hit damage splits by share ([5, 4, 9]) and sums to server total");
+
+    // 4. Weapon visual stays decoupled from action style (reused actions & kicks keep equipped weapon)
+    let saberReuseEv = MkCombatEvt {
+        ceKind: "normal", ceActorName: "行者", ceTargetName: "守擂人",
+        ceMsgKind: "script", ceText: "顺风斜斩", ceEffectKind: "", ceEffectAmount: 0,
+        ceDamage: Some(20), ceHeal: None, ceResult: ResHit, ceHits: Nil,
+        ceActionId: "rig.sword.chop_a", ceTags: Nil, ceLabel: None,
+        ceDurationMs: None, ceStagingOverride: None,
+    };
+    let saberTl = resolveCombatTimeline(
+        catalog, saberReuseEv, 2, SidePlayer, SideEnemy, "顺风斜斩",
+        ProfileFemale, ProfileMale, StyleBlade, StyleSword,
+        WeaponSaber, WeaponJian
+    );
+    ensure("saber keeps WeaponSaber when reusing rig.sword.chop_a", weaponEq(saberTl.tlActor.raVisual.avWeapon, WeaponSaber))?;
+
+    let spearKickEv = MkCombatEvt {
+        ceKind: "active_skill", ceActorName: "行者", ceTargetName: "守擂人",
+        ceMsgKind: "script", ceText: "翻桨踢", ceEffectKind: "", ceEffectAmount: 0,
+        ceDamage: Some(24), ceHeal: None, ceResult: ResHit, ceHits: Nil,
+        ceActionId: "rig.fist.kick_a", ceTags: Nil, ceLabel: None,
+        ceDurationMs: None, ceStagingOverride: None,
+    };
+    let spearKickTl = resolveCombatTimeline(
+        catalog, spearKickEv, 3, SidePlayer, SideEnemy, "翻桨踢",
+        ProfileFemale, ProfileMale, StyleSpear, StyleStaff,
+        WeaponSpear, WeaponStaff
+    );
+    ensure("spear stays in hand during fist/lightness kick", weaponEq(spearKickTl.tlActor.raVisual.avWeapon, WeaponSpear))?;
+    ensure("target keeps staff on reaction", weaponEq(spearKickTl.tlTarget.rtVisual.avWeapon, WeaponStaff))?;
+    printLn("✓ Weapon visual decoupling verified (reused actions & kicks preserve equipped weapons)");
     Ok(())
 }
 

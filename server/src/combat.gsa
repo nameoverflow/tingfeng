@@ -24,13 +24,13 @@ use ordmap.{
     mapEmpty, mapLookup, mapMember, mapInsert, mapFilter, mapMap, mapElems
 }
 use entity.{
-    EquipSlot, WeaponSlot, WeaponKind, SwordWeapon, FistWeapon,
+    EquipSlot, WeaponSlot, WeaponKind, SwordWeapon, FistWeapon, BladeWeapon, SpearWeapon, StaffWeapon,
     EffectType, DoT, HoT, Buff, DeBuff, listContainsEffectType,
     Effect, ActiveEffect, MkActiveEffect,
     CombatActionTiming, AnimationRef, CombatVisualHint, MkCombatVisualHint,
     ActiveSkillTarget, SingleTarget, AllTarget, SelfTarget,
     ActiveSkill, AttackMove,
-    ArtType, Sword, Fist, ArtEntity, MartialArt,
+    ArtType, Sword, Fist, Blade, Spear, Staff, ArtEntity, MartialArt,
     Character, Player,
     DerivedStats, characterDerivedStatSources, deriveCharacterStats,
     characterKnownArtLevel,
@@ -275,10 +275,13 @@ pub def preferredCombatArtTypes(char: Character): List ArtType =
     match mapLookup(char.charEquipped, WeaponSlot) {
         Some(eq) -> match eq.equippedWeaponKind {
             Some(SwordWeapon) if (mapMember(char.charEnabled, Sword)) -> [Sword],
+            Some(BladeWeapon) if (mapMember(char.charEnabled, Blade)) -> [Blade],
+            Some(SpearWeapon) if (mapMember(char.charEnabled, Spear)) -> [Spear],
+            Some(StaffWeapon) if (mapMember(char.charEnabled, Staff)) -> [Staff],
             Some(FistWeapon) if (mapMember(char.charEnabled, Fist)) -> [Fist],
-            _ -> [Sword, Fist],
+            _ -> [Sword, Blade, Spear, Staff, Fist],
         },
-        None -> [Sword, Fist],
+        None -> [Sword, Blade, Spear, Staff, Fist],
     }
 
 pub def unlockedPreparedAttacks(martialArts: OrdMap String MartialArt, char: Character): List PreparedAttack =

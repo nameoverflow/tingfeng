@@ -414,6 +414,7 @@ pub def applyPlayerSaveToGameState(save: PlayerSave, gs: GameState): GameState =
                                 equippedItemId: savedItemId,
                                 equippedSlot: slot,
                                 equippedWeaponKind: eq.equipWeaponKind,
+                                equippedWeaponVisual: eq.equipWeaponVisual,
                                 equippedModifiers: eq.equipModifiers,
                             }),
                         _ -> None,

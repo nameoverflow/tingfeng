@@ -86,6 +86,10 @@ const fixturesApi = {
     callLab("speed", "", "", "", Number(val) || 1);
     pullLabState();
   },
+  weapon: (side = "player", visual = "jian") => {
+    callLab("weapon", side, visual, "", 0);
+    pullLabState();
+  },
   ui: (kind, a1 = "", a2 = "") => {
     callUi(kind, a1, a2);
     pullLabState();
@@ -96,11 +100,12 @@ window.__battleLab = fixturesApi;
 globalThis.__tfHsFixtures = fixturesApi;
 
 async function boot() {
-  const [poseTxt, stgTxt, fistTxt, swordTxt, effTxt] = await Promise.all([
+  const [poseTxt, stgTxt, fistTxt, swordTxt, weaponsTxt, effTxt] = await Promise.all([
     fetch("/data/svg-poses.json").then((r) => r.text()),
     fetch("/data/staging.json").then((r) => r.text()),
     fetch("/data/fist.json").then((r) => r.text()),
     fetch("/data/sword.json").then((r) => r.text()),
+    fetch("/data/weapons.json").then((r) => r.text()),
     fetch("/data/effects.json").then((r) => r.text()),
   ]);
 
@@ -119,6 +124,7 @@ async function boot() {
           writeStr(stgTxt),
           writeStr(fistTxt),
           writeStr(swordTxt),
+          writeStr(weaponsTxt),
           writeStr(effTxt),
           reducedMotionQuery.matches ? 1 : 0
         )

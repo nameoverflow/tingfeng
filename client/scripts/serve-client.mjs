@@ -26,6 +26,7 @@ const DATA_FILES = {
   "/data/staging.json": path.join(REPO_ROOT, "resources/scripts/combat_presentation/staging.json"),
   "/data/fist.json": path.join(REPO_ROOT, "resources/scripts/combat_actions/fist.json"),
   "/data/sword.json": path.join(REPO_ROOT, "resources/scripts/combat_actions/sword.json"),
+  "/data/weapons.json": path.join(REPO_ROOT, "resources/scripts/combat_actions/weapons.json"),
   "/data/effects.json": path.join(REPO_ROOT, "resources/scripts/combat_actions/effects.json"),
 };
 

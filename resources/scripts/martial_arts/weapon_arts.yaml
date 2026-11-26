@@ -1,0 +1,143 @@
+- id: kaifeng_saber
+  name: "开封五虎刀"
+  type: blade
+  tier: entry
+  desc: "开封城外押车护院与军汉常练的刚猛刀法。前两招沿用江湖通用劈斩步法，收尾绝招则是沉肩借腰的力劈重斩。"
+  foundation: basic_blade
+  requires:
+    - art: basic_blade
+      level: 5
+  max_level: 25
+  attack_moves:
+    - id: wuhu_cut
+      name: "顺风斜斩"
+      desc: "借进身之势斜刀斩出，复用标准劈斩步法。"
+      msg: "踏步横身，刀光顺势斜斩过去"
+      unlock_level: 1
+      damage: 14
+      animation:
+        action: rig.sword.cut_a
+        tags: ["blade", "slash"]
+    - id: wuhu_sweep
+      name: "横江断水"
+      desc: "沉腰挥刀平扫中路，迫开对手近身。"
+      msg: "沉腰拧胯，一记大刀平扫中路"
+      unlock_level: 6
+      damage: 17
+      animation:
+        action: rig.blade.sweep_a
+        tags: ["blade", "slash"]
+  active_skills:
+    - id: wuhu_cleave
+      name: "断浪力劈"
+      desc: "举刀蓄势后全速抢进，当头力劈而下。"
+      msg: "高举长刀沉身抢步，当头力劈而下"
+      unlock_level: 4
+      cd: 12.0
+      target: Single
+      cost: 40
+      ap_req: 65
+      req_status: []
+      damage: 56
+      animation:
+        action: rig.blade.cleave_a
+        tags: ["blade", "heavy", "chop"]
+      effect:
+        self: []
+        target: []
+
+- id: bianliang_spear
+  name: "汴梁杨家枪"
+  type: spear
+  tier: entry
+  desc: "脱胎于北宋边军枪术的路数。平刺可复用直刺步法，长突与连环三点则尽显长兵一寸长一寸强的锐气。"
+  foundation: basic_spear
+  requires:
+    - art: basic_spear
+      level: 5
+  max_level: 25
+  attack_moves:
+    - id: yang_straight_thrust
+      name: "中平直刺"
+      desc: "稳步平刺中宫，复用直刺身法。"
+      msg: "双手持杆稳步前递，枪尖直取中宫"
+      unlock_level: 1
+      damage: 14
+      animation:
+        action: rig.sword.thrust_a
+        tags: ["spear", "stab"]
+    - id: yang_long_lunge
+      name: "回马长刺"
+      desc: "压低重心长步抢进，借杆身弹性远距离突刺。"
+      msg: "压低身形长步抢进，枪尖如电直射胸口"
+      unlock_level: 6
+      damage: 18
+      animation:
+        action: rig.spear.lunge_a
+        tags: ["spear", "thrust", "long"]
+  active_skills:
+    - id: yang_pear_blossom
+      name: "梨花三点"
+      desc: "枪花一抖，中、下、上三路连刺，令对手防不胜防。"
+      msg: "枪杆急颤，中下上三路连环三枪疾点而出"
+      unlock_level: 5
+      cd: 14.0
+      target: Single
+      cost: 48
+      ap_req: 70
+      req_status: []
+      damage: 64
+      animation:
+        action: rig.spear.flurry_a
+        tags: ["spear", "combo", "thrust"]
+      effect:
+        self: []
+        target: []
+
+- id: shaolin_staff
+  name: "行者齐眉棍"
+  type: staff
+  tier: entry
+  desc: "江湖行脚武僧与镖师常用的齐眉棍法。撩挑可借上挑旧势，横扫与腾空砸击则专破对手下盘与架势。"
+  foundation: basic_staff
+  requires:
+    - art: basic_staff
+      level: 5
+  max_level: 25
+  attack_moves:
+    - id: xingzhe_lift
+      name: "拨草寻蛇"
+      desc: "沉棍由下往上挑打，复用上挑身法。"
+      msg: "棍尾一沉，自下而上斜挑对手手腕"
+      unlock_level: 1
+      damage: 13
+      animation:
+        action: rig.sword.rising_cut_a
+        tags: ["staff", "rising"]
+    - id: xingzhe_sweep
+      name: "横扫千军"
+      desc: "伏身滑步，长棍横扫对手腰肋与下盘。"
+      msg: "伏身滑步，长棍带着风声横扫而出"
+      unlock_level: 6
+      damage: 17
+      animation:
+        action: rig.staff.sweep_a
+        tags: ["staff", "sweep", "heavy"]
+  active_skills:
+    - id: xingzhe_smash
+      name: "泰山压顶"
+      desc: "提膝纵身跃起，借下坠之势双手举棍猛砸。"
+      msg: "纵身跃起，双手举棍如泰山压顶般重重砸落"
+      unlock_level: 5
+      cd: 14.0
+      target: Single
+      cost: 46
+      ap_req: 70
+      req_status: []
+      damage: 62
+      animation:
+        action: rig.staff.smash_a
+        tags: ["staff", "aerial", "heavy"]
+      effect:
+        self: []
+        target: []

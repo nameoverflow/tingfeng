@@ -165,6 +165,7 @@
     type: equip
     slot: weapon
     weapon_kind: sword
+    weapon_visual: jian
     damage_bonus: 5
     hit: 8
     agility: 1
@@ -177,6 +178,7 @@
     type: equip
     slot: weapon
     weapon_kind: sword
+    weapon_visual: narrow_sword
     damage_bonus: 8
     hit: 12
     parry: 6
@@ -190,6 +192,7 @@
     type: equip
     slot: weapon
     weapon_kind: fist
+    weapon_visual: bracers
     damage_bonus: 5
     hit: 6
     parry: 8
@@ -203,11 +206,54 @@
     type: equip
     slot: weapon
     weapon_kind: fist
+    weapon_visual: gauntlets
     damage_bonus: 8
     parry: 10
     strength: 3
     vitality: 1
     message: "你戴上苍山裂石护手，双掌一合，沉甸甸的乌钢护手与掌力浑然一体。"
+
+- id: yanling_saber
+  name: "雁翎刀"
+  desc: "汴京兵坊常见的前宽后窄单刃雁翎刀，环首压手，劈砍势大力沉。"
+  use:
+    type: equip
+    slot: weapon
+    weapon_kind: blade
+    weapon_visual: saber
+    damage_bonus: 7
+    hit: 6
+    parry: 5
+    strength: 2
+    message: "你抽出雁翎刀斜横身前，刀背厚实沉稳，颇具煞气。"
+
+- id: red_tassel_spear
+  name: "红缨长枪"
+  desc: "白蜡杆配柳叶枪头，枪颈扎着一束鲜红丝缨，刺出时抖动如花，中远距离极占先机。"
+  use:
+    type: equip
+    slot: weapon
+    weapon_kind: spear
+    weapon_visual: spear
+    damage_bonus: 7
+    hit: 11
+    agility: 2
+    message: "你单手托起红缨长枪一抖枪花，白蜡杆微微颤鸣。"
+
+- id: qimei_staff
+  name: "齐眉熟铜棍"
+  desc: "两端箍有厚重铜套的齐眉长棍，攻守兼备，横扫砸击皆能震开兵刃。"
+  use:
+    type: equip
+    slot: weapon
+    weapon_kind: staff
+    weapon_visual: staff
+    damage_bonus: 6
+    hit: 7
+    parry: 10
+    strength: 2
+    vitality: 1
+    message: "你双手握住齐眉熟铜棍往地上一顿，棍尾铜套沉沉作响。"
 
 - id: patrol_leather_armor
   name: "巡检皮甲"

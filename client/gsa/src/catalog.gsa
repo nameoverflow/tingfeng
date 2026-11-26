@@ -11,7 +11,7 @@ use protocol.{
     CombatResult, ResHit, ResDodge, ResParry, ResEffect,
     vLookup, fStr, fStrOr, fIntOr, fFloat, fFloatOr, fArr, fStrList
 }
-use pose.{CombatStyle, StyleFist, StyleSword, parseCombatStyle}
+use pose.{CombatStyle, StyleFist, StyleSword, StyleBlade, StyleSpear, StyleStaff, parseCombatStyle}
 
 pub data PinPoint {
     PinHand,
@@ -481,21 +481,24 @@ pub def parseActionCatalog(stagingRaw: String, manifestRaws: List String): Resul
 
 pub def defaultActionIdForStyle(style: CombatStyle): String = match style {
     StyleSword -> "rig.sword.chop_a",
+    StyleBlade -> "rig.blade.cleave_a",
+    StyleSpear -> "rig.spear.lunge_a",
+    StyleStaff -> "rig.staff.sweep_a",
     StyleFist -> "rig.fist.punch_a",
 }
 
 pub def idleActionIdForStyle(style: CombatStyle): String = match style {
-    StyleSword -> "rig.sword.idle",
     StyleFist -> "rig.fist.idle",
+    _ -> "rig.sword.idle",
 }
 
 pub def reactionActionIdForStyle(react: TargetReaction, style: CombatStyle): String = match (react, style) {
-    (ReactHit, StyleSword) -> "rig.sword.hurt",
     (ReactHit, StyleFist) -> "rig.fist.hurt",
-    (ReactDodge, StyleSword) -> "rig.sword.dodge",
+    (ReactHit, _) -> "rig.sword.hurt",
     (ReactDodge, StyleFist) -> "rig.fist.dodge",
-    (ReactParry, StyleSword) -> "rig.sword.parry",
+    (ReactDodge, _) -> "rig.sword.dodge",
     (ReactParry, StyleFist) -> "rig.fist.parry",
+    (ReactParry, _) -> "rig.sword.parry",
     _ -> idleActionIdForStyle(style),
 }
 

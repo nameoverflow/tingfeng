@@ -139,23 +139,35 @@ instance Encode EquipSlot {
 pub data WeaponKind {
     SwordWeapon,
     FistWeapon,
+    BladeWeapon,
+    SpearWeapon,
+    StaffWeapon,
 }
 
 pub def weaponKindEq(a: WeaponKind, b: WeaponKind): Bool = match (a, b) {
     (SwordWeapon, SwordWeapon) -> true,
     (FistWeapon, FistWeapon) -> true,
+    (BladeWeapon, BladeWeapon) -> true,
+    (SpearWeapon, SpearWeapon) -> true,
+    (StaffWeapon, StaffWeapon) -> true,
     _ -> false,
 }
 
 pub def weaponKindToText(w: WeaponKind): String = match w {
     SwordWeapon -> "sword",
     FistWeapon -> "fist",
+    BladeWeapon -> "blade",
+    SpearWeapon -> "spear",
+    StaffWeapon -> "staff",
 }
 
 pub def weaponKindFromText(raw: String): Option WeaponKind = {
     let s = strToLowerAscii(raw);
     if (s == "sword") Some(SwordWeapon)
     else if (s == "fist") Some(FistWeapon)
+    else if (s == "blade") Some(BladeWeapon)
+    else if (s == "spear") Some(SpearWeapon)
+    else if (s == "staff") Some(StaffWeapon)
     else None
 }
 
@@ -307,6 +319,7 @@ pub data ItemEquip {
     MkItemEquip {
         equipSlot: EquipSlot,
         equipWeaponKind: Option WeaponKind,
+        equipWeaponVisual: Option String,
         equipModifiers: DerivedStatModifiers,
         equipMessage: Option String,
         unequipMessage: Option String,
@@ -318,6 +331,7 @@ pub data EquippedItem {
         equippedItemId: String,
         equippedSlot: EquipSlot,
         equippedWeaponKind: Option WeaponKind,
+        equippedWeaponVisual: Option String,
         equippedModifiers: DerivedStatModifiers,
     },
 }
@@ -387,10 +401,11 @@ def decodeMedicineUse(): Decoder ItemUse =
         |> opt("message", str)
 
 def decodeEquipUse(): Decoder ItemUse =
-    succeed((slot) -> (wk) -> (msg) -> (umsg) -> (mods) ->
+    succeed((slot) -> (wk) -> (wv) -> (msg) -> (umsg) -> (mods) ->
         EquipUse(MkItemEquip {
             equipSlot: slot,
             equipWeaponKind: wk,
+            equipWeaponVisual: wv,
             equipModifiers: mods,
             equipMessage: msg,
             unequipMessage: umsg,
@@ -398,6 +413,7 @@ def decodeEquipUse(): Decoder ItemUse =
     )
         |> req("slot", decodeEquipSlot())
         |> opt("weapon_kind", decodeWeaponKind())
+        |> opt("weapon_visual", str)
         |> opt("message", str)
         |> opt("unequip_message", str)
         |> custom(decodeDerivedStatModifiers())
@@ -714,6 +730,9 @@ pub data ArtType {
     Lightness,
     Sword,
     Fist,
+    Blade,
+    Spear,
+    Staff,
 }
 
 def artTypeRank(t: ArtType): Int = match t {
@@ -722,6 +741,9 @@ def artTypeRank(t: ArtType): Int = match t {
     Lightness -> 2,
     Sword -> 3,
     Fist -> 4,
+    Blade -> 5,
+    Spear -> 6,
+    Staff -> 7,
 }
 
 pub def artTypeEq(a: ArtType, b: ArtType): Bool =
@@ -737,6 +759,9 @@ pub def artTypeToText(t: ArtType): String = match t {
     Lightness -> "lightness",
     Sword -> "sword",
     Fist -> "fist",
+    Blade -> "blade",
+    Spear -> "spear",
+    Staff -> "staff",
 }
 
 pub def artTypeFromText(s: String): Option ArtType =
@@ -745,6 +770,9 @@ pub def artTypeFromText(s: String): Option ArtType =
     else if (s == "lightness") Some(Lightness)
     else if (s == "sword") Some(Sword)
     else if (s == "fist") Some(Fist)
+    else if (s == "blade") Some(Blade)
+    else if (s == "spear") Some(Spear)
+    else if (s == "staff") Some(Staff)
     else None
 
 pub def parseArtTypeKey(s: String): Result ArtType String = match artTypeFromText(s) {
@@ -1570,8 +1598,14 @@ pub def characterCombatRank(char: Character): Int = match char.charRank {
     Some(r) -> r,
     None -> listMaxInt([
         equippedArtLevel(Sword, char),
+        equippedArtLevel(Blade, char),
+        equippedArtLevel(Spear, char),
+        equippedArtLevel(Staff, char),
         equippedArtLevel(Fist, char),
         characterKnownArtLevel("basic_sword", char),
+        characterKnownArtLevel("basic_blade", char),
+        characterKnownArtLevel("basic_spear", char),
+        characterKnownArtLevel("basic_staff", char),
         characterKnownArtLevel("basic_fist", char),
     ], 0),
 }
@@ -1683,6 +1717,9 @@ pub def deriveCharacterStats(char: Character, combatExp: Int, sources: DerivedSt
     let basicLightness = characterKnownArtLevel("basic_lightness", char);
     let basicFist = characterKnownArtLevel("basic_fist", char);
     let basicSword = characterKnownArtLevel("basic_sword", char);
+    let basicBlade = characterKnownArtLevel("basic_blade", char);
+    let basicSpear = characterKnownArtLevel("basic_spear", char);
+    let basicStaff = characterKnownArtLevel("basic_staff", char);
 
     let effStr = clampEffectiveAttr(innate.innateStrength + floorDiv(basicFist, 20) + mods.dsmStrength);
     let effAgi = clampEffectiveAttr(innate.innateAgility + floorDiv(basicLightness, 20) + mods.dsmAgility);
@@ -1693,16 +1730,26 @@ pub def deriveCharacterStats(char: Character, combatExp: Int, sources: DerivedSt
     let internalPower = floorDiv(basicInternal, 2) + enabledInternal;
     let lightnessPower = floorDiv(basicLightness, 2) + enabledLightness;
 
+    let maxMelee = listMaxInt([
+        equippedArtLevel(Sword, char),
+        equippedArtLevel(Blade, char),
+        equippedArtLevel(Spear, char),
+        equippedArtLevel(Staff, char),
+        equippedArtLevel(Fist, char),
+    ], 0);
     let meleeLevel = match mapLookup(char.charEquipped, WeaponSlot) {
         Some(eq) -> match eq.equippedWeaponKind {
             Some(SwordWeapon) if (mapMember(char.charEnabled, Sword)) -> equippedArtLevel(Sword, char),
+            Some(BladeWeapon) if (mapMember(char.charEnabled, Blade)) -> equippedArtLevel(Blade, char),
+            Some(SpearWeapon) if (mapMember(char.charEnabled, Spear)) -> equippedArtLevel(Spear, char),
+            Some(StaffWeapon) if (mapMember(char.charEnabled, Staff)) -> equippedArtLevel(Staff, char),
             Some(FistWeapon) if (mapMember(char.charEnabled, Fist)) -> equippedArtLevel(Fist, char),
-            _ -> maxInt(equippedArtLevel(Sword, char), equippedArtLevel(Fist, char)),
+            _ -> maxMelee,
         },
-        None -> maxInt(equippedArtLevel(Sword, char), equippedArtLevel(Fist, char)),
+        None -> maxMelee,
     };
 
-    let foundationMelee = maxInt(basicFist, basicSword);
+    let foundationMelee = listMaxInt([basicFist, basicSword, basicBlade, basicSpear, basicStaff], 0);
     let parryArtLevel = meleeLevel;
     let combatExpHpBonus = minInt(80, floorDiv(combatExp, 2000));
     let combatExpJingBonus = minInt(60, floorDiv(combatExp, 3000));

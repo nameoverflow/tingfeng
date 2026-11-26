@@ -33,7 +33,7 @@ const actionIds = new Set();
 for (const action of manifest.actions) {
   if (!action.id || actionIds.has(action.id)) fail(`Duplicate or empty rig action id: ${action.id || "<empty>"}`);
   actionIds.add(action.id);
-  if (action.style !== "fist" && action.style !== "sword") fail(`Animation action ${action.id} has invalid style ${action.style}`);
+  if (!["fist", "sword", "blade", "spear", "staff"].includes(action.style)) fail(`Animation action ${action.id} has invalid style ${action.style}`);
   if (!Array.isArray(action.frames) || action.frames.length === 0) fail(`Animation action ${action.id} has no frames`);
   if (!Number.isInteger(action.impactFrame) || action.impactFrame < 0 || action.impactFrame >= action.frames.length) {
     fail(`Animation action ${action.id} has invalid impactFrame=${action.impactFrame}`);

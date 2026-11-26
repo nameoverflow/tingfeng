@@ -114,6 +114,9 @@
   shop:
     qinggang_sword: 45
     iron_fist_bracers: 42
+    yanling_saber: 48
+    red_tassel_spear: 52
+    qimei_staff: 46
     patrol_leather_armor: 48
   dialogue:
     - "没钱就帮我看炉、鼓风、淬火。开封不少江湖人的第一口饭，都是从铁铺挣的。"

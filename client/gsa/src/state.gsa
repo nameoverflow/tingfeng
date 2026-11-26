@@ -17,7 +17,7 @@ use prelude.{
     exp, absFloat, minInt, maxInt, clampInt, minFloat, maxFloat, clampFloat, clamp01,
     floorInt, ceilInt, roundInt, floorDiv, floorMod, numVal, parseIntOr,
     optOr, optIsSome, optIsNone, listIsEmpty, listHead, listLast, listNthOr,
-    listFind, listFilter, listFilterMap, listDrop, intRange,
+    listFind, listFindIndex, listFilter, listFilterMap, listDrop, intRange,
     utf8Trim, utf8FoldCodepoints, strContains
 }
 use ordmap.{OrdMap, mapEmpty, mapLookup, mapInsert, mapElems}
@@ -40,6 +40,7 @@ use protocol.{
 }
 use pose.{
     CombatStyle, StyleFist, StyleSword, combatStyleText, parseCombatStyle,
+    WeaponVisual, WeaponUnarmed, WeaponJian, allWeaponVisuals, weaponVisualText, parseWeaponVisual, weaponRigStyle,
     VisualProfile, ProfileMale, ProfileFemale, parseVisualProfile,
     LookStyle, LookMaiden, LookPonytail, lookEq,
     PoseLibrary
@@ -270,6 +271,8 @@ pub data LabControls {
         labActionIdx: Int,
         labOutcomeIdx: Int,
         labSideIdx: Int,
+        labPlayerWeaponIdx: Int,
+        labEnemyWeaponIdx: Int,
     },
 }
 
@@ -596,6 +599,8 @@ pub def initClientModel(
         labActionIdx: 0,
         labOutcomeIdx: 0,
         labSideIdx: 0,
+        labPlayerWeaponIdx: 0,
+        labEnemyWeaponIdx: 3,
     },
     cmUi: MkUiChrome {
         uiLogs: Nil,
@@ -692,14 +697,18 @@ def snapCamToTarget(m: ClientModel): ClientModel = {
     })
 }
 
-def currentStylesAndProfiles(m: ClientModel): (CombatStyle, CombatStyle, VisualProfile, VisualProfile, String, String) =
+def currentStylesAndProfiles(m: ClientModel): (CombatStyle, CombatStyle, WeaponVisual, WeaponVisual, VisualProfile, VisualProfile, String, String) =
     match m.cmBattle.btSnap {
         Some(bs) -> {
             let p = bs.bsPlayer;
             let e = bs.bsEnemy;
+            let pSt = parseCombatStyle(p.cbStyle);
+            let eSt = parseCombatStyle(e.cbStyle);
             (
-                parseCombatStyle(p.cbStyle),
-                parseCombatStyle(e.cbStyle),
+                pSt,
+                eSt,
+                parseWeaponVisual(p.cbWeaponVisual, pSt),
+                parseWeaponVisual(e.cbWeaponVisual, eSt),
                 parseVisualProfile(p.cbGender),
                 parseVisualProfile(e.cbGender),
                 p.cbName,
@@ -709,6 +718,8 @@ def currentStylesAndProfiles(m: ClientModel): (CombatStyle, CombatStyle, VisualP
         None -> (
             StyleFist,
             StyleSword,
+            WeaponUnarmed,
+            WeaponJian,
             parseVisualProfile(m.cmHero.hsStats.psGender),
             ProfileMale,
             if (strLen(m.cmAuth.auUsername) == 0) "行者" else m.cmAuth.auUsername,
@@ -890,7 +901,7 @@ def startNextBattleItemM(): ClientM Void =
             })))
         },
         Cons(item, rest) -> {
-            let (pStyle, eStyle, pProf, eProf, pName, eName) = currentStylesAndProfiles(m0);
+            let (pStyle, eStyle, pWeapon, eWeapon, pProf, eProf, pName, eName) = currentStylesAndProfiles(m0);
             let tid = bt0.btNextTimelineId;
             match item {
                 QCombat(ev, mPreSnap) -> {
@@ -906,7 +917,9 @@ def startNextBattleItemM(): ClientM Void =
                         if (sideEq(actorSide, SidePlayer)) pProf else eProf,
                         if (sideEq(targetSide, SidePlayer)) pProf else eProf,
                         if (sideEq(actorSide, SidePlayer)) pStyle else eStyle,
-                        if (sideEq(targetSide, SidePlayer)) pStyle else eStyle
+                        if (sideEq(targetSide, SidePlayer)) pStyle else eStyle,
+                        if (sideEq(actorSide, SidePlayer)) pWeapon else eWeapon,
+                        if (sideEq(targetSide, SidePlayer)) pWeapon else eWeapon
                     );
                     let pres0 = match (bt0.btPresentation, mPreSnap) {
                         (Some(pr), _) -> pr,
@@ -961,7 +974,7 @@ def startNextBattleItemM(): ClientM Void =
                     let txt =
                         if (isZh(m0.cmVp.vpLocale)) (if (win) "胜。与" else "败。与") + enemyName + "的交锋已分胜负。"
                         else (if (win) "Victory against " else "Defeat against ") + enemyName + ".";
-                    let tl = resolveSettlementTimeline(m0.cmCatalog, tid, actorSide, targetSide, txt, pProf, eProf, pStyle, eStyle);
+                    let tl = resolveSettlementTimeline(m0.cmCatalog, tid, actorSide, targetSide, txt, pProf, eProf, pStyle, eStyle, pWeapon, eWeapon);
                     let m1 = pushLog("combat", txt, withBattle(m0, MkBattleStateView {
                         btInBattle: bt0.btInBattle, btSnap: bt0.btSnap,
                         btCooldownSyncedMs: bt0.btCooldownSyncedMs, btActionLockUntilMs: bt0.btActionLockUntilMs,
@@ -2096,6 +2109,7 @@ pub def handleUiAction(kind: String, a1: String, a2: String, m0: ClientModel): (
             (withLab(m0, MkLabControls {
                 labPaused: lb.labPaused, labSpeed: lb.labSpeed,
                 labActionIdx: idxNext, labOutcomeIdx: lb.labOutcomeIdx, labSideIdx: lb.labSideIdx,
+                labPlayerWeaponIdx: lb.labPlayerWeaponIdx, labEnemyWeaponIdx: lb.labEnemyWeaponIdx,
             }), Nil)
         },
         "lab_cycle_outcome" -> {
@@ -2103,6 +2117,7 @@ pub def handleUiAction(kind: String, a1: String, a2: String, m0: ClientModel): (
             (withLab(m0, MkLabControls {
                 labPaused: lb.labPaused, labSpeed: lb.labSpeed,
                 labActionIdx: lb.labActionIdx, labOutcomeIdx: floorMod(lb.labOutcomeIdx + 1, 4), labSideIdx: lb.labSideIdx,
+                labPlayerWeaponIdx: lb.labPlayerWeaponIdx, labEnemyWeaponIdx: lb.labEnemyWeaponIdx,
             }), Nil)
         },
         "lab_cycle_side" -> {
@@ -2110,7 +2125,34 @@ pub def handleUiAction(kind: String, a1: String, a2: String, m0: ClientModel): (
             (withLab(m0, MkLabControls {
                 labPaused: lb.labPaused, labSpeed: lb.labSpeed,
                 labActionIdx: lb.labActionIdx, labOutcomeIdx: lb.labOutcomeIdx, labSideIdx: floorMod(lb.labSideIdx + 1, 2),
+                labPlayerWeaponIdx: lb.labPlayerWeaponIdx, labEnemyWeaponIdx: lb.labEnemyWeaponIdx,
             }), Nil)
+        },
+        "lab_cycle_p_weapon" -> {
+            let ws = allWeaponVisuals();
+            let wn = maxInt(1, listLen(ws));
+            let lb = m0.cmLab;
+            let nextIdx = floorMod(lb.labPlayerWeaponIdx + 1, wn);
+            let wv = listNthOr(ws, nextIdx, WeaponUnarmed);
+            let m1 = withLab(m0, MkLabControls {
+                labPaused: lb.labPaused, labSpeed: lb.labSpeed,
+                labActionIdx: lb.labActionIdx, labOutcomeIdx: lb.labOutcomeIdx, labSideIdx: lb.labSideIdx,
+                labPlayerWeaponIdx: nextIdx, labEnemyWeaponIdx: lb.labEnemyWeaponIdx,
+            });
+            handleLabCommand("weapon", "player", weaponVisualText(wv), "", 0.0, m1)
+        },
+        "lab_cycle_e_weapon" -> {
+            let ws = allWeaponVisuals();
+            let wn = maxInt(1, listLen(ws));
+            let lb = m0.cmLab;
+            let nextIdx = floorMod(lb.labEnemyWeaponIdx + 1, wn);
+            let wv = listNthOr(ws, nextIdx, WeaponJian);
+            let m1 = withLab(m0, MkLabControls {
+                labPaused: lb.labPaused, labSpeed: lb.labSpeed,
+                labActionIdx: lb.labActionIdx, labOutcomeIdx: lb.labOutcomeIdx, labSideIdx: lb.labSideIdx,
+                labPlayerWeaponIdx: lb.labPlayerWeaponIdx, labEnemyWeaponIdx: nextIdx,
+            });
+            handleLabCommand("weapon", "enemy", weaponVisualText(wv), "", 0.0, m1)
         },
         "lab_play_selected" -> {
             let acts = labActionOrder(m0);
@@ -2461,20 +2503,28 @@ pub def handleUiAction(kind: String, a1: String, a2: String, m0: ClientModel): (
         _ -> (m0, Nil),
     }
 
-def labCombatant(name: String, style: String, gender: String): CombatantInfo = MkCombatantInfo {
-    cbId: name, cbName: name, cbGender: gender, cbStyle: style,
+def labCombatant(name: String, style: String, weaponVisual: String, gender: String): CombatantInfo = MkCombatantInfo {
+    cbId: name, cbName: name, cbGender: gender, cbStyle: style, cbWeaponVisual: weaponVisual,
     cbHp: 180, cbMaxHp: 180, cbQi: 100, cbMaxQi: 100,
     cbAp: 100, cbApProgress: 100.0, cbAgility: 18, cbEffects: Nil,
 }
 
 def withCombatantStyle(cb: CombatantInfo, st: String): CombatantInfo = MkCombatantInfo {
-    cbId: cb.cbId, cbName: cb.cbName, cbGender: cb.cbGender, cbStyle: st,
+    cbId: cb.cbId, cbName: cb.cbName, cbGender: cb.cbGender, cbStyle: st, cbWeaponVisual: cb.cbWeaponVisual,
+    cbHp: cb.cbHp, cbMaxHp: cb.cbMaxHp, cbQi: cb.cbQi, cbMaxQi: cb.cbMaxQi,
+    cbAp: cb.cbAp, cbApProgress: cb.cbApProgress, cbAgility: cb.cbAgility, cbEffects: cb.cbEffects,
+}
+
+def withCombatantWeapon(cb: CombatantInfo, wv: WeaponVisual): CombatantInfo = MkCombatantInfo {
+    cbId: cb.cbId, cbName: cb.cbName, cbGender: cb.cbGender,
+    cbStyle: combatStyleText(weaponRigStyle(wv)),
+    cbWeaponVisual: weaponVisualText(wv),
     cbHp: cb.cbHp, cbMaxHp: cb.cbMaxHp, cbQi: cb.cbQi, cbMaxQi: cb.cbMaxQi,
     cbAp: cb.cbAp, cbApProgress: cb.cbApProgress, cbAgility: cb.cbAgility, cbEffects: cb.cbEffects,
 }
 
 def withCombatantHpDelta(cb: CombatantInfo, delta: Int): CombatantInfo = MkCombatantInfo {
-    cbId: cb.cbId, cbName: cb.cbName, cbGender: cb.cbGender, cbStyle: cb.cbStyle,
+    cbId: cb.cbId, cbName: cb.cbName, cbGender: cb.cbGender, cbStyle: cb.cbStyle, cbWeaponVisual: cb.cbWeaponVisual,
     cbHp: clampInt(0, cb.cbMaxHp, cb.cbHp + delta),
     cbMaxHp: cb.cbMaxHp, cbQi: cb.cbQi, cbMaxQi: cb.cbMaxQi,
     cbAp: cb.cbAp, cbApProgress: cb.cbApProgress, cbAgility: cb.cbAgility, cbEffects: cb.cbEffects,
@@ -2491,9 +2541,13 @@ pub def handleLabCommand(
     "seed" -> {
         let pGender = if (strLen(a1) == 0) "female" else a1;
         let eGender = if (strLen(a2) == 0) "male" else a2;
+        let ws = allWeaponVisuals();
+        let wn = maxInt(1, listLen(ws));
+        let pWv = listNthOr(ws, floorMod(m0.cmLab.labPlayerWeaponIdx, wn), WeaponUnarmed);
+        let eWv = listNthOr(ws, floorMod(m0.cmLab.labEnemyWeaponIdx, wn), WeaponJian);
         let snap = MkBattleSnap {
-            bsPlayer: labCombatant("行者", "fist", pGender),
-            bsEnemy: labCombatant("守擂人", "sword", eGender),
+            bsPlayer: labCombatant("行者", combatStyleText(weaponRigStyle(pWv)), weaponVisualText(pWv), pGender),
+            bsEnemy: labCombatant("守擂人", combatStyleText(weaponRigStyle(eWv)), weaponVisualText(eWv), eGender),
             bsCooldowns: mapEmpty(),
             bsActiveSkills: Nil,
             bsActionLock: 0.0,
@@ -2556,6 +2610,7 @@ pub def handleLabCommand(
                 MkLabControls {
                     labPaused: false, labSpeed: 1.0,
                     labActionIdx: lb.labActionIdx, labOutcomeIdx: lb.labOutcomeIdx, labSideIdx: lb.labSideIdx,
+                    labPlayerWeaponIdx: lb.labPlayerWeaponIdx, labEnemyWeaponIdx: lb.labEnemyWeaponIdx,
                 }
             ),
             MkUiChrome {
@@ -2567,6 +2622,39 @@ pub def handleLabCommand(
         );
         applyServerMessage(SmBattleState(snap), mReset)
     },
+    "weapon" -> {
+        let side = parseBattleSide(if (strLen(a1) == 0) "player" else a1);
+        let wv = parseWeaponVisual(a2, if (sideEq(side, SidePlayer)) StyleFist else StyleSword);
+        let bs0 = optOr(m0.cmBattle.btSnap, MkBattleSnap {
+            bsPlayer: labCombatant("行者", "fist", "unarmed", "female"),
+            bsEnemy: labCombatant("守擂人", "sword", "jian", "male"),
+            bsCooldowns: mapEmpty(), bsActiveSkills: Nil, bsActionLock: 0.0, bsPendingSkillId: None,
+        });
+        let nextSnap =
+            if (sideEq(side, SidePlayer)) {
+                MkBattleSnap {
+                    bsPlayer: withCombatantWeapon(bs0.bsPlayer, wv), bsEnemy: bs0.bsEnemy,
+                    bsCooldowns: bs0.bsCooldowns, bsActiveSkills: bs0.bsActiveSkills,
+                    bsActionLock: bs0.bsActionLock, bsPendingSkillId: bs0.bsPendingSkillId,
+                }
+            } else {
+                MkBattleSnap {
+                    bsPlayer: bs0.bsPlayer, bsEnemy: withCombatantWeapon(bs0.bsEnemy, wv),
+                    bsCooldowns: bs0.bsCooldowns, bsActiveSkills: bs0.bsActiveSkills,
+                    bsActionLock: bs0.bsActionLock, bsPendingSkillId: bs0.bsPendingSkillId,
+                }
+            };
+        let ws = allWeaponVisuals();
+        let wIdx = optOr(listFindIndex(ws, (item) -> weaponVisualText(item) == weaponVisualText(wv)), 0);
+        let lb = m0.cmLab;
+        let m1 = withLab(m0, MkLabControls {
+            labPaused: lb.labPaused, labSpeed: lb.labSpeed,
+            labActionIdx: lb.labActionIdx, labOutcomeIdx: lb.labOutcomeIdx, labSideIdx: lb.labSideIdx,
+            labPlayerWeaponIdx: if (sideEq(side, SidePlayer)) wIdx else lb.labPlayerWeaponIdx,
+            labEnemyWeaponIdx: if (sideEq(side, SideEnemy)) wIdx else lb.labEnemyWeaponIdx,
+        });
+        applyServerMessage(SmBattleState(nextSnap), m1)
+    },
     "submit" -> {
         let aid = if (strLen(a1) == 0) "rig.fist.punch_a" else a1;
         let res = parseCombatResult(if (strLen(a2) == 0) "hit" else a2);
@@ -2574,15 +2662,14 @@ pub def handleLabCommand(
         let dmg = if (numArg <= 0.0) 18 else roundInt(numArg);
         let act = battleActionFor(m0.cmCatalog, aid, StyleFist);
         let bs0 = optOr(m0.cmBattle.btSnap, MkBattleSnap {
-            bsPlayer: labCombatant("行者", "fist", "female"),
-            bsEnemy: labCombatant("守擂人", "sword", "male"),
+            bsPlayer: labCombatant("行者", "fist", "unarmed", "female"),
+            bsEnemy: labCombatant("守擂人", "sword", "jian", "male"),
             bsCooldowns: mapEmpty(), bsActiveSkills: Nil, bsActionLock: 0.0, bsPendingSkillId: None,
         });
         let isSelf = act.adActorMotion == "focus";
         let isEff = strStartsWith(aid, "rig.effect.");
-        let stTxt = combatStyleText(act.adStyle);
-        let pl0 = if (sideEq(side, SidePlayer) && !isEff) withCombatantStyle(bs0.bsPlayer, stTxt) else bs0.bsPlayer;
-        let en0 = if (sideEq(side, SideEnemy) && !isEff) withCombatantStyle(bs0.bsEnemy, stTxt) else bs0.bsEnemy;
+        let pl0 = bs0.bsPlayer;
+        let en0 = bs0.bsEnemy;
         let actorC = if (sideEq(side, SidePlayer)) pl0 else en0;
         let targetIsPlayer = if (isSelf) sideEq(side, SidePlayer) else sideEq(side, SideEnemy);
         let targetC = if (targetIsPlayer) pl0 else en0;
@@ -2650,6 +2737,7 @@ pub def handleLabCommand(
         (markDirty(withLab(m0, MkLabControls {
             labPaused: paused, labSpeed: lb.labSpeed,
             labActionIdx: lb.labActionIdx, labOutcomeIdx: lb.labOutcomeIdx, labSideIdx: lb.labSideIdx,
+            labPlayerWeaponIdx: lb.labPlayerWeaponIdx, labEnemyWeaponIdx: lb.labEnemyWeaponIdx,
         })), Nil)
     },
     "speed" -> {
@@ -2657,6 +2745,7 @@ pub def handleLabCommand(
         (markDirty(withLab(m0, MkLabControls {
             labPaused: lb.labPaused, labSpeed: clampFloat(0.05, 4.0, numArg),
             labActionIdx: lb.labActionIdx, labOutcomeIdx: lb.labOutcomeIdx, labSideIdx: lb.labSideIdx,
+            labPlayerWeaponIdx: lb.labPlayerWeaponIdx, labEnemyWeaponIdx: lb.labEnemyWeaponIdx,
         })), Nil)
     },
     "seek" -> match m0.cmBattle.btActiveTimeline {

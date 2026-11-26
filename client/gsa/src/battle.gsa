@@ -19,6 +19,7 @@ use protocol.{
 }
 use pose.{
     CombatStyle, StyleFist, StyleSword,
+    WeaponVisual, weaponRigStyle, weaponTipLength,
     VisualProfile,
     SvgPose, MkSvgPose, PoseLibrary,
     svgSwordLength, svgPose, blendPose, shiftPose, reachWith
@@ -62,6 +63,7 @@ pub data ActorVisual {
         avActionId: String,
         avProfile: VisualProfile,
         avStyle: CombatStyle,
+        avWeapon: WeaponVisual,
         avFrames: List FrameHold,
         avKeyPoses: Option KeyPosesDef,
     },
@@ -220,23 +222,24 @@ def clipFrameAt(frames: List FrameHold, elapsed: Float, totalDur: Float): String
         clipFrameLoop(0.0, scaledT, frames)
     }
 
-def visualForAction(cat: ActionCatalog, aid: String, prof: VisualProfile, fallbackStyle: CombatStyle): ActorVisual = {
+def visualForAction(cat: ActionCatalog, aid: String, prof: VisualProfile, fallbackStyle: CombatStyle, weapon: WeaponVisual): ActorVisual = {
     let a = battleActionFor(cat, aid, fallbackStyle);
     MkActorVisual {
         avActionId: a.adId,
         avProfile: prof,
-        avStyle: a.adStyle,
+        avStyle: weaponRigStyle(weapon),
+        avWeapon: weapon,
         avFrames: a.adFrames,
         avKeyPoses: a.adKeyPoses,
     }
 }
 
-pub def idleVisual(cat: ActionCatalog, style: CombatStyle, prof: VisualProfile): ActorVisual =
-    visualForAction(cat, idleActionIdForStyle(style), prof, style)
+pub def idleVisual(cat: ActionCatalog, style: CombatStyle, weapon: WeaponVisual, prof: VisualProfile): ActorVisual =
+    visualForAction(cat, idleActionIdForStyle(style), prof, style, weapon)
 
-def reactionVisual(cat: ActionCatalog, react: TargetReaction, prof: VisualProfile, style: CombatStyle): ActorVisual =
-    if (reactEq(react, ReactEffect) || reactEq(react, ReactNone)) idleVisual(cat, style, prof)
-    else visualForAction(cat, reactionActionIdForStyle(react, style), prof, style)
+def reactionVisual(cat: ActionCatalog, react: TargetReaction, prof: VisualProfile, style: CombatStyle, weapon: WeaponVisual): ActorVisual =
+    if (reactEq(react, ReactEffect) || reactEq(react, ReactNone)) idleVisual(cat, style, weapon, prof)
+    else visualForAction(cat, reactionActionIdForStyle(react, style), prof, style, weapon)
 
 def floatTextOf(res: CombatResult, mDmg: Option Int, mHeal: Option Int): String =
     match mDmg {
@@ -328,13 +331,16 @@ pub def resolveCombatTimeline(
     actorProf: VisualProfile,
     targetProf: VisualProfile,
     actorStyle: CombatStyle,
-    targetStyle: CombatStyle
+    targetStyle: CombatStyle,
+    actorWeapon: WeaponVisual,
+    targetWeapon: WeaponVisual
 ): ResolvedTimeline = {
     let action = battleActionFor(cat, ev.ceActionId, actorStyle);
     let actorVis = MkActorVisual {
         avActionId: action.adId,
         avProfile: actorProf,
-        avStyle: action.adStyle,
+        avStyle: weaponRigStyle(actorWeapon),
+        avWeapon: actorWeapon,
         avFrames: action.adFrames,
         avKeyPoses: action.adKeyPoses,
     };
@@ -381,7 +387,7 @@ pub def resolveCombatTimeline(
             rhFloatText: floatTextOf(res, dmg, hl),
             rhResult: res,
             rhReaction: react,
-            rhTargetVisual: reactionVisual(cat, react, targetProf, targetStyle),
+            rhTargetVisual: reactionVisual(cat, react, targetProf, targetStyle, targetWeapon),
             rhStaging: stg,
         }
     });
@@ -389,7 +395,7 @@ pub def resolveCombatTimeline(
     let fallbackHit = MkResolvedHit {
         rhAtMs: delayMs, rhHitStopMs: 0.0, rhDamage: None, rhHeal: None,
         rhFloatText: "", rhResult: ev.ceResult, rhReaction: ReactNone,
-        rhTargetVisual: idleVisual(cat, targetStyle, targetProf),
+        rhTargetVisual: idleVisual(cat, targetStyle, targetWeapon, targetProf),
         rhStaging: stagingFor(cat, "light", Nil),
     };
     let firstHit = optOr(listHead(hits), fallbackHit);
@@ -463,10 +469,12 @@ pub def resolveSettlementTimeline(
     actorProf: VisualProfile,
     targetProf: VisualProfile,
     actorStyle: CombatStyle,
-    targetStyle: CombatStyle
+    targetStyle: CombatStyle,
+    actorWeapon: WeaponVisual,
+    targetWeapon: WeaponVisual
 ): ResolvedTimeline = {
-    let aVis = idleVisual(cat, actorStyle, actorProf);
-    let tVis = idleVisual(cat, targetStyle, targetProf);
+    let aVis = idleVisual(cat, actorStyle, actorWeapon, actorProf);
+    let tVis = idleVisual(cat, targetStyle, targetWeapon, targetProf);
     let stg = stagingFor(cat, "quiet", Nil);
     let hit = MkResolvedHit {
         rhAtMs: 0.0, rhHitStopMs: 0.0, rhDamage: None, rhHeal: None,
@@ -626,7 +634,7 @@ pub def actorOffsetAt(tl: ResolvedTimeline, t: Float): (Float, Float, Float) = {
     }
 }
 
-def keyedPose(lib: PoseLibrary, key: PoseKey, tl: ResolvedTimeline, style: CombatStyle, t: Float): SvgPose = {
+def keyedPose(lib: PoseLibrary, key: PoseKey, tl: ResolvedTimeline, style: CombatStyle, weapon: WeaponVisual, t: Float): SvgPose = {
     let pose = svgPose(lib, key.pkPose, style);
     match key.pkPin {
         None -> pose,
@@ -641,26 +649,30 @@ def keyedPose(lib: PoseLibrary, key: PoseKey, tl: ResolvedTimeline, style: Comba
                 PinFoot -> reachWith(pose, false, (reachX, targetY)),
                 PinHand -> reachWith(pose, true, (reachX, targetY)),
                 PinBlade -> {
-                    let (hx, hy) = pose.spHand;
-                    let dy = targetY - hy;
-                    let swLen = svgSwordLength();
-                    if (absFloat(dy) < swLen - 0.5) {
-                        let dx = sqrt(swLen * swLen - dy * dy);
-                        let shifted = shiftPose(pose, reachX - dx - hx, 0.0);
-                        MkSvgPose {
-                            spNeck: shifted.spNeck, spHead: shifted.spHead, spShoulder: shifted.spShoulder, spHip: shifted.spHip,
-                            spBackElbow: shifted.spBackElbow, spBackHand: shifted.spBackHand,
-                            spElbow: shifted.spElbow, spHand: shifted.spHand,
-                            spBackKnee: shifted.spBackKnee, spBackFoot: shifted.spBackFoot,
-                            spKnee: shifted.spKnee, spFoot: shifted.spFoot,
-                            spTassel: shifted.spTassel,
-                            spBlade: atan2(dy, dx) * 180.0 / pi(),
-                            spFootPlanted: shifted.spFootPlanted, spBackFootPlanted: shifted.spBackFootPlanted,
-                            spHands: shifted.spHands, spBones: shifted.spBones,
-                        }
+                    let swLen = weaponTipLength(weapon);
+                    if (swLen <= 0.5) {
+                        reachWith(pose, true, (reachX, targetY))
                     } else {
-                        let rad = pose.spBlade * pi() / 180.0;
-                        reachWith(pose, true, (reachX - cos(rad) * swLen, targetY - sin(rad) * swLen))
+                        let (hx, hy) = pose.spHand;
+                        let dy = targetY - hy;
+                        if (absFloat(dy) < swLen - 0.5) {
+                            let dx = sqrt(swLen * swLen - dy * dy);
+                            let shifted = shiftPose(pose, reachX - dx - hx, 0.0);
+                            MkSvgPose {
+                                spNeck: shifted.spNeck, spHead: shifted.spHead, spShoulder: shifted.spShoulder, spHip: shifted.spHip,
+                                spBackElbow: shifted.spBackElbow, spBackHand: shifted.spBackHand,
+                                spElbow: shifted.spElbow, spHand: shifted.spHand,
+                                spBackKnee: shifted.spBackKnee, spBackFoot: shifted.spBackFoot,
+                                spKnee: shifted.spKnee, spFoot: shifted.spFoot,
+                                spTassel: shifted.spTassel,
+                                spBlade: atan2(dy, dx) * 180.0 / pi(),
+                                spFootPlanted: shifted.spFootPlanted, spBackFootPlanted: shifted.spBackFootPlanted,
+                                spHands: shifted.spHands, spBones: shifted.spBones,
+                            }
+                        } else {
+                            let rad = pose.spBlade * pi() / 180.0;
+                            reachWith(pose, true, (reachX - cos(rad) * swLen, targetY - sin(rad) * swLen))
+                        }
                     }
                 },
             }
@@ -674,6 +686,7 @@ pub def sampleSvgPose(
     side: BattleSide,
     elapsed: Float,
     style: CombatStyle,
+    weapon: WeaponVisual,
     frameId: String,
     reduced: Bool
 ): SvgPose = {
@@ -749,7 +762,7 @@ pub def sampleSvgPose(
                                 if (u > 0.0) blendPose(lib, key.pkPose, next.pkPose, u * u, style)
                                 else svgPose(lib, key.pkPose, style)
                             },
-                            _ -> keyedPose(lib, key, tl, style, t),
+                            _ -> keyedPose(lib, key, tl, style, weapon, t),
                         }
                     }
                 }

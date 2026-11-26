@@ -40,6 +40,7 @@ fs.copyFileSync(path.join(REPO_ROOT, "resources/scripts/combat_presentation/svg-
 fs.copyFileSync(path.join(REPO_ROOT, "resources/scripts/combat_presentation/staging.json"), path.join(DIST_DIR, "data/staging.json"));
 fs.copyFileSync(path.join(REPO_ROOT, "resources/scripts/combat_actions/fist.json"), path.join(DIST_DIR, "data/fist.json"));
 fs.copyFileSync(path.join(REPO_ROOT, "resources/scripts/combat_actions/sword.json"), path.join(DIST_DIR, "data/sword.json"));
+fs.copyFileSync(path.join(REPO_ROOT, "resources/scripts/combat_actions/weapons.json"), path.join(DIST_DIR, "data/weapons.json"));
 fs.copyFileSync(path.join(REPO_ROOT, "resources/scripts/combat_actions/effects.json"), path.join(DIST_DIR, "data/effects.json"));
 
 const portraitSrc = fs.existsSync(path.join(PUBLIC_DIR, "portraits"))

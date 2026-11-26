@@ -1,0 +1,313 @@
+{
+  "schemaVersion": 5,
+  "actions": [
+    {
+      "id": "rig.blade.cleave_a",
+      "label": "断浪力劈",
+      "style": "blade",
+      "frames": [
+        { "frameId": "idle", "holdMs": 20 },
+        { "frameId": "blade_cleave_prep", "holdMs": 200 },
+        { "frameId": "blade_cleave_strike", "holdMs": 330 },
+        { "frameId": "idle", "holdMs": 310 }
+      ],
+      "impactFrame": 2,
+      "durationMs": 860,
+      "tags": ["blade", "dao", "attack", "slash", "chop", "heavy"],
+      "actorMotion": "drive",
+      "keyPoses": {
+        "prepare": "blade_cleave_prep",
+        "contact": "blade_cleave_strike",
+        "finish": "blade_cleave_finish",
+        "reachWith": "blade"
+      },
+      "approach": {
+        "pose": "approach_raised_step",
+        "durationMs": 270,
+        "lift": 12
+      },
+      "targetReaction": {
+        "hit": "hit",
+        "dodge": "dodge",
+        "parry": "parry",
+        "effect": "effect"
+      },
+      "staging": {
+        "force": 0.92,
+        "camera": { "kick": 13, "zoom": 0.036 },
+        "reactions": { "hit": { "push": 72, "lift": 10 } }
+      },
+      "vfx": [
+        { "kind": "trail", "variant": "slash-arc", "anchor": "actor", "art": "slash" },
+        { "kind": "impact", "variant": "hit-spark", "anchor": "target", "art": "impact" },
+        { "kind": "parry", "variant": "parry-arc", "anchor": "target", "art": "parry" }
+      ],
+      "choreography": {
+        "launchAtMs": 170,
+        "hitStopMs": 85,
+        "recoverAtMs": 480,
+        "restAtMs": 740,
+        "reach": 136,
+        "contactY": 108,
+        "weight": "heavy"
+      }
+    },
+    {
+      "id": "rig.blade.sweep_a",
+      "label": "横江斩",
+      "style": "blade",
+      "frames": [
+        { "frameId": "idle", "holdMs": 20 },
+        { "frameId": "blade_sweep_prep", "holdMs": 160 },
+        { "frameId": "blade_sweep_strike", "holdMs": 280 },
+        { "frameId": "idle", "holdMs": 280 }
+      ],
+      "impactFrame": 2,
+      "durationMs": 740,
+      "tags": ["blade", "dao", "attack", "slash"],
+      "actorMotion": "approach",
+      "keyPoses": {
+        "prepare": "blade_sweep_prep",
+        "contact": "blade_sweep_strike",
+        "finish": "blade_sweep_finish",
+        "reachWith": "blade"
+      },
+      "approach": {
+        "pose": "approach_cross_step",
+        "durationMs": 260,
+        "lift": 8
+      },
+      "targetReaction": {
+        "hit": "hit",
+        "dodge": "dodge",
+        "parry": "parry",
+        "effect": "effect"
+      },
+      "vfx": [
+        { "kind": "trail", "variant": "slash-arc", "anchor": "actor", "art": "slash" },
+        { "kind": "impact", "variant": "hit-spark", "anchor": "target", "art": "impact" },
+        { "kind": "parry", "variant": "parry-arc", "anchor": "target", "art": "parry" }
+      ],
+      "choreography": {
+        "launchAtMs": 140,
+        "hitStopMs": 55,
+        "recoverAtMs": 430,
+        "restAtMs": 660,
+        "reach": 134,
+        "contactY": 112,
+        "weight": "light"
+      }
+    },
+    {
+      "id": "rig.spear.lunge_a",
+      "label": "回马长刺",
+      "style": "spear",
+      "frames": [
+        { "frameId": "idle", "holdMs": 20 },
+        { "frameId": "spear_lunge_prep", "holdMs": 150 },
+        { "frameId": "spear_lunge_strike", "holdMs": 270 },
+        { "frameId": "idle", "holdMs": 280 }
+      ],
+      "impactFrame": 2,
+      "durationMs": 720,
+      "tags": ["spear", "attack", "stab", "thrust", "long"],
+      "actorMotion": "approach",
+      "keyPoses": {
+        "prepare": "spear_lunge_prep",
+        "contact": "spear_lunge_strike",
+        "finish": "spear_lunge_finish",
+        "reachWith": "blade"
+      },
+      "approach": {
+        "pose": "approach_low_skate",
+        "durationMs": 250,
+        "lift": 6
+      },
+      "targetReaction": {
+        "hit": "hit",
+        "dodge": "dodge",
+        "parry": "parry",
+        "effect": "effect"
+      },
+      "vfx": [
+        { "kind": "trail", "variant": "stab-line", "anchor": "actor", "art": "thrust" },
+        { "kind": "impact", "variant": "hit-spark", "anchor": "target", "art": "impact" },
+        { "kind": "parry", "variant": "parry-arc", "anchor": "target", "art": "parry" }
+      ],
+      "choreography": {
+        "launchAtMs": 130,
+        "hitStopMs": 45,
+        "recoverAtMs": 420,
+        "restAtMs": 640,
+        "reach": 156,
+        "contactY": 108,
+        "weight": "light"
+      }
+    },
+    {
+      "id": "rig.spear.flurry_a",
+      "label": "梨花三点",
+      "style": "spear",
+      "frames": [
+        { "frameId": "idle", "holdMs": 20 },
+        { "frameId": "spear_lunge_prep", "holdMs": 120 },
+        { "frameId": "spear_lunge_strike", "holdMs": 170 },
+        { "frameId": "spear_low_strike", "holdMs": 180 },
+        { "frameId": "spear_high_strike", "holdMs": 220 },
+        { "frameId": "idle", "holdMs": 330 }
+      ],
+      "impactFrame": 2,
+      "durationMs": 1040,
+      "tags": ["spear", "attack", "combo", "thrust"],
+      "actorMotion": "approach",
+      "approach": {
+        "pose": "approach_low_skate",
+        "durationMs": 250,
+        "lift": 6
+      },
+      "hits": [
+        { "atMs": 140, "hitStopMs": 35, "share": 1 },
+        { "atMs": 330, "hitStopMs": 35, "share": 1 },
+        { "atMs": 530, "hitStopMs": 75, "share": 2 }
+      ],
+      "poseTrack": [
+        { "atMs": 0, "pose": "spear_lunge_prep" },
+        { "atMs": 110, "pose": "spear_lunge_strike", "pin": "blade", "contactY": 106 },
+        { "atMs": 230, "pose": "spear_lunge_prep" },
+        { "atMs": 300, "pose": "spear_low_strike", "pin": "blade", "contactY": 128 },
+        { "atMs": 430, "pose": "spear_lunge_prep" },
+        { "atMs": 500, "pose": "spear_high_strike", "pin": "blade", "contactY": 92 },
+        { "atMs": 660, "pose": "retreat" },
+        { "atMs": 920, "pose": "idle" }
+      ],
+      "targetReaction": {
+        "hit": "hit",
+        "dodge": "dodge",
+        "parry": "parry",
+        "effect": "effect"
+      },
+      "vfx": [
+        { "kind": "trail", "variant": "stab-line", "anchor": "actor", "art": "thrust" },
+        { "kind": "impact", "variant": "hit-spark", "anchor": "target", "art": "impact" },
+        { "kind": "parry", "variant": "parry-arc", "anchor": "target", "art": "parry" }
+      ],
+      "choreography": {
+        "launchAtMs": 110,
+        "hitStopMs": 35,
+        "recoverAtMs": 660,
+        "restAtMs": 920,
+        "reach": 156,
+        "contactY": 106,
+        "weight": "heavy"
+      }
+    },
+    {
+      "id": "rig.staff.sweep_a",
+      "label": "横扫千军",
+      "style": "staff",
+      "frames": [
+        { "frameId": "idle", "holdMs": 20 },
+        { "frameId": "staff_sweep_prep", "holdMs": 180 },
+        { "frameId": "staff_sweep_strike", "holdMs": 310 },
+        { "frameId": "idle", "holdMs": 310 }
+      ],
+      "impactFrame": 2,
+      "durationMs": 820,
+      "tags": ["staff", "attack", "sweep", "heavy"],
+      "actorMotion": "drive",
+      "keyPoses": {
+        "prepare": "staff_sweep_prep",
+        "contact": "staff_sweep_strike",
+        "finish": "staff_sweep_finish",
+        "reachWith": "blade"
+      },
+      "approach": {
+        "pose": "approach_low_skate",
+        "durationMs": 260,
+        "lift": 8
+      },
+      "targetReaction": {
+        "hit": "hit",
+        "dodge": "dodge",
+        "parry": "parry",
+        "effect": "effect"
+      },
+      "staging": {
+        "force": 0.9,
+        "camera": { "kick": 14, "zoom": 0.034 },
+        "reactions": { "hit": { "push": 86, "lift": 12, "pose": "knocked_back" } }
+      },
+      "vfx": [
+        { "kind": "trail", "variant": "slash-arc", "anchor": "actor", "art": "slash" },
+        { "kind": "impact", "variant": "hit-spark", "anchor": "target", "art": "impact" },
+        { "kind": "parry", "variant": "parry-arc", "anchor": "target", "art": "parry" }
+      ],
+      "choreography": {
+        "launchAtMs": 160,
+        "hitStopMs": 80,
+        "recoverAtMs": 470,
+        "restAtMs": 710,
+        "reach": 152,
+        "contactY": 124,
+        "weight": "heavy"
+      }
+    },
+    {
+      "id": "rig.staff.smash_a",
+      "label": "泰山压顶",
+      "style": "staff",
+      "frames": [
+        { "frameId": "idle", "holdMs": 20 },
+        { "frameId": "staff_smash_prep", "holdMs": 210 },
+        { "frameId": "staff_smash_strike", "holdMs": 320 },
+        { "frameId": "idle", "holdMs": 330 }
+      ],
+      "impactFrame": 2,
+      "durationMs": 880,
+      "tags": ["staff", "attack", "aerial", "heavy"],
+      "actorMotion": "lunge",
+      "keyPoses": {
+        "prepare": "staff_smash_prep",
+        "contact": "staff_smash_strike",
+        "finish": "staff_smash_finish",
+        "reachWith": "blade"
+      },
+      "approach": {
+        "pose": "approach_knee_hop",
+        "durationMs": 270,
+        "lift": 16
+      },
+      "offsetTrack": [
+        { "atMs": 0, "x": 0, "y": -26, "angle": -6, "ease": "out" },
+        { "atMs": 190, "x": 18, "y": -40, "angle": 4, "ease": "out" },
+        { "atMs": 230, "x": 24, "y": 0, "angle": 8, "ease": "linear" },
+        { "atMs": 500, "x": 0, "y": 0, "angle": 0, "ease": "out" }
+      ],
+      "targetReaction": {
+        "hit": "hit",
+        "dodge": "dodge",
+        "parry": "parry",
+        "effect": "effect"
+      },
+      "staging": {
+        "force": 0.96,
+        "camera": { "kick": 16, "zoom": 0.04 },
+        "reactions": { "hit": { "push": 92, "lift": 14, "pose": "knocked_back" } }
+      },
+      "vfx": [
+        { "kind": "trail", "variant": "rising-arc", "anchor": "actor", "art": "slash" },
+        { "kind": "impact", "variant": "hit-spark", "anchor": "target", "art": "impact" },
+        { "kind": "parry", "variant": "parry-arc", "anchor": "target", "art": "parry" }
+      ],
+      "choreography": {
+        "launchAtMs": 190,
+        "hitStopMs": 95,
+        "recoverAtMs": 500,
+        "restAtMs": 760,
+        "reach": 148,
+        "contactY": 106,
+        "weight": "heavy"
+      }
+    }
+  ]
+}

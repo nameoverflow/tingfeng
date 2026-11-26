@@ -21,3 +21,21 @@
   type: foundation
   desc: "拳从身上来，也从胆里来。"
   max_level: 100
+
+- id: basic_blade
+  name: "基础刀法"
+  type: foundation
+  desc: "单刀看手，重在劈砍沉稳、收放自如。"
+  max_level: 100
+
+- id: basic_spear
+  name: "基础枪法"
+  type: foundation
+  desc: "枪扎一条线，进退借腰力，先稳中宫再求远。"
+  max_level: 100
+
+- id: basic_staff
+  name: "基础棍法"
+  type: foundation
+  desc: "棍扫一大片，双手滑把换劲，攻守俱在圆转之间。"
+  max_level: 100

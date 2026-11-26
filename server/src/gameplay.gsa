@@ -22,12 +22,12 @@ use ordmap.{
 }
 use entity.{
     EquipSlot, WeaponSlot, ArmorSlot, equipSlotEq, equipSlotToText,
-    WeaponKind, SwordWeapon, FistWeapon,
+    WeaponKind, SwordWeapon, FistWeapon, BladeWeapon, SpearWeapon, StaffWeapon,
     ItemMedicine, ItemEquip, EquippedItem, MkEquippedItem,
     ItemUse, LearnArtUse, MedicineUse, EquipUse, Item,
     EffectType, DoT, HoT, Buff, DeBuff, effectTypeToText, Effect, ActiveEffect,
     ActiveSkill, AttackMove,
-    ArtType, Foundation, Internal, Lightness, Sword, Fist, artTypeEq, artTypeToText,
+    ArtType, Foundation, Internal, Lightness, Sword, Fist, Blade, Spear, Staff, artTypeEq, artTypeToText,
     ArtTier, artTierToText, ArtRequirement, MartialArt, ArtEntity, MkArtEntity,
     CharAction, Attacking, Dialogue, Sparring,
     CharStatus, CharAlive, CharDead, CharBattle, charStatusEq,
@@ -860,14 +860,47 @@ pub def completeRepeatableJob(pid: String, qid: String): Game (List RewardSummar
 // Battle Snapshots, Story Battles & Story Trigger Engine
 // ============================================================================
 
+def enabledMeleeStyle(char: Character): String =
+    if (mapMember(char.charEnabled, Sword)) "sword"
+    else if (mapMember(char.charEnabled, Blade)) "blade"
+    else if (mapMember(char.charEnabled, Spear)) "spear"
+    else if (mapMember(char.charEnabled, Staff)) "staff"
+    else "fist"
+
+def defaultVisualForStyle(st: String): String =
+    if (st == "sword") "jian"
+    else if (st == "blade") "saber"
+    else if (st == "spear") "spear"
+    else if (st == "staff") "staff"
+    else "unarmed"
+
 pub def combatStyleForCharacter(char: Character): String =
     match mapLookup(char.charEquipped, WeaponSlot) {
         Some(eq) -> match eq.equippedWeaponKind {
             Some(SwordWeapon) -> "sword",
+            Some(BladeWeapon) -> "blade",
+            Some(SpearWeapon) -> "spear",
+            Some(StaffWeapon) -> "staff",
             Some(FistWeapon) -> "fist",
-            None -> if (mapMember(char.charEnabled, Sword)) "sword" else "fist",
+            None -> enabledMeleeStyle(char),
         },
-        None -> if (mapMember(char.charEnabled, Sword)) "sword" else "fist",
+        None -> enabledMeleeStyle(char),
+    }
+
+pub def weaponVisualForCharacter(char: Character): String =
+    match mapLookup(char.charEquipped, WeaponSlot) {
+        Some(eq) -> match eq.equippedWeaponVisual {
+            Some(v) if (strLen(v) > 0) -> v,
+            _ -> match eq.equippedWeaponKind {
+                Some(SwordWeapon) -> "jian",
+                Some(BladeWeapon) -> "saber",
+                Some(SpearWeapon) -> "spear",
+                Some(StaffWeapon) -> "staff",
+                Some(FistWeapon) -> "unarmed",
+                None -> defaultVisualForStyle(enabledMeleeStyle(char)),
+            },
+        },
+        None -> defaultVisualForStyle(enabledMeleeStyle(char)),
     }
 
 def battleStateDerivedStats(effectDefs: OrdMap String Effect, st: BattleState): DerivedStats =
@@ -886,7 +919,7 @@ def dedupePreparedSkills(xs: List PreparedActiveSkill): List PreparedActiveSkill
 }
 
 pub def preparedActiveSkills(wrld: World, player: Player): List PreparedActiveSkill = {
-    let slotTypes = [Internal, Lightness, Sword, Fist];
+    let slotTypes = [Internal, Lightness, Sword, Blade, Spear, Staff, Fist];
     let raw = fp.listConcatMap(slotTypes, (at) ->
         match mapLookup(player.playerCharacter.charEnabled, at) {
             None -> Nil,
@@ -930,6 +963,7 @@ def battleStateToSnapshot(effectDefs: OrdMap String Effect, st: BattleState): Co
         combatantSnapshotName: ch.charName,
         combatantSnapshotGender: genderToText(ch.charGender),
         combatantSnapshotCombatStyle: combatStyleForCharacter(ch),
+        combatantSnapshotWeaponVisual: weaponVisualForCharacter(ch),
         combatantSnapshotHp: ch.charHP,
         combatantSnapshotMaxHp: d.dsMaxHp,
         combatantSnapshotQi: st.battleQi,
@@ -1230,6 +1264,7 @@ def equipItemWithMsg(pid: String, item: Item, eq: ItemEquip, msg: String): Game 
         equippedItemId: item.itemId,
         equippedSlot: eq.equipSlot,
         equippedWeaponKind: eq.equipWeaponKind,
+        equippedWeaponVisual: eq.equipWeaponVisual,
         equippedModifiers: eq.equipModifiers,
     };
     updatePlayer(pid, overF(playerCharL() ~>> charEquippedL(), (m) -> mapInsert(m, eq.equipSlot, equipped)))
@@ -1535,6 +1570,30 @@ def consumePracticeBody(pid: String, ma: MartialArt, level: Int): Game Void =
                 }
             },
             Sword -> {
+                let cost = practiceHpCost(level, vit);
+                if (cost > 0 && ch.charHP <= cost) {
+                    throwStructured("not_enough_hp", [("required", intToStr(cost + 1)), ("current", intToStr(ch.charHP))])
+                } else {
+                    updatePlayer(pid, overF(playerCharL() ~>> charHpL(), (h) -> h - cost))
+                }
+            },
+            Blade -> {
+                let cost = practiceHpCost(level, vit);
+                if (cost > 0 && ch.charHP <= cost) {
+                    throwStructured("not_enough_hp", [("required", intToStr(cost + 1)), ("current", intToStr(ch.charHP))])
+                } else {
+                    updatePlayer(pid, overF(playerCharL() ~>> charHpL(), (h) -> h - cost))
+                }
+            },
+            Spear -> {
+                let cost = practiceHpCost(level, vit);
+                if (cost > 0 && ch.charHP <= cost) {
+                    throwStructured("not_enough_hp", [("required", intToStr(cost + 1)), ("current", intToStr(ch.charHP))])
+                } else {
+                    updatePlayer(pid, overF(playerCharL() ~>> charHpL(), (h) -> h - cost))
+                }
+            },
+            Staff -> {
                 let cost = practiceHpCost(level, vit);
                 if (cost > 0 && ch.charHP <= cost) {
                     throwStructured("not_enough_hp", [("required", intToStr(cost + 1)), ("current", intToStr(ch.charHP))])

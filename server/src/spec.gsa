@@ -91,7 +91,7 @@ use state.{
     createDefaultPlayer, createDefaultPlayerWithCreation
 }
 use gameplay.{
-    playerKnownArtLevel, combatStyleForCharacter,
+    playerKnownArtLevel, combatStyleForCharacter, weaponVisualForCharacter,
     playerArts, playerView, playerMapOverview, movePlayerToRoom,
     addInventoryItem, grantArt, grantQuestReward, storyConditionMet,
     playerMove, playerTalk, playerAttack, playerUseItem,
@@ -504,6 +504,28 @@ def testFoundationCreationAndStats(tr: TestRunner, baseGs: GameState): Void = {
         None -> assertThat(tr, false, "nameless_trial_sword missing"),
     };
     assertThat(tr, combatStyleForCharacter(getNpc(tr, gs, testCombatNpcId())) == "sword", "dummy combat style != sword");
+    assertThat(tr, weaponVisualForCharacter(p.playerCharacter) == "jian", "default sword visual != jian");
+
+    // Equipping different weapons updates both combat style and weapon visual
+    let (_, gsW1) = runOk(tr, "equip yanling_saber", gs, addInventoryItem("tester", "yanling_saber", 1) *>> playerUseItem("tester", "yanling_saber"));
+    let pSaber = requirePlayer(tr, gsW1);
+    assertThat(tr, combatStyleForCharacter(pSaber.playerCharacter) == "blade" && weaponVisualForCharacter(pSaber.playerCharacter) == "saber", "yanling_saber style/visual mismatch");
+
+    let (_, gsW2) = runOk(tr, "equip red_tassel_spear", gsW1, addInventoryItem("tester", "red_tassel_spear", 1) *>> playerUseItem("tester", "red_tassel_spear"));
+    let pSpear = requirePlayer(tr, gsW2);
+    assertThat(tr, combatStyleForCharacter(pSpear.playerCharacter) == "spear" && weaponVisualForCharacter(pSpear.playerCharacter) == "spear", "red_tassel_spear style/visual mismatch");
+
+    let (_, gsW3) = runOk(tr, "equip qimei_staff", gsW2, addInventoryItem("tester", "qimei_staff", 1) *>> playerUseItem("tester", "qimei_staff"));
+    let pStaff = requirePlayer(tr, gsW3);
+    assertThat(tr, combatStyleForCharacter(pStaff.playerCharacter) == "staff" && weaponVisualForCharacter(pStaff.playerCharacter) == "staff", "qimei_staff style/visual mismatch");
+
+    let (_, gsW4) = runOk(tr, "equip luoyang_white_blade", gsW3, addInventoryItem("tester", "luoyang_white_blade", 1) *>> playerUseItem("tester", "luoyang_white_blade"));
+    let pNarrow = requirePlayer(tr, gsW4);
+    assertThat(tr, combatStyleForCharacter(pNarrow.playerCharacter) == "sword" && weaponVisualForCharacter(pNarrow.playerCharacter) == "narrow_sword", "luoyang_white_blade visual mismatch");
+
+    let (_, gsW5) = runOk(tr, "equip cangshan_rock_gauntlets", gsW4, addInventoryItem("tester", "cangshan_rock_gauntlets", 1) *>> playerUseItem("tester", "cangshan_rock_gauntlets"));
+    let pGaunt = requirePlayer(tr, gsW5);
+    assertThat(tr, combatStyleForCharacter(pGaunt.playerCharacter) == "fist" && weaponVisualForCharacter(pGaunt.playerCharacter) == "gauntlets", "cangshan_rock_gauntlets visual mismatch");
 
     // Derived stats & status modifiers
     let derived = deriveStats(p);

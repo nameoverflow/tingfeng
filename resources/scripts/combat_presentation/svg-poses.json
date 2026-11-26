@@ -2,7 +2,13 @@
   "schemaVersion": 2,
   "bones": {"torso": 42, "neck": -1, "headRadius": 15, "upperArm": 26, "forearm": 24, "thigh": 34, "shin": 33},
   "base": {"hip": [-4, -56], "torso": -84, "head": -86, "arm": [30, -20], "backArm": [62, -22], "foot": [26, 0], "backFoot": [-30, 0], "knees": [1, 1], "blade": -40, "tassel": [-20, -10], "hands": ["fist", "fist"]},
-  "rigs": {"fist": {}, "sword": {"hands": ["fist", "finger"], "hip": [-6, -52], "torso": -80, "arm": [42, -10], "backArm": [200, 252], "blade": -34, "foot": [30, 0], "backFoot": [-36, 0]}},
+  "rigs": {
+    "fist": {},
+    "sword": {"hands": ["fist", "finger"], "hip": [-6, -52], "torso": -80, "arm": [42, -10], "backArm": [200, 252], "blade": -34, "foot": [30, 0], "backFoot": [-36, 0]},
+    "blade": {"hands": ["fist", "palm"], "hip": [-8, -50], "torso": -78, "arm": [54, 4], "backArm": [175, 130], "blade": -18, "foot": [34, 0], "backFoot": [-38, 0]},
+    "spear": {"hands": ["fist", "fist"], "hip": [-10, -48], "torso": -74, "arm": [78, 12], "backArm": [16, -6], "blade": -10, "foot": [36, 0], "backFoot": [-42, 0]},
+    "staff": {"hands": ["fist", "fist"], "hip": [-8, -50], "torso": -78, "arm": [62, -6], "backArm": [132, 68], "blade": -26, "foot": [34, 0], "backFoot": [-40, 0]}
+  },
   "poses": {
     "idle": {},
     "approach": {"set": {"hip": [-6, -54], "torso": -52, "head": -48, "arm": [150, 142], "backArm": [165, 158], "foot": [24, -20], "backFoot": [-46, -6], "blade": 188, "tassel": [40, -60]}, "rigs": {"sword": {"arm": [145, 136], "backArm": [160, 152]}}},
@@ -44,6 +50,23 @@
     "hurt": {"set": {"hip": [-18, -60], "torso": -56, "head": -40, "arm": [28, 8], "backArm": [44, 22], "foot": [24, -16], "backFoot": [-22, 0], "blade": 8, "hands": ["palm", "palm"]}, "rigs": {"sword": {"arm": [24, 6], "blade": 6, "hands": ["fist", "palm"]}}},
     "knocked_back": {"set": {"hands": ["palm", "palm"], "hip": [-12, -52], "torso": -132, "head": -146, "arm": [-20, -35], "backArm": [10, -10], "foot": [34, -10], "backFoot": [-8, 0], "blade": -30}, "rigs": {"sword": {"hands": ["fist", "palm"]}}},
     "dodge": {"set": {"hip": [-12, -56], "torso": -98, "head": -96, "arm": [-8, -24], "backArm": [160, 150], "foot": [33, -6], "backFoot": [-18, 0], "knees": [1, 1], "blade": -10, "hands": ["palm", "palm"]}, "rigs": {"sword": {"arm": [20, 4], "backArm": [-170, -150], "blade": -6, "hands": ["fist", "finger"]}}},
-    "retreat": {"set": {"hip": [-2, -60], "torso": -98, "head": -94, "arm": [35, -15], "backArm": [165, 150], "foot": [16, -12], "backFoot": [-26, -2], "blade": -18, "tassel": [-30, -40]}}
+    "retreat": {"set": {"hip": [-2, -60], "torso": -98, "head": -94, "arm": [35, -15], "backArm": [165, 150], "foot": [16, -12], "backFoot": [-26, -2], "blade": -18, "tassel": [-30, -40]}},
+    "blade_cleave_prep": {"set": {"hip": [-16, -46], "torso": -108, "head": -96, "arm": [-128, -116], "backArm": [126, -18], "foot": [30, 0], "backFoot": [-46, 0], "blade": -152}},
+    "blade_cleave_strike": {"set": {"hip": [10, -38], "torso": -52, "head": -58, "arm": [16, 32], "backArm": [-160, -128], "foot": [54, 0], "backFoot": [-48, 0], "blade": 36, "tassel": [-40, -70]}},
+    "blade_cleave_finish": {"extends": "blade_cleave_strike"},
+    "blade_sweep_prep": {"set": {"hip": [-18, -44], "torso": -102, "head": -92, "arm": [168, -162], "backArm": [24, -26], "foot": [26, 0], "backFoot": [-44, 0], "blade": -172}},
+    "blade_sweep_strike": {"set": {"hip": [8, -42], "torso": -64, "head": -68, "arm": [4, -4], "backArm": [-168, -142], "foot": [52, 0], "backFoot": [-48, 0], "blade": 4, "tassel": [-40, -60]}},
+    "blade_sweep_finish": {"extends": "blade_sweep_strike"},
+    "spear_lunge_prep": {"set": {"hip": [-18, -44], "torso": -96, "head": -90, "arm": [128, 18], "backArm": [26, 4], "foot": [30, 0], "backFoot": [-44, 0], "blade": -4}},
+    "spear_lunge_strike": {"set": {"hip": [8, -40], "torso": -60, "head": -66, "arm": [-2, -2], "backArm": [170, 184], "foot": [54, 0], "backFoot": [-48, 0], "blade": -2}},
+    "spear_lunge_finish": {"extends": "spear_lunge_strike"},
+    "spear_low_strike": {"set": {"hip": [10, -36], "torso": -56, "head": -62, "arm": [14, 10], "backArm": [168, 178], "foot": [54, 0], "backFoot": [-48, 0], "blade": 12}},
+    "spear_high_strike": {"set": {"hip": [4, -48], "torso": -70, "head": -74, "arm": [-22, -24], "backArm": [162, 176], "foot": [48, 0], "backFoot": [-46, 0], "blade": -22}},
+    "staff_sweep_prep": {"set": {"hip": [-16, -42], "torso": -94, "head": -88, "arm": [142, 118], "backArm": [172, 152], "foot": [28, 0], "backFoot": [-44, 0], "blade": 158}},
+    "staff_sweep_strike": {"set": {"hip": [10, -36], "torso": -54, "head": -60, "arm": [18, 20], "backArm": [-158, -130], "foot": [54, 0], "backFoot": [-48, 0], "blade": 18}},
+    "staff_sweep_finish": {"extends": "staff_sweep_strike"},
+    "staff_smash_prep": {"set": {"hip": [-8, -54], "torso": -102, "head": -94, "arm": [-116, -104], "backArm": [-96, -86], "foot": [22, -24], "backFoot": [-28, -8], "blade": -136}},
+    "staff_smash_strike": {"set": {"hip": [8, -38], "torso": -54, "head": -60, "arm": [16, 30], "backArm": [36, 18], "foot": [52, 0], "backFoot": [-48, 0], "blade": 34}},
+    "staff_smash_finish": {"extends": "staff_smash_strike"}
   }
 }

@@ -233,6 +233,7 @@ pub def tf_seed_assets(
     stgStr: String,
     fistStr: String,
     swordStr: String,
+    weaponsStr: String,
     effStr: String,
     redInt: Int
 ): Void = {
@@ -245,7 +246,7 @@ pub def tf_seed_assets(
     cellSet(seededReducedRef, redInt != 0);
     match parsePoseLibrary(poseStr) {
         Err(err) -> printLn("PoseLibrary error: " + err),
-        Ok(poseLib) -> match parseActionCatalog(stgStr, [fistStr, swordStr, effStr]) {
+        Ok(poseLib) -> match parseActionCatalog(stgStr, [fistStr, swordStr, weaponsStr, effStr]) {
             Err(err) -> printLn("ActionCatalog error: " + err),
             Ok(cat) -> cellSet(seededAssetsRef, Some((poseLib, cat))),
         },

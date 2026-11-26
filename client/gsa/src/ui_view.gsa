@@ -33,7 +33,7 @@ use protocol.{
     CreationBonus, CreationOption,
     BusyInfo, EffectInfo
 }
-use pose.{LookMaiden, lookEq}
+use pose.{LookMaiden, lookEq, WeaponUnarmed, WeaponJian, allWeaponVisuals, weaponVisualLabel}
 use state.{
     AppPage, PageGame, PageBattleLab, PagePoseSheet,
     ClientModel, isCameraPanned, labActionOrder, liveEffectsOf, evalSkillState, portraitScoreFile
@@ -317,6 +317,10 @@ def viewBattleLabDock(th: Theme, m: ClientModel, isMob: Bool): Element ClientMsg
     let outLbl = listNthOr(["命中", "闪避", "招架", "效果"], floorMod(m.cmLab.labOutcomeIdx, 4), "命中");
     let sideLbl = listNthOr(["行者", "守擂人"], floorMod(m.cmLab.labSideIdx, 2), "行者");
     let lookLbl = if (lookEq(m.cmVp.vpLookStyle, LookMaiden)) "发髻披发" else "高马尾";
+    let ws = allWeaponVisuals();
+    let wn = maxInt(1, listLen(ws));
+    let pWpnLbl = "行者:" + weaponVisualLabel(listNthOr(ws, floorMod(m.cmLab.labPlayerWeaponIdx, wn), WeaponUnarmed));
+    let eWpnLbl = "守擂:" + weaponVisualLabel(listNthOr(ws, floorMod(m.cmLab.labEnemyWeaponIdx, wn), WeaponJian));
 
     let dur = match m.cmBattle.btActiveTimeline { Some(tl) -> tl.tlDurationMs, None -> 0.0 };
     let elap = m.cmBattle.btTimelineElapsedMs;
@@ -333,10 +337,12 @@ def viewBattleLabDock(th: Theme, m: ClientModel, isMob: Bool): Element ClientMsg
         woodBtn("lab-next", [wFixed(28.0)], 28.0, 14.0, ToneDefault, false, "›", MsgUi("lab_cycle_action", "next", ""))
     ]);
     let row2 = row([wGrow(1.0), gap(6.0), alignY(AlignMid)], [
-        woodBtn("lab-out", [wFixed(58.0)], 28.0, 11.5, ToneDefault, false, outLbl, MsgUi("lab_cycle_outcome", "", "")),
-        woodBtn("lab-side", [wFixed(62.0)], 28.0, 11.5, ToneDefault, false, sideLbl, MsgUi("lab_cycle_side", "", "")),
-        woodBtn("lab-look", [wFixed(72.0)], 28.0, 11.5, ToneDefault, false, lookLbl, MsgUi("toggle_look", "", "")),
-        woodBtn("lab-play", [wFixed(86.0)], 28.0, 11.5, ToneJade, false, "播放这一招", MsgUi("lab_play_selected", "", ""))
+        woodBtn("lab-p-wpn", [wFixed(92.0)], 28.0, 11.0, ToneDefault, false, pWpnLbl, MsgUi("lab_cycle_p_weapon", "", "")),
+        woodBtn("lab-e-wpn", [wFixed(92.0)], 28.0, 11.0, ToneDefault, false, eWpnLbl, MsgUi("lab_cycle_e_weapon", "", "")),
+        woodBtn("lab-out", [wFixed(52.0)], 28.0, 11.5, ToneDefault, false, outLbl, MsgUi("lab_cycle_outcome", "", "")),
+        woodBtn("lab-side", [wFixed(58.0)], 28.0, 11.5, ToneDefault, false, sideLbl, MsgUi("lab_cycle_side", "", "")),
+        woodBtn("lab-look", [wFixed(68.0)], 28.0, 11.5, ToneDefault, false, lookLbl, MsgUi("toggle_look", "", "")),
+        woodBtn("lab-play", [wFixed(82.0)], 28.0, 11.5, ToneJade, false, "播放这一招", MsgUi("lab_play_selected", "", ""))
     ]);
 
     let scrubber = canvasInteractive(
