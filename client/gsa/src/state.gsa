@@ -846,8 +846,9 @@ def commitHitsUpToM(elapsed: Float): ClientM Void =
 
                     let sc = sampleBattleScene(Some(tl), elapsed, tl.tlActor.raVisual, tl.tlTarget.rtVisual, m0.cmVp.vpReducedMotion);
                     let (wx, wy) = sc.scContact;
+                    let showImpact = !m0.cmVp.vpReducedMotion && !combatResEq(lastHit.rhResult, ResDodge);
                     let newParts =
-                        if (m0.cmVp.vpReducedMotion) Nil
+                        if (!showImpact) Nil
                         else spawnHitParticles((wx, wy), tl.tlActorSide, lastHit.rhResult, lastHit.rhStaging.spForce, roundInt(m0.cmVp.vpClockMs) + lastIdx * 31);
 
                     let bt0 = m0.cmBattle;
@@ -867,7 +868,7 @@ def commitHitsUpToM(elapsed: Float): ClientM Void =
                             fxParticles: listAppend(fx0.fxParticles, newParts),
                             fxShockPos: (wx, wy),
                             fxShockAge: 0.0,
-                            fxShockPower: if (m0.cmVp.vpReducedMotion) 0.0 else lastHit.rhStaging.spForce,
+                            fxShockPower: if (showImpact) lastHit.rhStaging.spForce else 0.0,
                         }
                     ));
                     put(m1) *>>

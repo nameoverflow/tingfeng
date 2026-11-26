@@ -54,8 +54,8 @@ pub def parseBattleSide(raw: String): BattleSide =
     if (raw == "enemy") SideEnemy else SidePlayer
 
 pub def sideHome(s: BattleSide): Float = match s {
-    SidePlayer -> -248.0,
-    SideEnemy -> 248.0,
+    SidePlayer -> -282.0,
+    SideEnemy -> 282.0,
 }
 
 pub data ActorVisual {
@@ -1033,11 +1033,11 @@ pub def sampleBattleScene(
                         },
                     };
 
-                let hasHitStopNow = match listFind(tl.tlHits, (h) -> h.rhHitStopMs > 0.0 && t >= h.rhAtMs && t < h.rhAtMs + h.rhHitStopMs) {
+                let flashOnContact = match listFind(tl.tlHits, (h) -> !combatResEq(h.rhResult, ResDodge) && h.rhHitStopMs > 0.0 && t >= h.rhAtMs && t < h.rhAtMs + h.rhHitStopMs) {
                     Some(_) -> true,
                     None -> false,
                 };
-                let invertV = if (!quiet && !reducedMotion && hasHitStopNow) 1.0 else 0.0;
+                let invertV = if (!quiet && !reducedMotion && flashOnContact) 1.0 else 0.0;
                 let stageAng =
                     if (quiet || t >= c.chRestAtMs) 0.0
                     else stg.spTilt * sin(pi() * prog(t, 0.0, maxFloat(1.0, c.chRestAtMs)));

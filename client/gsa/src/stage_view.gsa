@@ -13,7 +13,7 @@ use kagura.gfx.{
     sin, cos, absFloat, minInt, maxInt, minFloat, maxFloat, clampFloat, floorInt,
     DrawList, drawCard, drawRect, drawFillRect, drawCircle, drawEllipse,
     drawLine, drawPolygon, drawRibbon, drawText, drawImage,
-    pushClip, pushCircleClip, popClip, pushTransform, popTransform
+    pushClip, popClip, pushTransform, popTransform
 }
 use kagura.ui.{
     Element, CanvasHit, canvasHit, fillSpace, canvasStage
@@ -103,8 +103,8 @@ def polyToVec2List(pts: List (Float, Float)): List Vec2 =
     listMap(pts, (xy) -> match xy { (px, py) -> vec2(px, py) })
 
 def emitShapeStroke(dl: DrawList, s: ShapePrim, strokeCol: Color): Void = match s {
-    SCircle(cx, cy, r, _, _) -> drawCircle(dl, cx, cy, r, 0, strokeCol, 3.8),
-    SPoly(pts, _, _) -> drawPolygon(dl, polyToVec2List(pts), 0, strokeCol, 3.8),
+    SCircle(cx, cy, r, _, _) -> drawCircle(dl, cx, cy, r, 0, strokeCol, 2.6),
+    SPoly(pts, _, _) -> drawPolygon(dl, polyToVec2List(pts), 0, strokeCol, 2.6),
 }
 
 def emitShapeFill(dl: DrawList, s: ShapePrim, defaultFill: Color, flash: Float, partAlpha: Float): Void = {
@@ -121,6 +121,11 @@ def emitShapeFill(dl: DrawList, s: ShapePrim, defaultFill: Color, flash: Float, 
     }
 }
 
+def forEach(xs: List a, render: a -> Void): Void = match xs {
+    Nil -> (),
+    Cons(x, rest) -> { render(x); forEach(rest, render) },
+}
+
 pub def drawInkActor(
     dl: DrawList,
     wx: Float, wy: Float,
@@ -133,87 +138,39 @@ pub def drawInkActor(
     let parts = buildActorParts(pose, weapon, prof, look, hairBend, clockMs);
     pushTransform(dl, wx, wy, scaleSign, absFloat(scaleSign), rotDeg);
     let outCol = withAlpha(outlineCol, alpha);
-    let pcur = cellNew(parts);
-    while (match cellGet(pcur) { Nil -> false, _ -> true }) {
-        match cellGet(pcur) {
-            Cons(part, prest) -> {
-                if (part.apKey == "front-arm") {
-                    match weaponTasselAnchor(pose, weapon) {
-                        Some((hx, hy)) -> {
-                            let kind = weaponTasselKind(weapon);
-                            let (cordAngle, silkAngle) = tasselAngles;
-                            let localTilt = if (scaleSign < 0.0) -rotDeg else rotDeg;
-                            if (kind == "sword") {
-                                pushTransform(dl, hx, hy, 1.0, 1.0, cordAngle - localTilt);
-                                drawImage(dl, "/battle/tassel-cord.png", rect(-4.0, -0.3, 8.0, 12.0), 0.0, alpha);
-                                pushTransform(dl, 0.0, 11.55, 1.0, 1.0, silkAngle - cordAngle);
-                                drawImage(dl, "/battle/tassel-silk.png", rect(-4.0, -0.2, 8.0, 20.0), 0.0, alpha);
-                                popTransform(dl);
-                                popTransform(dl)
-                            } else if (kind == "spear") {
-                                pushTransform(dl, hx, hy, 1.0, 1.0, cordAngle - localTilt);
-                                let tuftCol = withAlpha(hexColor("#a32c22"), alpha * 0.94);
-                                let tuftDark = withAlpha(hexColor("#751b14"), alpha * 0.9);
-                                drawPolygon(dl, [vec2(-2.2, 0.0), vec2(2.2, 0.0), vec2(5.2, 11.0), vec2(0.0, 14.0), vec2(-4.5, 10.5)], tuftCol, 0, 0.0);
-                                pushTransform(dl, 0.0, 9.5, 1.0, 1.0, silkAngle - cordAngle);
-                                drawPolygon(dl, [vec2(-3.2, 0.0), vec2(3.2, 0.0), vec2(4.2, 11.5), vec2(0.0, 15.5), vec2(-3.8, 11.0)], tuftDark, 0, 0.0);
-                                popTransform(dl);
-                                popTransform(dl)
-                            } else ()
-                        },
-                        None -> (),
-                    }
-                } else ();
-                // Pass A: outer halo stroke across all shapes of the body part
-                let s1 = cellNew(part.apShapes);
-                while (match cellGet(s1) { Nil -> false, _ -> true }) {
-                    match cellGet(s1) {
-                        Cons(sh, srest) -> {
-                            emitShapeStroke(dl, sh, outCol);
-                            cellSet(s1, srest)
-                        },
-                        Nil -> (),
-                    }
-                };
-                // Pass B: unified silhouette fill
-                let s2 = cellNew(part.apShapes);
-                while (match cellGet(s2) { Nil -> false, _ -> true }) {
-                    match cellGet(s2) {
-                        Cons(sh, srest) -> {
-                            emitShapeFill(dl, sh, fillCol, flash, alpha);
-                            cellSet(s2, srest)
-                        },
-                        Nil -> (),
-                    }
-                };
-                // Pass C: circular joint patch fills (`OP_PUSH_CIRCLE_CLIP`)
-                let jcur = cellNew(part.apJoins);
-                while (match cellGet(jcur) { Nil -> false, _ -> true }) {
-                    match cellGet(jcur) {
-                        Cons(jn, jrest) -> {
-                            let (jx, jy) = jn.jpAt;
-                            pushCircleClip(dl, jx, jy, jn.jpRadius);
-                            let js = cellNew(jn.jpShapes);
-                            while (match cellGet(js) { Nil -> false, _ -> true }) {
-                                match cellGet(js) {
-                                    Cons(sh, jsrest) -> {
-                                        emitShapeFill(dl, sh, fillCol, flash, alpha);
-                                        cellSet(js, jsrest)
-                                    },
-                                    Nil -> (),
-                                }
-                            };
-                            popClip(dl);
-                            cellSet(jcur, jrest)
-                        },
-                        Nil -> (),
-                    }
-                };
-                cellSet(pcur, prest)
-            },
-            Nil -> (),
-        }
-    };
+    // Outline the complete figure first. Overlapping limbs then read as
+    // one ink shape, while separate fighters keep a fine paper edge.
+    forEach(parts, (part) -> forEach(part.apShapes, (sh) -> emitShapeStroke(dl, sh, outCol)));
+    forEach(parts, (part) -> {
+        if (part.apKey == "front-arm") {
+            match weaponTasselAnchor(pose, weapon) {
+                Some((hx, hy)) -> {
+                    let kind = weaponTasselKind(weapon);
+                    let (cordAngle, silkAngle) = tasselAngles;
+                    let localTilt = if (scaleSign < 0.0) -rotDeg else rotDeg;
+                    if (kind == "sword") {
+                        pushTransform(dl, hx, hy, 1.0, 1.0, cordAngle - localTilt);
+                        drawImage(dl, "/battle/tassel-cord.png", rect(-4.0, -0.3, 8.0, 12.0), 0.0, alpha);
+                        pushTransform(dl, 0.0, 11.55, 1.0, 1.0, silkAngle - cordAngle);
+                        drawImage(dl, "/battle/tassel-silk.png", rect(-4.0, -0.2, 8.0, 20.0), 0.0, alpha);
+                        popTransform(dl);
+                        popTransform(dl)
+                    } else if (kind == "spear") {
+                        pushTransform(dl, hx, hy, 1.0, 1.0, cordAngle - localTilt);
+                        let tuftCol = withAlpha(hexColor("#a32c22"), alpha * 0.94);
+                        let tuftDark = withAlpha(hexColor("#751b14"), alpha * 0.9);
+                        drawPolygon(dl, [vec2(-2.2, 0.0), vec2(2.2, 0.0), vec2(5.2, 11.0), vec2(0.0, 14.0), vec2(-4.5, 10.5)], tuftCol, 0, 0.0);
+                        pushTransform(dl, 0.0, 9.5, 1.0, 1.0, silkAngle - cordAngle);
+                        drawPolygon(dl, [vec2(-3.2, 0.0), vec2(3.2, 0.0), vec2(4.2, 11.5), vec2(0.0, 15.5), vec2(-3.8, 11.0)], tuftDark, 0, 0.0);
+                        popTransform(dl);
+                        popTransform(dl)
+                    } else ()
+                },
+                None -> (),
+            }
+        } else ();
+        forEach(part.apShapes, (sh) -> emitShapeFill(dl, sh, fillCol, flash, alpha))
+    });
     popTransform(dl)
 }
 
@@ -815,7 +772,8 @@ pub def renderBattleStage(stageRect: Rect, _ptr: Vec2, dl: DrawList, m: ClientMo
 
     // Frame the full retreat on both sides, including the rear foot, weapon,
     // camera kick and zoom. Also fit low landscape viewports by height.
-    let fitScale = minFloat(0.88, minFloat(w / 860.0, h / 372.0)) * scene.scCameraScale;
+    let stageScale = minFloat(0.88, minFloat(w / 860.0, h / 372.0)) * scene.scCameraScale;
+    let fitScale = stageScale * 0.88;
     let groundY = oy + (if (isMobile) h * 0.62 else h * 0.61) + scene.scShakeY * fitScale;
 
     let pFig = scene.scPlayer;
@@ -845,7 +803,7 @@ pub def renderBattleStage(stageRect: Rect, _ptr: Vec2, dl: DrawList, m: ClientMo
     let moonCol = if (inv) hexColor("#352e26") else hexColor("#dfd4be");
     let shadowCol = if (inv) withAlpha(hexColor("#000000"), 0.35) else withAlpha(hexColor("#1e1a16"), 0.18);
 
-    drawCircle(dl, ox + w * 0.5 - follow * fitScale * 0.15, groundY - 90.0 * fitScale, 138.0 * fitScale, withAlpha(moonCol, 0.55), 0, 0.0);
+    drawCircle(dl, ox + w * 0.5 - follow * fitScale * 0.15, groundY - 90.0 * stageScale, 138.0 * stageScale, withAlpha(moonCol, 0.55), 0, 0.0);
     drawEllipse(dl, px, floorAt(pWorldX) + 1.0, 28.0 * fitScale, 5.5 * fitScale, shadowCol, 0, 0.0);
     drawEllipse(dl, ex, floorAt(eWorldX) + 1.0, 28.0 * fitScale, 5.5 * fitScale, shadowCol, 0, 0.0);
 
@@ -1036,8 +994,11 @@ pub def renderBattleStage(stageRect: Rect, _ptr: Vec2, dl: DrawList, m: ClientMo
                         }
                     } else tl.tlFloatText;
                 if (scene.scTextAlpha > 0.03 && strLen(curFloat) > 0) {
-                    let tx = if (sideEq(tl.tlTargetSide, SidePlayer)) px else ex;
-                    let ty = groundY - (122.0 + scene.scTextLift) * fitScale;
+                    let playerTarget = sideEq(tl.tlTargetSide, SidePlayer);
+                    let tx = if (playerTarget) px else ex;
+                    let (_, headY) = if (playerTarget) pPose.spHead else ePose.spHead;
+                    let targetY = if (playerTarget) py else ey;
+                    let ty = minFloat(groundY - 122.0 * fitScale, targetY + (headY - 23.0) * fitScale) - scene.scTextLift * fitScale;
                     let fCol = match tl.tlResult {
                         ResParry -> hexColor("#946623"),
                         ResDodge -> hexColor("#2b594b"),
