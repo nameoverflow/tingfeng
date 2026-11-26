@@ -530,21 +530,21 @@ pub def startTickLoops(hub: Actor HubState, runningFlag: AtomicInt): Void = {
     let _ = spawnDaemon(() -> {
         let lastMs = cellNew(monotonicMs());
         let pingTicks = cellNew(0);
-        sleepMs(1000);
+        sleepMs(100);
         while (atomicLoad(runningFlag) != 0) {
             let now = monotonicMs();
             let dtMs = i64ToInt(now - cellGet(lastMs));
             cellSet(lastMs, now);
-            let dt = if (dtMs <= 0) 1.0 else intToFloat(dtMs) / 1000.0;
+            let dt = if (dtMs <= 0) 0.1 else intToFloat(dtMs) / 1000.0;
             hubGameTick(hub, dt);
             let pt = cellGet(pingTicks) + 1;
-            if (pt >= 30) {
+            if (pt >= 300) {
                 cellSet(pingTicks, 0);
                 hubPingOnlineClients(hub)
             } else {
                 cellSet(pingTicks, pt)
             };
-            sleepMs(1000)
+            sleepMs(100)
         }
     });
     let _ = spawnDaemon(() -> {

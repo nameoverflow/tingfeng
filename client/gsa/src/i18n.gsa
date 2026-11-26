@@ -348,10 +348,28 @@ pub def formatArtType(loc: Locale, raw: String): String = {
 }
 
 pub def formatSystemMsg(loc: Locale, code: String, params: OrdMap String String): String = {
-    let key = "system." + code;
+    let effCode =
+        if (code == "training_finished") {
+            match mapLookup(params, "reason") {
+                Some("halted") -> "training_stopped",
+                Some(_) -> "training_halted",
+                None -> "training_finished",
+            }
+        } else code;
+    let key = "system." + effCode;
     let base = tr(loc, key);
     if (base == key) trParams(loc, "system.unknown", [("code", code)])
-    else trParams(loc, key, mapToAscList(params))
+    else {
+        let kvs = std.list.listMap(mapToAscList(params), (p) -> match p {
+            (k, v) ->
+                if (k == "action") {
+                    let actKey = "training.action." + v;
+                    let actLbl = tr(loc, actKey);
+                    (k, if (actLbl == actKey) v else actLbl)
+                } else (k, v),
+        });
+        trParams(loc, key, kvs)
+    }
 }
 
 pub def formatErrorMsg(loc: Locale, code: String, params: OrdMap String String): String = {

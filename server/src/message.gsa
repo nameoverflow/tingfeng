@@ -699,6 +699,7 @@ pub data BusySummary {
     MkBusySummary {
         busySummaryAction: String,
         busySummaryTarget: String,
+        busySummaryTargetName: String,
         busySummaryCompleted: Int,
         busySummaryRemaining: Int,
         busySummarySeconds: Float,
@@ -710,6 +711,7 @@ instance Encode BusySummary {
     def encode(b) = object([
         "busySummaryAction"      := b.busySummaryAction,
         "busySummaryTarget"      := b.busySummaryTarget,
+        "busySummaryTargetName"  := b.busySummaryTargetName,
         "busySummaryCompleted"   := b.busySummaryCompleted,
         "busySummaryRemaining"   := b.busySummaryRemaining,
         "busySummarySeconds"     := b.busySummarySeconds,

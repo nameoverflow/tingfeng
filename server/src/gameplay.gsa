@@ -188,11 +188,20 @@ pub def trainingActionCode(act: TrainingAction): (String, String) = match act {
     TrainMeditate(amt) -> ("meditate", intToStr(amt)),
 }
 
-pub def busySummary(task: BusyTask): BusySummary = {
+pub def trainingTargetDisplayName(w: World, act: TrainingAction): String = match act {
+    TrainPractice(aid) -> match mapLookup(w.martialArts, aid) { Some(ma) -> ma.artName, None -> aid },
+    TrainLearn(_, aid) -> match mapLookup(w.martialArts, aid) { Some(ma) -> ma.artName, None -> aid },
+    TrainStudy(iid) -> match mapLookup(w.items, iid) { Some(it) -> it.itemName, None -> iid },
+    TrainResearch(aid) -> match mapLookup(w.martialArts, aid) { Some(ma) -> ma.artName, None -> aid },
+    TrainMeditate(_) -> "",
+}
+
+pub def busySummary(w: World, task: BusyTask): BusySummary = {
     let (code, target) = trainingActionCode(task.busyAction);
     MkBusySummary {
         busySummaryAction: code,
         busySummaryTarget: target,
+        busySummaryTargetName: trainingTargetDisplayName(w, task.busyAction),
         busySummaryCompleted: task.busyCompleted,
         busySummaryRemaining: task.busyRemaining,
         busySummarySeconds: maxFloat(0.0, task.busyTimer),
@@ -241,6 +250,7 @@ pub def buildPlayerStatsSummary(
 }
 
 pub def sendPlayerStats(pid: String): Game Void =
+    get() >>= ((gs) ->
     getsPlayer(pid) >>= ((player) ->
     usePlayerRuntime(pid) >>= ((rt) -> {
         let ch = player.playerCharacter;
@@ -251,7 +261,7 @@ pub def sendPlayerStats(pid: String): Game Void =
             PlayerDead -> "dead",
             PlayerBanned -> "banned",
         };
-        let bSum = fmap(busySummary, rt.runtimeBusy);
+        let bSum = fmap((t) -> busySummary(gs.world, t), rt.runtimeBusy);
         let sum = buildPlayerStatsSummary(
             player,
             ch.charHP,
@@ -265,7 +275,7 @@ pub def sendPlayerStats(pid: String): Game Void =
             bSum
         );
         tellGame(pid, PlayerStatsMsg(sum))
-    }))
+    })))
 
 pub def moneyRewardSummary(amount: Int): RewardSummary =
     MkRewardSummary { rewardSummaryKind: "money", rewardSummaryId: None, rewardSummaryName: "铜钱", rewardSummaryAmount: amount }
@@ -2215,8 +2225,8 @@ pub def tickPlayerRecovery(dt: Float): Game Void =
 pub def onGameTick(dt: Float): Game Void =
     tickBattleMaintenance(dt)
     *>> tickRespawns(dt)
-    *>> tickPlayerRecovery(dt)
     *>> tickTraining(dt)
+    *>> tickPlayerRecovery(dt)
 
 pub def onBattleTick(dt: Float): Game Void =
     tickBattleActions(dt)

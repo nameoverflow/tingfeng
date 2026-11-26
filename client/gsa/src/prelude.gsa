@@ -616,6 +616,20 @@ pub def bufPushF2(b: StringBuf, v: Float): Void = {
     bufPushByte(b, 48 + (r % 10))
 }
 
+pub def bufPushF4(b: StringBuf, v: Float): Void = {
+    let n = roundInt(v * 10000.0);
+    if (n < 0) bufPushByte(b, 45) else ();
+    let a = if (n < 0) -n else n;
+    let q = a / 10000;
+    let r = a % 10000;
+    bufPushInt(b, q);
+    bufPushByte(b, 46);
+    bufPushByte(b, 48 + (r / 1000));
+    bufPushByte(b, 48 + ((r / 100) % 10));
+    bufPushByte(b, 48 + ((r / 10) % 10));
+    bufPushByte(b, 48 + (r % 10))
+}
+
 pub def bufPushSanitized(b: StringBuf, txt: String): Void = {
     let n = strLen(txt);
     let needsClean = cellNew(false);

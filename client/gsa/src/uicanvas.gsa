@@ -11,7 +11,7 @@ use prelude.{
     floorInt, ceilInt, roundInt, floorDiv, floorMod,
     optOr, optIsSome, optIsNone, listIsEmpty, listNthOr, listFind, listFilter, listTake, listConcatMap,
     utf8Trim, textWidth, truncateText, wrapText, strReplace, listContainsStr,
-    bufPushF1, bufPushF2, bufPushSanitized
+    bufPushF1, bufPushF2, bufPushF4, bufPushSanitized
 }
 use ordmap.mapLookup
 use i18n.{Locale, isZh, tr, trParams, artRankTitle, formatArtType}
@@ -105,8 +105,8 @@ def cmdBar(
     bufPushF1(b, w); bufPushByte(b, 124);
     bufPushF1(b, h); bufPushByte(b, 124);
     bufPushF1(b, r); bufPushByte(b, 124);
-    bufPushF2(b, ratio); bufPushByte(b, 124);
-    bufPushF2(b, trail); bufPushByte(b, 124);
+    bufPushF4(b, ratio); bufPushByte(b, 124);
+    bufPushF4(b, trail); bufPushByte(b, 124);
     bufPushStr(b, c1); bufPushByte(b, 124);
     bufPushStr(b, c2); bufPushByte(b, 124);
     bufPushStr(b, trailCol);
@@ -305,7 +305,32 @@ def mergeSubTapeClipped(parent: Tape, child: Tape, clipY: Float, clipH: Float): 
 }
 
 // ============================================================================
-// Shared Vitals Helpers
+def busyTargetDisplayName(m: ClientModel, bi: BusyInfo): String =
+    if (bi.biAction == "meditate" || strLen(bi.biTarget) == 0) ""
+    else if (strLen(bi.biTargetName) > 0) bi.biTargetName
+    else match listFind(m.cmHero.hsArts, (a) -> a.aiId == bi.biTarget) {
+        Some(a) -> a.aiName,
+        None -> match listFind(m.cmHero.hsInventory, (it) -> it.iiId == bi.biTarget) {
+            Some(it) -> it.iiName,
+            None -> {
+                let allTeach = listConcatMap(m.cmWorld.wvRoomChars, (rc) -> rc.rcTeaches);
+                match listFind(allTeach, (ta) -> ta.taId == bi.biTarget) {
+                    Some(ta) -> ta.taName,
+                    None -> bi.biTarget,
+                }
+            },
+        },
+    }
+
+def busyActionTitle(m: ClientModel, bi: BusyInfo): String = {
+    let actLbl = tr(m.cmVp.vpLocale, "training.action." + bi.biAction);
+    let tName = busyTargetDisplayName(m, bi);
+    let tot = bi.biCompleted + bi.biRemaining;
+    if (strLen(tName) > 0)
+        actLbl + " " + tName + " " + intToStr(bi.biCompleted) + "/" + intToStr(tot)
+    else
+        actLbl + " " + intToStr(bi.biCompleted) + "/" + intToStr(tot)
+}
 // ============================================================================
 
 def presentedVitals(m: ClientModel): (Int, Int, Int, Int) = {
@@ -867,14 +892,9 @@ def drawDesktopHeader(t: Tape, m: ClientModel): Void = {
 
     match st.psBusy {
         Some(bi) if (!m.cmBattle.btInBattle) -> {
-            let ageS = maxFloat(0.0, (m.cmVp.vpClockMs - m.cmHero.hsStatsSyncedAtMs) / 1000.0);
+            let ageS = maxFloat(0.0, (m.cmVp.vpClockMs - m.cmHero.hsBusySyncedAtMs) / 1000.0);
             let remS = maxFloat(0.0, bi.biSeconds - ageS);
-            let tot = bi.biCompleted + bi.biRemaining;
-            let tName = match listFind(m.cmHero.hsArts, (a) -> a.aiId == bi.biTarget) {
-                Some(a) -> a.aiName,
-                None -> bi.biTarget,
-            };
-            let lbl = tr(m.cmVp.vpLocale, "training.action." + bi.biAction) + " " + tName + " " + intToStr(bi.biCompleted) + "/" + intToStr(tot) + " · " + intToStr(ceilInt(remS)) + "s";
+            let lbl = busyActionTitle(m, bi) + " · " + intToStr(ceilInt(remS)) + "s";
             let bw = minFloat(240.0, textWidth(11.5, lbl) + 20.0);
             drawBtn(t, m, 14.0 + pillW + 10.0, 11.0, bw, 30.0, lbl, 11.5, ToneJade, false, HitUi("desktop_drawer", "arts", ""))
         },
@@ -1298,18 +1318,44 @@ def drawMessageDock(t: Tape, m: ClientModel, isMob: Bool, dockY: Float, dockH: F
 // Side Drawers (Character / Inventory, Martial Arts, Quests)
 // ============================================================================
 
+def drawBusyBannerCard(t: Tape, m: ClientModel, zh: Bool, x0: Float, y0: Float, w: Float): Float =
+    match m.cmHero.hsStats.psBusy {
+        None -> y0,
+        Some(bi) -> {
+            let ageS = maxFloat(0.0, (m.cmVp.vpClockMs - m.cmHero.hsBusySyncedAtMs) / 1000.0);
+            let remS = maxFloat(0.0, bi.biSeconds - ageS);
+            let stepS = maxFloat(0.2, bi.biStepSeconds);
+            let fillSpan = maxFloat(0.2, stepS - 0.12);
+            let prog = clamp01((stepS - remS) / fillSpan);
+            let lbl = busyActionTitle(m, bi);
+            cmdRect(t, x0, y0, w, 60.0, 3.0, "#f2e7cf", "#946623", 1.4, 1.0);
+            cmdTx(t, x0 + 10.0, y0 + 21.0, 12.5, "700", "left", "#5e3d0e", 1.0, truncateText(w - 78.0, 12.5, lbl + " · " + fmtTenthSec(remS) + "s"));
+            drawMeter(t, x0 + 10.0, y0 + 36.0, w - 20.0, 10.0, prog, None, "#946623", "", "");
+            drawBtn(t, m, x0 + w - 62.0, y0 + 8.0, 52.0, 24.0, if (zh) "停下" else "Stop", 11.5, ToneDanger, false, HitUi("halt", "", ""));
+            y0 + 70.0
+        },
+    }
+
+def fmtTenthSec(sec: Float): String = {
+    let tenths = roundInt(sec * 10.0);
+    let q = tenths / 10;
+    let r = if (tenths < 0) (-tenths) % 10 else tenths % 10;
+    intToStr(q) + "." + intToStr(r)
+}
+
 def buildCharDrawerBody(t: Tape, m: ClientModel, zh: Bool, x0: Float, y0: Float, w: Float): Float = {
     let st = m.cmHero.hsStats;
     let idle = m.cmAuth.auConnected && !m.cmBattle.btInBattle && !m.cmWorld.wvStoryActive && optIsNone(st.psBusy);
     if (m.cmUi.uiCharSubTab == "inventory") {
-        cmdRect(t, x0, y0, w, 36.0, 3.0, "#efe7d4", "#c5b9a0", 1.0, 1.0);
-        cmdTx(t, x0 + 12.0, y0 + 23.0, 13.0, "600", "left", "#5c5346", 1.0, if (zh) "随身碎银" else "Silver");
-        cmdTx(t, x0 + w - 12.0, y0 + 23.0, 14.0, "700", "right", "#946623", 1.0, intToStr(m.cmHero.hsMoney));
+        let yInv0 = drawBusyBannerCard(t, m, zh, x0, y0, w);
+        cmdRect(t, x0, yInv0, w, 36.0, 3.0, "#efe7d4", "#c5b9a0", 1.0, 1.0);
+        cmdTx(t, x0 + 12.0, yInv0 + 23.0, 13.0, "600", "left", "#5c5346", 1.0, if (zh) "随身碎银" else "Silver");
+        cmdTx(t, x0 + w - 12.0, yInv0 + 23.0, 14.0, "700", "right", "#946623", 1.0, intToStr(m.cmHero.hsMoney));
         if (listIsEmpty(m.cmHero.hsInventory)) {
-            cmdTx(t, x0, y0 + 62.0, 12.5, "400", "left", "#8b7f6e", 1.0, if (zh) "行囊空空如也。" else "Inventory is empty.");
-            76.0
+            cmdTx(t, x0, yInv0 + 62.0, 12.5, "400", "left", "#8b7f6e", 1.0, if (zh) "行囊空空如也。" else "Inventory is empty.");
+            (yInv0 + 76.0) - y0
         } else {
-            let ay = cellNew(y0 + 44.0);
+            let ay = cellNew(yInv0 + 44.0);
             let cur = cellNew(m.cmHero.hsInventory);
             while (match cellGet(cur) { Nil -> false, _ -> true }) {
                 match cellGet(cur) {
@@ -1335,23 +1381,24 @@ def buildCharDrawerBody(t: Tape, m: ClientModel, zh: Bool, x0: Float, y0: Float,
             cellGet(ay) - y0
         }
     } else {
+        let yStat0 = drawBusyBannerCard(t, m, zh, x0, y0, w);
         let (presHp, presMaxHp, presQi, presMaxQi) = presentedVitals(m);
         let ageS = maxFloat(0.0, (m.cmVp.vpClockMs - m.cmHero.hsStatsSyncedAtMs) / 1000.0);
         let liveInj = maxInt(0, st.psInjuredSeconds - floorInt(ageS));
         let pEffs = liveEffectsOf(m, true);
 
-        cmdRect(t, x0, y0, w, 84.0, 3.0, "#efe7d4", "#c5b9a0", 1.0, 1.0);
-        cmdImg(t, portraitScoreFile(st.psGender, st.psAppearance, m.cmAuth.auUsername), x0 + 10.0, y0 + 10.0, 64.0, 64.0, 3.0);
-        cmdSerif(t, x0 + 84.0, y0 + 28.0, 15.5, "700", "left", "#1e1a16", 1.0, m.cmAuth.auUsername);
+        cmdRect(t, x0, yStat0, w, 84.0, 3.0, "#efe7d4", "#c5b9a0", 1.0, 1.0);
+        cmdImg(t, portraitScoreFile(st.psGender, st.psAppearance, m.cmAuth.auUsername), x0 + 10.0, yStat0 + 10.0, 64.0, 64.0, 3.0);
+        cmdSerif(t, x0 + 84.0, yStat0 + 28.0, 15.5, "700", "left", "#1e1a16", 1.0, m.cmAuth.auUsername);
         let appTxt = if (strLen(st.psAppearanceText) == 0) "容貌 " + intToStr(st.psAppearance) else st.psAppearanceText;
-        cmdTx(t, x0 + 84.0, y0 + 47.0, 12.0, "400", "left", "#5c5346", 1.0, tr(m.cmVp.vpLocale, "gender." + st.psGender) + " · " + appTxt);
+        cmdTx(t, x0 + 84.0, yStat0 + 47.0, 12.0, "400", "left", "#5c5346", 1.0, tr(m.cmVp.vpLocale, "gender." + st.psGender) + " · " + appTxt);
         if (liveInj > 0) {
-            cmdTx(t, x0 + 84.0, y0 + 66.0, 11.5, "700", "left", "#a32c22", 1.0, "重伤未愈 " + intToStr(liveInj) + "s")
+            cmdTx(t, x0 + 84.0, yStat0 + 66.0, 11.5, "700", "left", "#a32c22", 1.0, "重伤未愈 " + intToStr(liveInj) + "s")
         } else if (st.psCombatInsight > 0) {
-            cmdTx(t, x0 + 84.0, y0 + 66.0, 11.5, "600", "left", "#2b594b", 1.0, "实战印证 " + intToStr(st.psCombatInsight) + " 层")
+            cmdTx(t, x0 + 84.0, yStat0 + 66.0, 11.5, "600", "left", "#2b594b", 1.0, "实战印证 " + intToStr(st.psCombatInsight) + " 层")
         } else ();
 
-        let yM = y0 + 94.0;
+        let yM = yStat0 + 94.0;
         cmdRect(t, x0, yM, w, 146.0, 3.0, "#faf5e9", "#c8bca4", 1.0, 1.0);
         cmdTx(t, x0 + 10.0, yM + 18.0, 11.5, "600", "left", "#5c5346", 1.0, if (zh) "气血" else "HP");
         drawMeter(t, x0 + 10.0, yM + 24.0, w - 20.0, 13.0, intToFloat(presHp) / intToFloat(maxInt(1, presMaxHp)), None, "#a32c22", "", intToStr(presHp) + "/" + intToStr(presMaxHp));
@@ -1418,36 +1465,10 @@ def buildCharDrawerBody(t: Tape, m: ClientModel, zh: Bool, x0: Float, y0: Float,
     }
 }
 
-def fmtTenthSec(sec: Float): String = {
-    let tenths = roundInt(sec * 10.0);
-    let q = tenths / 10;
-    let r = if (tenths < 0) (-tenths) % 10 else tenths % 10;
-    intToStr(q) + "." + intToStr(r)
-}
-
 def buildArtsDrawerBody(t: Tape, m: ClientModel, zh: Bool, x0: Float, y0: Float, w: Float): Float = {
     let st = m.cmHero.hsStats;
     let idle = m.cmAuth.auConnected && !m.cmBattle.btInBattle && !m.cmWorld.wvStoryActive && optIsNone(st.psBusy);
-    let yList0 = match st.psBusy {
-        None -> y0,
-        Some(bi) -> {
-            let ageS = maxFloat(0.0, (m.cmVp.vpClockMs - m.cmHero.hsStatsSyncedAtMs) / 1000.0);
-            let remS = maxFloat(0.0, bi.biSeconds - ageS);
-            let stepS = maxFloat(0.2, bi.biStepSeconds);
-            let prog = clampFloat(0.04, 1.0, (stepS - remS) / stepS);
-            let tot = bi.biCompleted + bi.biRemaining;
-            let tName = match listFind(m.cmHero.hsArts, (a) -> a.aiId == bi.biTarget) {
-                Some(a) -> a.aiName,
-                None -> bi.biTarget,
-            };
-            let lbl = tr(m.cmVp.vpLocale, "training.action." + bi.biAction) + " " + tName + " " + intToStr(bi.biCompleted) + "/" + intToStr(tot);
-            cmdRect(t, x0, y0, w, 60.0, 3.0, "#f2e7cf", "#946623", 1.4, 1.0);
-            cmdTx(t, x0 + 10.0, y0 + 21.0, 12.5, "700", "left", "#5e3d0e", 1.0, truncateText(w - 78.0, 12.5, lbl + " · " + fmtTenthSec(remS) + "s"));
-            drawMeter(t, x0 + 10.0, y0 + 36.0, w - 20.0, 10.0, prog, None, "#946623", "", "");
-            drawBtn(t, m, x0 + w - 62.0, y0 + 8.0, 52.0, 24.0, if (zh) "停下" else "Stop", 11.5, ToneDanger, false, HitUi("halt", "", ""));
-            y0 + 70.0
-        },
-    };
+    let yList0 = drawBusyBannerCard(t, m, zh, x0, y0, w);
 
     if (listIsEmpty(m.cmHero.hsArts)) {
         cmdTx(t, x0, yList0 + 20.0, 12.5, "400", "left", "#8b7f6e", 1.0, if (zh) "尚未习得武学。" else "No martial arts learned.");

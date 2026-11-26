@@ -437,6 +437,7 @@ pub data BusyInfo {
     MkBusyInfo {
         biAction: String,
         biTarget: String,
+        biTargetName: String,
         biCompleted: Int,
         biRemaining: Int,
         biSeconds: Float,
@@ -919,6 +920,7 @@ def decStats(fs: List (String, Value)): PlayerStatsInfo = {
             Some(MkBusyInfo {
                 biAction: fStrOr(bfs, "busySummaryAction", ""),
                 biTarget: fStrOr(bfs, "busySummaryTarget", ""),
+                biTargetName: fStrOr(bfs, "busySummaryTargetName", ""),
                 biCompleted: fIntOr(bfs, "busySummaryCompleted", 0),
                 biRemaining: fIntOr(bfs, "busySummaryRemaining", 0),
                 biSeconds: sec,

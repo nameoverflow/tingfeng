@@ -31,7 +31,7 @@ use protocol.{
     EffectInfo, ActiveSkillInfo, CombatantInfo, MkCombatantInfo, BattleSnap, MkBattleSnap,
     CombatResult, ResHit, ResDodge, ResParry, ResEffect, combatResEq, parseCombatResult,
     CombatEvt, MkCombatEvt, SkillFailReason, FailNeedAp, FailNeedQi, FailCooldown, FailMissingStatus, FailUnavailable,
-    BusyInfo, PlayerStatsInfo, MkPlayerStatsInfo, ArtInfo, InvItem, RewardInfo, QuestItem,
+    BusyInfo, MkBusyInfo, PlayerStatsInfo, MkPlayerStatsInfo, ArtInfo, InvItem, RewardInfo, QuestItem,
     ServerMsg, SmMove, SmView, SmMapOverview, SmAttack, SmCombatEvent, SmCombatSettlement,
     SmBattleState, SmActiveSkillFailure, SmDialogue, SmStory, SmStorySequence, SmStoryDelay,
     SmStoryTransition, SmSay, SmUseItem, SmPlayerStats, SmInventory, SmArts, SmQuests,
@@ -212,6 +212,7 @@ pub data HeroSheets {
     MkHeroSheets {
         hsStats: PlayerStatsInfo,
         hsStatsSyncedAtMs: Float,
+        hsBusySyncedAtMs: Float,
         hsMoney: Int,
         hsInventory: List InvItem,
         hsArts: List ArtInfo,
@@ -553,6 +554,7 @@ pub def initClientModel(
     cmHero: MkHeroSheets {
         hsStats: defaultStats(),
         hsStatsSyncedAtMs: 0.0,
+        hsBusySyncedAtMs: 0.0,
         hsMoney: 0,
         hsInventory: Nil,
         hsArts: Nil,
@@ -1319,11 +1321,55 @@ def applyServerMessageNowM(msg: ServerMsg): ClientM Void =
                     && listIsEmpty(bt0.btQueue);
             let hs0 = m0.cmHero;
             let au0 = m0.cmAuth;
+            let nowClock = m0.cmVp.vpClockMs;
+            let (mergedBusy, nextBusySyncMs) = match (hs0.hsStats.psBusy, st.psBusy) {
+                (Some(prevBi), Some(newBi))
+                    if (prevBi.biAction == newBi.biAction
+                        && prevBi.biTarget == newBi.biTarget
+                        && prevBi.biCompleted == newBi.biCompleted) -> {
+                    // Mid-step vitals update (e.g. Jing/Qi regeneration): keep the smooth 60fps step anchor untouched!
+                    let bestName = if (strLen(newBi.biTargetName) > 0) newBi.biTargetName else prevBi.biTargetName;
+                    (Some(MkBusyInfo {
+                        biAction: newBi.biAction,
+                        biTarget: newBi.biTarget,
+                        biTargetName: bestName,
+                        biCompleted: newBi.biCompleted,
+                        biRemaining: newBi.biRemaining,
+                        biSeconds: prevBi.biSeconds,
+                        biStepSeconds: newBi.biStepSeconds,
+                    }), hs0.hsBusySyncedAtMs)
+                },
+                (_, Some(newBi)) -> {
+                    let stepSec = maxFloat(0.2, newBi.biStepSeconds);
+                    let startSec = if (newBi.biSeconds >= stepSec - 0.18) stepSec else newBi.biSeconds;
+                    (Some(MkBusyInfo {
+                        biAction: newBi.biAction,
+                        biTarget: newBi.biTarget,
+                        biTargetName: newBi.biTargetName,
+                        biCompleted: newBi.biCompleted,
+                        biRemaining: newBi.biRemaining,
+                        biSeconds: startSec,
+                        biStepSeconds: stepSec,
+                    }), nowClock)
+                },
+                (_, None) -> (None, nowClock),
+            };
+            let mergedStats = MkPlayerStatsInfo {
+                psHp: st.psHp, psMaxHp: st.psMaxHp, psQi: st.psQi, psMaxQi: st.psMaxQi,
+                psJing: st.psJing, psMaxJing: st.psMaxJing, psAp: st.psAp,
+                psStatus: st.psStatus, psGender: st.psGender, psAppearance: st.psAppearance,
+                psAppearanceText: st.psAppearanceText, psPortraitKey: st.psPortraitKey,
+                psStrength: st.psStrength, psAgility: st.psAgility, psVitality: st.psVitality,
+                psPotential: st.psPotential, psCombatExp: st.psCombatExp,
+                psInjuredSeconds: st.psInjuredSeconds, psCombatInsight: st.psCombatInsight,
+                psBusy: mergedBusy,
+            };
             let m1 = markDirty(withBattle(
                 withAuth(
                     withHero(m0, MkHeroSheets {
-                        hsStats: st,
-                        hsStatsSyncedAtMs: m0.cmVp.vpClockMs,
+                        hsStats: mergedStats,
+                        hsStatsSyncedAtMs: nowClock,
+                        hsBusySyncedAtMs: nextBusySyncMs,
                         hsMoney: hs0.hsMoney,
                         hsInventory: hs0.hsInventory,
                         hsArts: hs0.hsArts,
@@ -1356,21 +1402,21 @@ def applyServerMessageNowM(msg: ServerMsg): ClientM Void =
         SmInventory(money, items) -> {
             let hs0 = m0.cmHero;
             put(markDirty(withHero(m0, MkHeroSheets {
-                hsStats: hs0.hsStats, hsStatsSyncedAtMs: hs0.hsStatsSyncedAtMs,
+                hsStats: hs0.hsStats, hsStatsSyncedAtMs: hs0.hsStatsSyncedAtMs, hsBusySyncedAtMs: hs0.hsBusySyncedAtMs,
                 hsMoney: money, hsInventory: items, hsArts: hs0.hsArts, hsQuests: hs0.hsQuests,
             })))
         },
         SmArts(arts) -> {
             let hs0 = m0.cmHero;
             put(markDirty(withHero(m0, MkHeroSheets {
-                hsStats: hs0.hsStats, hsStatsSyncedAtMs: hs0.hsStatsSyncedAtMs,
+                hsStats: hs0.hsStats, hsStatsSyncedAtMs: hs0.hsStatsSyncedAtMs, hsBusySyncedAtMs: hs0.hsBusySyncedAtMs,
                 hsMoney: hs0.hsMoney, hsInventory: hs0.hsInventory, hsArts: arts, hsQuests: hs0.hsQuests,
             })))
         },
         SmQuests(qs) -> {
             let hs0 = m0.cmHero;
             put(markDirty(withHero(m0, MkHeroSheets {
-                hsStats: hs0.hsStats, hsStatsSyncedAtMs: hs0.hsStatsSyncedAtMs,
+                hsStats: hs0.hsStats, hsStatsSyncedAtMs: hs0.hsStatsSyncedAtMs, hsBusySyncedAtMs: hs0.hsBusySyncedAtMs,
                 hsMoney: hs0.hsMoney, hsInventory: hs0.hsInventory, hsArts: hs0.hsArts, hsQuests: qs,
             })))
         },
@@ -1597,7 +1643,10 @@ pub def stepClientFrame(rawDtMs: Float, rawW: Float, rawH: Float, m0: ClientMode
         mAfterTl.cmBattle.btInBattle
             || optIsSome(mAfterTl.cmHero.hsStats.psBusy)
             || mAfterTl.cmHero.hsStats.psInjuredSeconds > 0;
-    let syncIntervalMs = if (mAfterTl.cmBattle.btInBattle) 80.0 else 180.0;
+    let syncIntervalMs =
+        if (optIsSome(mAfterTl.cmHero.hsStats.psBusy)) 16.0
+        else if (mAfterTl.cmBattle.btInBattle) 80.0
+        else 180.0;
     let vpA = mAfterTl.cmVp;
     let tickSyncDue = hasLiveTimers && (nowMs - vpA.vpLastSyncTickMs >= syncIntervalMs);
     let nextSyncTick = if (tickSyncDue) nowMs else vpA.vpLastSyncTickMs;
@@ -2483,6 +2532,7 @@ pub def handleLabCommand(
                                     psBusy: st.psBusy,
                                 },
                                 hsStatsSyncedAtMs: hs.hsStatsSyncedAtMs,
+                                hsBusySyncedAtMs: hs.hsBusySyncedAtMs,
                                 hsMoney: hs.hsMoney, hsInventory: hs.hsInventory,
                                 hsArts: hs.hsArts, hsQuests: hs.hsQuests,
                             }
