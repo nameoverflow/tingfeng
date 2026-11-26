@@ -58,7 +58,7 @@ rooms:
     id: luoyang_wet_steps
     name: "洛水石阶"
     kind: landmark
-    desc: "石阶从天津桥头落到水边，常年湿滑。这里是临水死角，不再通向车马驿。"
+    desc: "石阶从天津桥头落到水边，青苔湿滑，再往前便是滔滔洛水。"
     exits:
       north: [1, 2]
 
@@ -107,7 +107,7 @@ rooms:
     id: luoyang_quiet_room
     name: "会场静修房"
     kind: building
-    desc: "房中收着木剑和旧谱。房门只开向牡丹会场，不再充作去残谱室的走廊。"
+    desc: "屋中摆着木剑与旧谱，窗扇正对着牡丹会场，院里喧闹到了这儿便轻了许多。"
     exits:
       east: [0, 4]
 

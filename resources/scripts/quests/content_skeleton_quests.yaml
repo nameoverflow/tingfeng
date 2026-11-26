@@ -32,7 +32,7 @@
       actions:
         - type: message
           speaker: "周引路"
-          text: "看你站门洞、避差役的样子，像是从小自己讨生活。城门再过一刻就落锁，衣角那片血先拿雨水搓一搓。御街南段西侧是西市街口，往北就是樊楼客舍。报我姓周，伙计会给你留间后房。"
+          text: "看你站门洞、避差役的样子，像是从小自己讨生活。城门快落锁了，衣角那片血先拿雨水搓掉。进门顺着御街往西市走，樊楼后院有间客舍，提我姓周，伙计会给你留门。"
         - type: set_stage
           quest: first_steps_kaifeng
           stage: inn
@@ -50,7 +50,7 @@
       actions:
         - type: message
           speaker: "周引路"
-          text: "城门再过一刻就落锁。你衣角那片血，我没看见，守门的差役未必也没看见。御街南段西侧是西市街口，往北就是樊楼客舍。报我姓周，伙计会给你留间后房。先把湿衣换了，再想明日往哪里走。"
+          text: "城门快落锁了。你衣角那片血，我没看见，守门的差役未必也没看见。进门顺着御街拐进西市，去樊楼客舍，提我姓周，伙计能给你腾间后房。先把湿衣换了，再想明日往哪里走。"
         - type: set_stage
           quest: first_steps_kaifeng
           stage: inn
@@ -67,7 +67,7 @@
       actions:
         - type: message
           speaker: "周引路"
-          text: "第一次进开封，先找住处。御街南段西侧是西市街口，往北就是樊楼客舍。报我姓周，伙计会给你留间后房。"
+          text: "头一回来开封，先找地方落脚。进门顺着御街拐进西市，樊楼客舍提我姓周，伙计会给你留间后房。"
         - type: set_stage
           quest: first_steps_kaifeng
           stage: inn
@@ -83,7 +83,7 @@
       actions:
         - type: message
           speaker: "周引路"
-          text: "从南门沿御街北行，到御街南段向西进西市街口，再往北就是樊楼客舍。先住下，别在门洞里过夜。"
+          text: "顺着御街往北，拐进西市便是樊楼客舍。先去住下，别在门洞里熬夜。"
 
     - id: fanlou_refuses_before_guide
       trigger:
@@ -229,6 +229,9 @@
           text: "这笔画不像临时学的。替我誊完这页失物榜，字要清楚，人名尤其不能错。"
         - type: delay
           ms: 1400
+        - type: message
+          speaker: "旁白"
+          text: "墨迹未干时，你的手腕已有些发酸。沈抄书验过字迹，点点头把十文钱和一枚工筹推到案边。"
         - type: give_money
           amount: 10
         - type: give_item
@@ -255,6 +258,9 @@
           text: "你拿公牒的手势像见过衙门文书。替我把这页告示誊清，别把官样文章写进百姓名字里。"
         - type: delay
           ms: 1400
+        - type: message
+          speaker: "旁白"
+          text: "一页告示誊完，字迹端正无误。沈抄书将十文钱与工筹一并递了过来。"
         - type: give_money
           amount: 10
         - type: give_item
@@ -283,6 +289,9 @@
           text: "照着这一页慢慢誊，认不准的字便问。名字写错一笔，寻人的路就会多绕十里。"
         - type: delay
           ms: 1400
+        - type: message
+          speaker: "旁白"
+          text: "誊完最后一笔，你长出一口气。沈抄书核对过人名，把十文钱和一枚工筹交到你手里。"
         - type: give_money
           amount: 10
         - type: give_item

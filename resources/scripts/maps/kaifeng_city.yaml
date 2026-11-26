@@ -157,7 +157,7 @@ rooms:
     id: kaifeng_west_lane
     name: "甜水巷"
     kind: street
-    desc: "巷子窄得两个人错身也要侧肩。茶楼、钱庄和西市公告墙各自开门，不必穿堂而过。"
+    desc: "巷子窄得两个人错身也要侧肩。茶楼、钱庄和公告墙的门脸紧挨着，各自迎客。"
     exits:
       east: [-1, 0]
       west: [-3, 0]
@@ -281,7 +281,7 @@ rooms:
     id: kaifeng_yamen
     name: "开封府外堂"
     kind: landmark
-    desc: "外堂正门朝府前十字。捕房在北侧院门内，官仓另有东门，不与东市混作通路。"
+    desc: "外堂正门朝府前十字。北侧院门通往捕房，东面另开一门守着官仓。"
     exits:
       west: [0, 1]
       north: [1, 2]
@@ -334,7 +334,7 @@ rooms:
     id: kaifeng_shrine
     name: "武庙前街"
     kind: street
-    desc: "小武庙临街而立。向西是洛阳车马行，向北的小巷通往北街，不必穿过庙堂。"
+    desc: "小武庙临街而立。西边是洛阳车马行，往北折进窄巷便是北街。"
     exits:
       east: [0, 2]
       west: [-2, 2]
@@ -354,7 +354,7 @@ rooms:
     id: kaifeng_back_alley
     name: "北街后巷"
     kind: street
-    desc: "后巷夹在武庙与北街之间，门口留着衙役查访记号。它通往街市，不通城墙望台。"
+    desc: "后巷夹在武庙与北街之间，墙角留着衙役查访的粉笔记号，平时鲜少有人往来。"
     char:
       - alley_beggar_chen
     exits:
@@ -417,7 +417,7 @@ rooms:
     id: kaifeng_north_gate
     name: "开封北门"
     kind: landmark
-    desc: "北门外是通往黄河渡口的递道。东西望台只通城门马道，不兼作城内街巷。"
+    desc: "北门外是通往黄河渡口的递道。东西两侧马道通向城头望台，守城军卒常在台边换岗。"
     exits:
       north: [0, 5]
       south: [0, 3]

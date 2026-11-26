@@ -98,7 +98,7 @@ rooms:
     id: dali_stone_lock
     name: "石锁棚"
     kind: building
-    desc: "石锁大大小小排成一列。棚门只朝旧府外院，不再充作通往誓墙的道路。"
+    desc: "石锁大大小小排成一列，棚下地面被砸出一个个浅坑，正对着旧府外院。"
     insight:
       arts: [fist, foundation]
       bonus: 6
@@ -169,7 +169,7 @@ rooms:
     id: dali_contract_room
     name: "路契房"
     kind: building
-    desc: "桌上压着许多茶马路契。路契房与外堂相连，不再借灶房作通道。"
+    desc: "桌上压着许多茶马路契，门开向段氏外堂，来往验契的护卫都要在这儿落印。"
     char:
       - dali_contract_clerk
     exits:
