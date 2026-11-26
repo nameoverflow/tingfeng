@@ -43,7 +43,7 @@
           stage: delivered
         - type: message
           speaker: "旁白"
-          text: "你将封蜡完好的驿信放进递铺亭的换马信筒，核对了竹牌记号，可以回开封驿马院向小乔复命了。"
+          text: "封蜡完好的驿信落进换马信筒，你核对过竹牌记号，转身折回开封驿马院。"
 
     - id: job_kaifeng_post_finish
       trigger:
@@ -169,7 +169,7 @@
           stage: weir_checked
         - type: message
           speaker: "旁白"
-          text: "洛水旧堰亭一带并无异动，几名过路剑客见你步履沉稳，各自抱拳让开。接下来去白马寺外山门看一眼即可。"
+          text: "洛水旧堰亭一带风平浪静，几名过路剑客见你步履沉稳，各自抱拳让开半步。顺道再去白马寺外山门望一眼便是。"
 
     - id: job_luoyang_patrol_baima
       trigger:
@@ -186,7 +186,7 @@
           stage: baima_checked
         - type: message
           speaker: "旁白"
-          text: "白马寺外山门清静如常，东郊官道往来客商秩序井然。可以回牡丹会场向裴文举复命了。"
+          text: "白马寺外山门清静如常，东郊官道上的商旅也秩序井然，这趟巡场算是有个交代了。"
 
     - id: job_luoyang_patrol_finish
       trigger:
@@ -267,7 +267,7 @@
           stage: cliff_scouted
         - type: message
           speaker: "旁白"
-          text: "立在苍山废石场极目远眺，山道并无埋伏烟尘，商队可以照常发车。回茶马车场复命吧。"
+          text: "立在苍山废石场高处极目远眺，山下马道并无埋伏烟尘，商队今日可照常发车了。"
 
     - id: job_dali_patrol_finish
       trigger:
@@ -331,7 +331,7 @@
           stage: washed
         - type: message
           speaker: "旁白"
-          text: "你借着清浅溪水细细漂去药根泥沙，草木清气沁入鼻端。接着送到西侧晒药架摊开即可。"
+          text: "清浅溪水冲净了药根上的泥沙，草木清气扑面而来。趁着日头正好，拿去西侧晒药架摊开吧。"
 
     - id: job_taihu_herb_dry
       trigger:
@@ -348,7 +348,7 @@
           stage: dried
         - type: message
           speaker: "旁白"
-          text: "你将药草按性味分格铺在晒药架上，微风掠过，草香四散。回水榭外院告诉药童吧。"
+          text: "药草按性味分格铺上竹架，微风一过，药香四散。外院的药童这会儿该等急了。"
 
     - id: job_taihu_herb_finish
       trigger:

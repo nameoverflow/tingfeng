@@ -15,7 +15,7 @@
       level: 10
   teaches: {}
   dialogue:
-    - "别点火。外头有人追着镖车来的，庙里一亮，谁也走不了。"
+    - "快把火折子收起来……外头有人追着镖车来了，庙里一亮，谁也走不了。"
   respawn: 0
   attr:
     hp: 80
@@ -39,7 +39,7 @@
       id: weiyuan_sword
       level: 1
   dialogue:
-    - "我脑子很乱。陈伯让我听你的，我就先听你的。"
+    - "别出声……陈伯让我听你的，我就跟着你走。"
   respawn: 0
   attr:
     hp: 100
@@ -64,7 +64,7 @@
       id: nameless_trial_sword
       level: 1
   dialogue:
-    - "威远镖局的人在这里。你们一个都走不了。"
+    - "果然躲在这儿。屋里的人，今夜一个别留。"
   respawn: 0
   attr:
     hp: 60

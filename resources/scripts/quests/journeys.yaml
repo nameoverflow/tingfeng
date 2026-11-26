@@ -140,7 +140,7 @@
       actions:
         - type: message
           speaker: "洛阳接引人"
-          text: "上回半路折回来了？这回走完它。"
+          text: "上回半路折回开封了？车马不等人，这回可别再半途下车。"
         - type: set_stage
           quest: journey_luoyang
           stage: road
@@ -319,7 +319,7 @@
       actions:
         - type: message
           speaker: "大理商队护卫"
-          text: "上回半路折回来了？这回走完它。"
+          text: "上回半道折回去了？山路就那样，这回跟紧了。"
         - type: set_stage
           quest: journey_dali
           stage: road
@@ -482,7 +482,7 @@
           npc: water_fort_bandit
         - type: message
           speaker: "旁白"
-          text: "药车到了运河渡口，几条快船横在水面上，船头的人喊：太湖的水路，过一车，留一箱。"
+          text: "药车到了运河渡口，几条快船横在水面上，船头的人喊：“太湖的水路，过一车，留一箱！”"
     - id: taihu_resume_departure
       trigger:
         type: talk
@@ -496,7 +496,7 @@
       actions:
         - type: message
           speaker: "太湖药童"
-          text: "上回半路折回来了？这回走完它。"
+          text: "上回没走成？药箱还给你留着位置，这回咱们一路到湖边。"
         - type: set_stage
           quest: journey_taihu
           stage: road

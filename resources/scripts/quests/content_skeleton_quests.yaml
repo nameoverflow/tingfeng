@@ -118,7 +118,7 @@
           amount: 1
         - type: message
           speaker: "旁白"
-          text: "房里只有竹榻、油灯和一只旧木箱。地方虽小，门闩尚算结实。你把水浸路单压进箱底，没有再看。"
+          text: "房里只有竹榻、油灯和一只旧木箱。地方虽小，门闩尚算结实。你把包袱塞进枕下，吹熄油灯，听着外头雨声渐渐小了。"
         - type: set_flag
           flag: kaifeng.has_room
         - type: set_stage

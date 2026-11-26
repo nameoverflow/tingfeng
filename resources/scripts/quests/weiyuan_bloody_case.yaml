@@ -31,7 +31,7 @@ events:
     actions:
       - type: message
         speaker: "灰衣少年"
-        text: "嘘——外头的人还没走远。陈伯伤得重，你先听他说。"
+        text: "别出声……外头刚过去一拨人。陈伯撑不住了，你帮我看看他。"
 
   - id: old_escort_warns_in_temple
     trigger:
@@ -43,21 +43,21 @@ events:
     actions:
       - type: message
         speaker: "受伤老镖师"
-        text: "别点火。追兵循着镖车的辙印摸到了这里，庙里一亮，谁也走不了。"
+        text: "快把火折子收起来……追兵顺着车辙摸过来了。这庙里一亮，谁都跑不掉。"
       - type: set_stage
         quest: weiyuan_bloody_case
         stage: intruder
       - type: message
         speaker: "旁白"
-        text: "话音未落，庙门外响起急促脚步。半扇破门被人一脚踹开，雨水和冷风一起灌进殿里。"
+        text: "话音未落，门外一阵急促脚步踏碎水洼。半扇破门被人一脚踹开，冷雨和风一起灌进殿里。"
       - type: show_npc
         npc: temple_black_clad
       - type: message
         speaker: "黑衣人"
-        text: "威远的人果然在这里。今夜这座庙里，不该再有活口。"
+        text: "果然躲在这儿。屋里不管有几个，今夜一个别留。"
       - type: message
         speaker: "受伤老镖师"
-        text: "少侠，若我倒下，替我把这孩子带到开封城南的威远分局。"
+        text: "后生，别让他摸到神龛那边！他左肋挨过我一剑，撑不了几招！"
 
   - id: old_escort_urges_fight
     trigger:
@@ -70,7 +70,7 @@ events:
     actions:
       - type: message
         speaker: "受伤老镖师"
-        text: "他左肋挨过我一剑，脚下已经虚了，只是不肯认。别让他靠近孩子。"
+        text: "他左肋挨过我一剑，脚下已经虚了，只是硬撑着。别让他靠近神龛那边的孩子！"
 
   - id: young_escort_urges_fight
     trigger:
@@ -83,7 +83,7 @@ events:
     actions:
       - type: message
         speaker: "灰衣少年"
-        text: "他剑上还有血……我的腿不听使唤。少侠，小心。"
+        text: "他剑上还有血……我的腿不听使唤，你小心！"
 
   - id: black_clad_forces_fight
     trigger:
@@ -96,7 +96,7 @@ events:
     actions:
       - type: message
         speaker: "黑衣人"
-        text: "你不是威远的人，本可以晚死一步。现在既然站在这里，就一起留下。"
+        text: "路过躲雨的？算你倒霉，既然撞见了，就别想活着出这座庙。"
       - type: set_stage
         quest: weiyuan_bloody_case
         stage: duel
@@ -119,10 +119,10 @@ events:
         stage: escort_dying
       - type: message
         speaker: "旁白"
-        text: "黑衣人倒在门边。老镖师扶着断柱站起，才迈出半步，便又重重坐了下去。"
+        text: "黑衣人仰面栽在门槛边。老镖师扶着断柱想站起来，脚下一软，又重重滑坐回去。"
       - type: message
         speaker: "旁白"
-        text: "黑衣人的袖口翻开，腕上刺着一圈细密墨线，像一道没写完的符。他左肋的旧伤还在渗血。"
+        text: "黑衣人的袖口翻开，腕上刺着一圈细密墨线，像一道没写完的符。他左肋的剑伤还在往外冒血。"
       - type: set_flag
         flag: weiyuan.saw_ink_mark
 
@@ -137,7 +137,7 @@ events:
     actions:
       - type: message
         speaker: "灰衣少年"
-        text: "陈伯方才一直撑着。少侠，快去看看他。"
+        text: "陈伯……陈伯的血止不住了，你快来看看！"
 
   - id: old_escort_last_request
     trigger:
@@ -150,7 +150,7 @@ events:
     actions:
       - type: message
         speaker: "受伤老镖师"
-        text: "我走不动了。包袱底有三十文盘缠，还有这趟镖的底单。把孩子和底单一起送到威远分局，交到他爹骆主事手里。"
+        text: "我不行了……包袱底有三十文钱，还有这趟镖的底单。带这孩子进开封城……去南渡的威远分局，找骆主事……"
       - type: give_money
         amount: 30
       - type: give_item
@@ -160,13 +160,13 @@ events:
         ms: 1800
       - type: message
         speaker: "受伤老镖师"
-        text: "若镖局也出了事，不要逞强。人活着，才有资格管别人的旧账。"
+        text: "要是分局也……也出事了，别回头，带着孩子有多远走多远。"
       - type: message
         speaker: "旁白"
-        text: "老镖师说完这句，攥着你衣袖的手慢慢松开了。少年跪在他身边，替他合上眼，把自己的斗笠盖在他脸上。"
+        text: "老镖师说完这句，攥着你袖子的手慢慢松了。少年扑在膝边喊了两声，见人没了声息，咬着牙把自己的斗笠摘下来，轻轻盖在陈伯脸上。"
       - type: message
         speaker: "灰衣少年"
-        text: "陈伯，等我回来给你收尸。"
+        text: "……走吧。别让陈伯白死在这儿。"
       - type: set_stage
         quest: weiyuan_bloody_case
         stage: escort_road
@@ -180,7 +180,7 @@ events:
         position: [0, 0]
       - type: message
         speaker: "灰衣少年"
-        text: "沿汴水往北走就是南渡，过了州桥便是城门。外头指不定还有追兵，咱们别耽搁。"
+        text: "顺着汴水往北就是南渡，过了州桥便是城门。我爹今夜该在柜上……我们快走，别在半道撞上另一拨人。"
 
   - id: young_escort_on_road
     trigger:
@@ -275,7 +275,7 @@ events:
         ms: 1600
       - type: message
         speaker: "旁白"
-        text: "井台的青石上有几行新刻的字，是用剑尖匆匆划出来的。"
+        text: "井台青石上留着几道剑尖划出的新痕，笔画歪斜却深，像是临走前匆忙刻下的。"
       - type: message
         speaker: "灰衣少年（井台刻字）"
         text: "路单和剑谱替我收着，留在我身上活不过今夜。别找我，找我的人会顺着你找来。"
