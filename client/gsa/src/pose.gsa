@@ -901,6 +901,21 @@ def rotatedPoly(origin: (Float, Float), deg: Float, pts: List (Float, Float)): L
 def swingWave(phase: Float, lag: Float): Float =
     sin(phase / 300.0 - lag) + sin(phase / 170.0 - lag * 1.6) * 0.4
 
+// Keep the outer contour and the ink repainted at hip/shoulder joins in
+// the same coordinates. Both consume the projected shapes below.
+def projectFarLimb(shapes: List ShapePrim, dy: Float): List ShapePrim = {
+    let scale = 0.96;
+    let project = (x: Float, y: Float) -> (4.0 + x * scale, dy + y * scale);
+    listMap(shapes, (shape) -> match shape {
+        SCircle(x, y, r, fill, alpha) -> {
+            let (px, py) = project(x, y);
+            SCircle(px, py, r * scale, fill, alpha)
+        },
+        SPoly(pts, fill, alpha) ->
+            SPoly(listMap(pts, (pt) -> match pt { (x, y) -> project(x, y) }), fill, alpha),
+    })
+}
+
 pub def buildActorParts(
     p: SvgPose,
     style: CombatStyle,
@@ -929,20 +944,20 @@ pub def buildActorParts(
     let (rx, ry) = root;
     let (handF, handB) = p.spHands;
 
-    let backLegShapes = listAppend(
+    let backLegShapes = projectFarLimb(listAppend(
         organicLimb(p.spHip, p.spBackKnee, thighProf(), k),
         listAppend(
             organicLimb(p.spBackKnee, p.spBackFoot, shinProf(), k),
             footShapes(p.spBackKnee, p.spBackFoot, p.spBackFootPlanted, k)
         )
-    );
-    let backArmShapes = listAppend(
+    ), -7.0);
+    let backArmShapes = projectFarLimb(listAppend(
         organicLimb(p.spShoulder, p.spBackElbow, upperArmProf(), k),
         listAppend(
             organicLimb(p.spBackElbow, p.spBackHand, forearmProf(), k),
             handShapes(p.spBackElbow, p.spBackHand, handB, k)
         )
-    );
+    ), -4.0);
 
     let chestR = if (maiden) 11.4 else 13.5;
     let waistR = if (maiden) 8.6 else 10.6;

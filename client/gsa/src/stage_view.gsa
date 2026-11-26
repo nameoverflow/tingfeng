@@ -136,12 +136,6 @@ pub def drawInkActor(
     while (match cellGet(pcur) { Nil -> false, _ -> true }) {
         match cellGet(pcur) {
             Cons(part, prest) -> {
-                // Project the far limbs back into the ground plane. Their roots
-                // stay inside the torso and the far foot lands slightly higher.
-                let farLeg = part.apKey == "back-leg";
-                let farArm = part.apKey == "back-arm";
-                let far = farLeg || farArm;
-                if (far) pushTransform(dl, 4.0, if (farLeg) -7.0 else -4.0, 0.96, 0.96, 0.0) else ();
                 if (part.apKey == "front-arm" && styleEq(style, StyleSword)) {
                     let (hx, hy) = swordPommelOf(pose);
                     let (cordAngle, silkAngle) = tasselAngles;
@@ -198,7 +192,6 @@ pub def drawInkActor(
                         Nil -> (),
                     }
                 };
-                if (far) popTransform(dl) else ();
                 cellSet(pcur, prest)
             },
             Nil -> (),
