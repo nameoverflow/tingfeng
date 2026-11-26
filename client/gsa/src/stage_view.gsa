@@ -18,7 +18,7 @@ use kagura.gfx.{
 use kagura.ui.{
     Element, CanvasHit, canvasHit, fillSpace, canvasStage
 }
-use prelude.{degToRad, fmodPos, optOr, optIsSome, listFind, utf8CharCount}
+use prelude.{atan2, degToRad, fmodPos, optOr, optIsSome, listFind, utf8CharCount}
 use ordmap.{mapLookup, mapFromList}
 use i18n.tr
 use protocol.{
@@ -28,7 +28,7 @@ use protocol.{
 }
 use pose.{
     CombatStyle, StyleFist, StyleSword, styleEq, parseCombatStyle,
-    VisualProfile, ProfileMale, ProfileFemale, parseVisualProfile,
+    VisualProfile, ProfileMale, ProfileFemale, parseVisualProfile, profileEq,
     LookStyle, SvgPose, ShapePrim, SCircle, SPoly,
     allPoseIds, svgPose, blendPose, swordTipOf, swordPommelOf, buildActorParts
 }
@@ -127,9 +127,9 @@ pub def drawInkActor(
     fillCol: Color, outlineCol: Color,
     flash: Float, alpha: Float,
     pose: SvgPose, style: CombatStyle, prof: VisualProfile, look: LookStyle,
-    hairFlow: (Float, Float), tasselAngles: (Float, Float), clockMs: Float
+    hairBend: (Float, Float), tasselAngles: (Float, Float), clockMs: Float
 ): Void = {
-    let parts = buildActorParts(pose, style, prof, look, hairFlow, clockMs);
+    let parts = buildActorParts(pose, style, prof, look, hairBend, clockMs);
     pushTransform(dl, wx, wy, scaleSign, absFloat(scaleSign), rotDeg);
     let outCol = withAlpha(outlineCol, alpha);
     let pcur = cellNew(parts);
@@ -845,35 +845,69 @@ pub def renderBattleStage(stageRect: Rect, _ptr: Vec2, dl: DrawList, m: ClientMo
     let (pFill, eFill, outlineCol) =
         if (inv) (hexColor("#f6f0e2"), hexColor("#e6d8be"), hexColor("#181410"))
         else (hexColor("#1b2521"), hexColor("#2f221b"), hexColor("#f6f0e2"));
-    let pFlow = if (reduced) (0.0, 0.0) else (0.0 - pFig.fsX * 0.09, absFloat(pFig.fsY) * 0.2);
-    let eFlow = if (reduced) (0.0, 0.0) else (eFig.fsX * 0.09, absFloat(eFig.fsY) * 0.2);
-
-    // Sample earlier pommel positions on the same clock as the action. The cord
-    // responds first and the silk follows, including on replay, seek and mirror.
-    let swingAt = (side: BattleSide, pose: SvgPose, fig: battle.FigureSample) -> {
-        if (reduced || !styleEq(fig.fsVisual.avStyle, StyleSword) || !optIsSome(mTl)) (0.0, 0.0)
+    // Sample attachments from the action clock so seeking to a frame also
+    // reconstructs the direction of travel leading into it.
+    let historyAt = (lag: Float) -> {
+        let t = maxFloat(0.0, elapsed - lag);
+        (t, if (reduced || !optIsSome(mTl)) scene else sampleBattleScene(mTl, t, idleP, idleE, false))
+    };
+    let near = historyAt(52.0);
+    let mid = historyAt(115.0);
+    let far = historyAt(200.0);
+    let attachmentAngles = (side: BattleSide, pose: SvgPose, fig: battle.FigureSample, prof: VisualProfile) -> {
+        let hair = profileEq(prof, ProfileFemale);
+        let sword = styleEq(fig.fsVisual.avStyle, StyleSword);
+        if (reduced || !optIsSome(mTl) || (!hair && !sword)) ((0.0, 0.0), (0.0, 0.0))
         else {
             let sign = if (sideEq(side, SidePlayer)) 1.0 else -1.0;
-            let pommelX = (p: SvgPose, f: battle.FigureSample) -> {
-                let (x, y) = swordPommelOf(p);
+            let anchors = (p: SvgPose, f: battle.FigureSample) -> {
                 let a = degToRad(sign * f.fsAngle);
-                sign * f.fsX + x * cos(a) - y * sin(a)
+                let c = cos(a);
+                let s = sin(a);
+                let (hx, hy) = p.spHead;
+                let (nx, ny) = p.spNeck;
+                // Back of the skull follows both head rotation and root travel.
+                let x = hx + 0.6 * (hy - ny);
+                let y = hy - 0.6 * (hx - nx);
+                let head = sign * f.fsX + x * c - y * s + 0.22 * (f.fsY + x * s + y * c);
+                let (px, py) = swordPommelOf(p);
+                (head, sign * f.fsX + px * c - py * s)
             };
-            let current = pommelX(pose, fig);
-            let lag = (ms: Float) -> {
-                let t = maxFloat(0.0, elapsed - ms);
-                let prior = sampleBattleScene(mTl, t, idleP, idleE, false);
-                let f = if (sideEq(side, SidePlayer)) prior.scPlayer else prior.scEnemy;
-                let p = sampleSvgPose(m.cmPoseLib, mTl, side, t, f.fsVisual.avStyle, f.fsFrameId, false);
-                current - pommelX(p, f)
+            let priorAnchors = (sample: (Float, battle.SceneSample)) -> match sample {
+                (t, sc) -> {
+                    let f = if (sideEq(side, SidePlayer)) sc.scPlayer else sc.scEnemy;
+                    let p = sampleSvgPose(m.cmPoseLib, mTl, side, t, f.fsVisual.avStyle, f.fsFrameId, false);
+                    anchors(p, f)
+                },
             };
-            let near = lag(52.0);
-            let far = lag(115.0);
-            (clampFloat(-66.0, 66.0, near * 1.4), clampFloat(-82.0, 82.0, near * 0.36 + far * 0.86))
+            let (h0, p0) = anchors(pose, fig);
+            let (h1, p1) = priorAnchors(near);
+            let (h2, p2) = priorAnchors(mid);
+            let hairAngles = if (hair) {
+                let (h3, _) = priorAnchors(far);
+                let v1 = h0 - h1;
+                let v2 = h1 - h2;
+                let v3 = h2 - h3;
+                let tilt = sign * fig.fsAngle;
+                // The upper lock reacts first. The tip catches up later and
+                // passes through rest as the older impulse decays.
+                let bend = (drive: Float) -> atan2(drive, 39.0) * (if (drive >= 0.0) 48.0 else 24.0) - tilt;
+                (bend(1.25 * v1 + 0.22 * v2 - 0.23 * v3),
+                 bend(0.24 * v1 + 1.05 * v2 - 0.18 * v3))
+            } else (0.0, 0.0);
+            let tassel = if (sword) {
+                let d1 = p0 - p1;
+                let d2 = p0 - p2;
+                (clampFloat(-66.0, 66.0, d1 * 1.4), clampFloat(-82.0, 82.0, d1 * 0.36 + d2 * 0.86))
+            } else (0.0, 0.0);
+            (hairAngles, tassel)
         }
     };
-    drawInkActor(dl, ex, ey, 0.0 - fitScale, eFig.fsAngle, eFill, outlineCol, eFig.fsFlash, eFig.fsAlpha, ePose, eFig.fsVisual.avStyle, eProf, m.cmVp.vpLookStyle, eFlow, swingAt(SideEnemy, ePose, eFig), m.cmVp.vpClockMs + 360.0);
-    drawInkActor(dl, px, py, fitScale, pFig.fsAngle, pFill, outlineCol, pFig.fsFlash, pFig.fsAlpha, pPose, pFig.fsVisual.avStyle, pProf, m.cmVp.vpLookStyle, pFlow, swingAt(SidePlayer, pPose, pFig), m.cmVp.vpClockMs);
+    let (eHair, eTassel) = attachmentAngles(SideEnemy, ePose, eFig, eProf);
+    let (pHair, pTassel) = attachmentAngles(SidePlayer, pPose, pFig, pProf);
+    let hairClock = if (reduced) 0.0 else if (optIsSome(mTl)) elapsed else m.cmVp.vpClockMs;
+    drawInkActor(dl, ex, ey, 0.0 - fitScale, eFig.fsAngle, eFill, outlineCol, eFig.fsFlash, eFig.fsAlpha, ePose, eFig.fsVisual.avStyle, eProf, m.cmVp.vpLookStyle, eHair, eTassel, hairClock + 360.0);
+    drawInkActor(dl, px, py, fitScale, pFig.fsAngle, pFill, outlineCol, pFig.fsFlash, pFig.fsAlpha, pPose, pFig.fsVisual.avStyle, pProf, m.cmVp.vpLookStyle, pHair, pTassel, hairClock);
 
     // Tapered slash ribbon (`OP_RIBBON`), parry guard ring & focus aura
     match mTl {

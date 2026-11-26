@@ -921,10 +921,28 @@ pub def buildActorParts(
     style: CombatStyle,
     profile: VisualProfile,
     look: LookStyle,
-    flow: (Float, Float),
+    hairBend: (Float, Float),
     hairPhase: Float
 ): List ActorPart = {
-    let (flowX, flowY) = flow;
+    let (upperDeg, tipDeg) = hairBend;
+    // When a fighter leans into a strike, the back catches the returning
+    // locks. Let the ends swing further forward below shoulder level.
+    let (nx, ny) = p.spNeck;
+    let (hx, hy) = p.spHip;
+    let backAngle = atan2(nx - hx, hy - ny);
+    let upper = maxFloat(degToRad(upperDeg), backAngle - degToRad(9.0));
+    let tip = maxFloat(degToRad(tipDeg), backAngle - degToRad(20.0));
+    let upperX = -sin(upper);
+    let upperY = cos(upper);
+    let tipX = -sin(tip);
+    let tipY = cos(tip);
+    // Bend successive lengths of the hanging lock. The tie and bun stay on
+    // the skull, and the free ends swing without stretching the artwork.
+    let hairDrop = (length: Float, hinge: Float) -> {
+        let first = minFloat(length, hinge);
+        let last = length - first;
+        (upperX * first + tipX * last, upperY * first + tipY * last)
+    };
     let isFemale = profileEq(profile, ProfileFemale);
     let maiden = isFemale && lookEq(look, LookMaiden);
     let k = if (maiden) 0.86 else 1.0;
@@ -1011,13 +1029,15 @@ pub def buildActorParts(
             let pinDir = ptUnit((ux * 0.3 + bx * 0.95, uy * 0.3 + by * 0.95));
             let looseRoot = onFace(0.05, 0.86);
             let (lrx, lry) = looseRoot;
-            let hPt = (bk: Float, down: Float, f: Float, sw: Float) ->
-                (lrx + bx * (bk + sw) + flowX * f, lry + by * (bk + sw) + down + flowY * f);
+            let hPt = (bk: Float, down: Float, hinge: Float, sw: Float) -> {
+                let (dx, dy) = hairDrop(down, hinge);
+                (lrx + bx * (bk + sw) + dx, lry + by * (bk + sw) + dy)
+            };
             let hShapes = [
-                sPoly(ribbonPts([hPt(8.0, 8.0, 0.2, 0.0), hPt(14.0, 18.0, 0.9, sway1), hPt(19.0, 28.0, 1.5, sway1 * 1.5)], [1.6, 1.2, 0.3], [1.6, 1.2, 0.3])),
-                sPoly(ribbonPts([ptAdd(looseRoot, headBack, 2.0), hPt(10.0, 14.0, 0.3, sway1 * 0.5), hPt(15.0, 38.0, 1.1, sway1 * 1.2), hPt(13.0, 55.0, 1.8, sway2 * 1.3)], [2.8, 2.8, 2.0, 0.3], [2.8, 2.8, 2.0, 0.3])),
-                sPoly(ribbonPts([hPt(1.0, 4.0, 0.0, 0.0), hPt(3.0, 26.0, 0.5, sway1 * 0.8), hPt(1.0, 50.0, 1.2, sway2 * 0.9), hPt(-2.0, 68.0, 1.7, sway2 * 1.1)], [2.2, 2.0, 1.4, 0.3], [2.2, 2.0, 1.4, 0.3])),
-                sPoly(ribbonPts([looseRoot, hPt(6.0, 10.0, 0.2, 0.0), hPt(9.0, 32.0, 0.8, sway1), hPt(5.0, 61.0, 1.5, sway2)], [4.2, 4.6, 3.4, 0.4], [4.2, 4.6, 3.4, 0.4])),
+                sPoly(ribbonPts([hPt(8.0, 8.0, 14.0, 0.0), hPt(14.0, 18.0, 14.0, sway1), hPt(19.0, 28.0, 14.0, sway1 * 1.5)], [1.6, 1.2, 0.3], [1.6, 1.2, 0.3])),
+                sPoly(ribbonPts([ptAdd(looseRoot, headBack, 2.0), hPt(10.0, 14.0, 22.0, sway1 * 0.5), hPt(15.0, 38.0, 22.0, sway1 * 1.2), hPt(13.0, 55.0, 22.0, sway2 * 1.3)], [2.8, 2.8, 2.0, 0.3], [2.8, 2.8, 2.0, 0.3])),
+                sPoly(ribbonPts([hPt(1.0, 4.0, 28.0, 0.0), hPt(3.0, 26.0, 28.0, sway1 * 0.8), hPt(1.0, 50.0, 28.0, sway2 * 0.9), hPt(-2.0, 68.0, 28.0, sway2 * 1.1)], [2.2, 2.0, 1.4, 0.3], [2.2, 2.0, 1.4, 0.3])),
+                sPoly(ribbonPts([looseRoot, hPt(6.0, 10.0, 22.0, 0.0), hPt(9.0, 32.0, 22.0, sway1), hPt(5.0, 61.0, 22.0, sway2)], [4.2, 4.6, 3.4, 0.4], [4.2, 4.6, 3.4, 0.4])),
                 sPoly(taperPts(ptAdd(bun, pinDir, -9.0), ptAdd(bun, pinDir, 15.0), 1.5, 0.6)),
                 sCircle(bun, 6.8),
                 sCircle(bunTop, 4.6)
@@ -1034,12 +1054,14 @@ pub def buildActorParts(
             let sway1 = swingWave(hairPhase, 0.4) * 2.5;
             let sway2 = swingWave(hairPhase, 1.1) * 6.0;
             let onHead = (u: Float, bk: Float) -> (rx + ux * u + bx * bk, ry + uy * u + by * bk);
-            let hanging = (bk: Float, down: Float, f: Float, sw: Float) ->
-                (rx + bx * bk + flowX * f + sw, ry + by * bk + down + flowY * f);
+            let hanging = (bk: Float, down: Float, hinge: Float, sw: Float) -> {
+                let (dx, dy) = hairDrop(down, hinge);
+                (rx + bx * bk + dx + sw, ry + by * bk + dy)
+            };
             let apex = onHead(4.0, 9.0);
             let hShapes = [
-                sPoly(ribbonPts([hanging(22.0, 14.0, 0.45, sway1), hanging(27.0, 36.0, 1.0, sway1 * 1.2), hanging(26.0, 54.0, 1.7, sway2 * 1.25)], [3.4, 2.6, 0.5], [3.4, 2.6, 0.5])),
-                sPoly(ribbonPts([onHead(-2.0, -1.0), apex, hanging(21.0, 8.0, 0.3, sway1 * 0.4), hanging(22.0, 34.0, 0.9, sway1), hanging(15.0, 64.0, 1.6, sway2)], [3.6, 5.2, 6.4, 5.0, 0.6], [3.6, 5.2, 6.4, 5.0, 0.6])),
+                sPoly(ribbonPts([hanging(22.0, 14.0, 22.0, sway1), hanging(27.0, 36.0, 22.0, sway1 * 1.2), hanging(26.0, 54.0, 22.0, sway2 * 1.25)], [3.4, 2.6, 0.5], [3.4, 2.6, 0.5])),
+                sPoly(ribbonPts([onHead(-2.0, -1.0), apex, hanging(21.0, 8.0, 28.0, sway1 * 0.4), hanging(22.0, 34.0, 28.0, sway1), hanging(15.0, 64.0, 28.0, sway2)], [3.6, 5.2, 6.4, 5.0, 0.6], [3.6, 5.2, 6.4, 5.0, 0.6])),
                 sCircle(onHead(1.0, 1.0), 4.6)
             ];
             (
