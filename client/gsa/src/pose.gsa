@@ -1001,12 +1001,12 @@ def footShapes(knee: (Float, Float), ankle: (Float, Float), planted: Bool, k: Fl
     [sCircle(ankle, 4.1 * k), sPoly(closedCurvePts(shoe))]
 }
 
-def headShape(center: (Float, Float), up: (Float, Float), r: Float, female: Bool): ShapePrim =
+def headShape(center: (Float, Float), up: (Float, Float), r: Float): ShapePrim =
     match (center, up) {
         ((cx, cy), (ux, uy)) -> {
             let fx = uy;
             let fy = -ux;
-            let rawPts = if (female) female_head.outline() else [
+            let rawPts = [
                 (0.08, 1.0),
                 (-0.62, 0.84),
                 (-0.98, 0.3),
@@ -1021,9 +1021,17 @@ def headShape(center: (Float, Float), up: (Float, Float), r: Float, female: Bool
             let pts = listMap(rawPts, (p) -> match p {
                 (x, y) -> (cx + fx * x * r + ux * y * r, cy + fy * x * r + uy * y * r),
             });
-            sPoly(if (female) pts else closedCurvePts(pts))
+            sPoly(closedCurvePts(pts))
         },
     }
+
+def femaleHeadShape(center: (Float, Float), up: (Float, Float)): ShapePrim = {
+    let (cx, cy) = center;
+    let (ux, uy) = up;
+    sPoly(listMap(female_head.outline(), (pt) -> match pt {
+        (x, y) -> (cx - uy * x - ux * y, cy + ux * x - uy * y),
+    }))
+}
 
 def rotatedPoly(origin: (Float, Float), deg: Float, pts: List (Float, Float)): List (Float, Float) =
     match origin {
@@ -1189,9 +1197,9 @@ pub def buildActorParts(
     let bx = uy;
     let by = -ux;
     let headBack = (bx, by);
-    let headC = if (maiden) ptAdd(p.spHead, headUp, -1.2) else p.spHead;
+    let headC = if (isFemale) ptAdd(p.spHead, headUp, 3.2) else p.spHead;
     let (hcx, hcy) = headC;
-    let root = ptAdd(ptAdd(p.spHead, headUp, headR * 0.5), headBack, headR * 0.62);
+    let root = ptAdd(ptAdd(headC, headUp, headR * 0.5), headBack, headR * 0.62);
     let (rx, ry) = root;
     let (handF, handB) = p.spHands;
 
@@ -1216,13 +1224,14 @@ pub def buildActorParts(
     let chestR = if (maiden) 11.4 else 13.5;
     let waistR = if (maiden) 8.6 else 10.6;
     let pelvisR = if (maiden) 11.0 else 11.5;
-    let bodyShapes = [
+    let bodyShapes = listAppend([
         sPoly(ribbonPts([chest, waist, p.spHip], [chestR, waistR, pelvisR], [chestR, waistR, pelvisR])),
         sCircle(chest, chestR),
-        sCircle(p.spHip, pelvisR),
+        sCircle(p.spHip, pelvisR)
+    ], if (isFemale) [femaleHeadShape(headC, headUp)] else [
         sPoly(taperPts(p.spNeck, headC, 8.0 * k, 8.0 * k)),
-        headShape(headC, headUp, headR, isFemale)
-    ];
+        headShape(headC, headUp, headR)
+    ]);
 
     let frontLegShapes = listAppend(
         organicLimb(p.spHip, p.spKnee, thighProf(), k),
@@ -1255,10 +1264,10 @@ pub def buildActorParts(
             let sway1 = swingWave(hairPhase, 0.4) * 2.5;
             let sway2 = swingWave(hairPhase, 1.1) * 6.0;
             let onFace = (u: Float, bk: Float) -> (hcx + ux * headR * u + bx * headR * bk, hcy + uy * headR * u + by * headR * bk);
-            let bun = onFace(0.88, 1.08);
-            let bunTop = onFace(1.20, 0.82);
+            let bun = onFace(0.5, 0.98);
+            let bunTop = onFace(0.82, 0.72);
             let pinDir = ptUnit((ux * 0.3 + bx * 0.95, uy * 0.3 + by * 0.95));
-            let looseRoot = onFace(0.66, 1.28);
+            let looseRoot = onFace(0.05, 0.86);
             let (lrx, lry) = looseRoot;
             let hPt = (bk: Float, down: Float, hinge: Float, sw: Float) -> {
                 let (dx, dy) = hairDrop(down, hinge);
