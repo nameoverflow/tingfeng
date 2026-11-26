@@ -1,8 +1,5 @@
-// Tingfeng (《听风录》) Pure-Geisha Wasm Client Entry Point (`client/gsa/src/mod.gsa`).
-//
-// Exports 18 synchronous WebAssembly entry points (`tf_*`) matching the thin Canvas2D
-// & WebSocket host bridge in `client/public/app.js`, plus a native `--portraits` / `--battle`
-// spec runner when compiled to native code.
+// Tingfeng (《听风录》) Pure-Geisha Wasm Client Entry Point (`client/gsa/src/mod.gsa`),
+// powered by `geisha-lang/kagura` (`kagura.gfx`, `kagura.ui`, `kagura.stage`, `kagura.app`, `kagura.host`).
 
 mod prelude
 mod ordmap
@@ -12,106 +9,242 @@ mod pose
 mod catalog
 mod battle
 mod state
-mod uicanvas
-mod render
+mod theme
+mod stage_view
+mod ui_view
 mod spec
 
 use std.option.{Option, Some, None}
 use std.result.{Ok, Err}
+use std.list.{listAppend, listMap}
 use sys.env.argCount
-use prelude.{minFloat, maxFloat, utf8Trim}
-use protocol.{
-    CreationChoice,
-    encodeLogin, encodeRequestCreationConfig, decodeServerMsg
+use spec.runClientCli
+use kagura.gfx.{Rect, maxFloat}
+use kagura.app.{
+    Cmd, CmdNone, CmdSendNet, CmdConnectNet,
+    CmdScrollTo, CmdScrollToBottom, CmdBlurIme, cmdBatch,
+    AppConfig, MkAppConfig, Runtime,
+    runtimeCreate, rtModel, rtDispatch, rtStepFrame,
+    rtPointerMove, rtPointerClick, rtPointerDrag, rtScrollWheel,
+    rtTextInput, rtTextSubmit, rtBlurInput, rtKeyDown, rtIsPinnedBottom
 }
-use pose.parsePoseLibrary
-use catalog.parseActionCatalog
+use kagura.host.envHost
+use prelude.utf8Trim
+use protocol.{
+    CreationChoice, PlayerAction, ActGo,
+    encodeLogin, encodeRequestCreationConfig, encodePlayerAction, decodeServerMsg
+}
+use pose.{PoseLibrary, parsePoseLibrary}
+use catalog.{ActionCatalog, parseActionCatalog}
 use state.{
     AppPage, PageGame, PageBattleLab, PagePoseSheet, pageEq,
     ClientCmd, CmdSendWs, CmdConnectWs, CmdOpenConfigWs, CmdSetCursor,
     CmdPlaySfx, CmdSaveLocal, CmdFocusInput, CmdBlurInput,
-    ViewportState, MkViewportState, AuthState, MkAuthState,
-    WorldView, MkWorldView, ScrollHitState, MkScrollHitState,
-    ClientModel, withVp, withAuth, withWorld, withScroll, markDirty, clearDirty,
+    AuthState, MkAuthState, WorldView, MkWorldView,
+    ClientModel, withAuth, withWorld, markDirty,
     initClientModel, stepClientFrame, applyServerMessage, setDocumentHidden,
-    panCameraBy, zoomCameraBy, handlePointerMove, handlePointerClick,
-    handleDragAt, handleScrollAt, handleTextInput, handleTextSubmit,
-    handleFocusInputId, handleBlurInput, handleKeyDown, handleUiAction,
-    handleLabCommand, buildLabStateJson
+    panCameraBy, zoomCameraBy, handleTextInput, handleTextSubmit,
+    handleKeyDown, handleUiAction, handleLabCommand, buildLabStateJson
 }
-use render.buildFrameBatch
-use spec.runClientCli
+use theme.{
+    ClientMsg, MsgUi, MsgGoExit, MsgPanMap, MsgZoomWheel,
+    MsgInputLogin, MsgSubmitLogin, MsgInputSay, MsgSubmitSay,
+    MsgLab, MsgLabScrub, MsgKeyDown,
+    MsgNetOpen, MsgNetMessage, MsgNetClose, MsgSetHidden,
+    tingfengTheme
+}
+use ui_view.viewRoot
 
 // ============================================================================
-// Synchronous Browser Host Imports (`env.host_*`)
+// Persistent Global Kagura Runtime & Seeded Assets
 // ============================================================================
 
-extern "host_now_ms" def hostNowMs(): Float
-extern "host_submit_frame" def hostSubmitFrame(batch: String): Void
-extern "host_sync_lab_state" def hostSyncLabState(json: String): Void
-extern "host_send_ws" def hostSendWs(payload: String): Void
-extern "host_connect_ws" def hostConnectWs(mode: String, user: String, pass: String): Void
-extern "host_set_cursor" def hostSetCursor(cur: String): Void
-extern "host_play_sfx" def hostPlaySfx(kind: String): Void
-extern "host_save_local" def hostSaveLocal(k: String, v: String): Void
-extern "host_focus_input" def hostFocusInput(inpId: String, val: String, x: Float, y: Float, w: Float, h: Float): Void
-extern "host_blur_input" def hostBlurInput(): Void
-
-// ============================================================================
-// Persistent Global Roots (Registered automatically with `wasm_rt` Mark-Sweep GC)
-// ============================================================================
-
-def globalModelRef: Cell (Option ClientModel) = cellNew(None)
+def seededPageRef: Cell AppPage = cellNew(PageGame)
+def seededReducedRef: Cell Bool = cellNew(false)
+def seededAssetsRef: Cell (Option (PoseLibrary, ActionCatalog)) = cellNew(None)
 def pendingCreationRef: Cell (Option CreationChoice) = cellNew(None)
 def activeWsModeRef: Cell String = cellNew("")
+def runtimeRef: Cell (Option (Runtime ClientModel ClientMsg)) = cellNew(None)
 
-def runCmds(cmds: List ClientCmd): Void = {
-    let cur = cellNew(cmds);
-    while (match cellGet(cur) { Nil -> false, _ -> true }) {
-        match cellGet(cur) {
-            Cons(cmd, rest) -> {
-                match cmd {
-                    CmdSendWs(payload) -> hostSendWs(payload),
-                    CmdOpenConfigWs -> hostConnectWs("config_only", "", ""),
-                    CmdConnectWs(u, p, mChoice) -> {
-                        cellSet(pendingCreationRef, mChoice);
-                        let modeStr = match mChoice {
-                            None -> "login",
-                            Some(_) -> "create",
-                        };
-                        hostConnectWs(modeStr, u, p)
-                    },
-                    CmdSetCursor(curStr) -> hostSetCursor(curStr),
-                    CmdPlaySfx(sfx) -> hostPlaySfx(sfx),
-                    CmdSaveLocal(k, v) -> hostSaveLocal(k, v),
-                    CmdFocusInput(inpId, valStr, x, y, w, h) -> hostFocusInput(inpId, valStr, x, y, w, h),
-                    CmdBlurInput -> hostBlurInput(),
-                };
-                cellSet(cur, rest)
-            },
-            Nil -> (),
+def isLogPinned(): Bool = match cellGet(runtimeRef) {
+    Some(rt) -> rtIsPinnedBottom(rt, "log"),
+    None -> true,
+}
+
+def translateClientCmd(c: ClientCmd): Cmd ClientMsg = match c {
+    CmdSendWs(payload) -> CmdSendNet(payload),
+    CmdOpenConfigWs -> CmdConnectNet("config_only", "", ""),
+    CmdConnectWs(u, p, mChoice) -> {
+        cellSet(pendingCreationRef, mChoice);
+        let modeStr = match mChoice {
+            None -> "login",
+            Some(_) -> "create",
+        };
+        CmdConnectNet(modeStr, u, p)
+    },
+    CmdSetCursor(_) -> CmdNone,
+    CmdPlaySfx(sfx) -> kagura.app.CmdPlaySfx(sfx),
+    CmdSaveLocal(k, v) -> kagura.app.CmdSaveLocal(k, v),
+    CmdFocusInput(_, _, _, _, _, _) -> CmdNone,
+    CmdBlurInput -> CmdBlurIme,
+}
+
+def translateCmdList(cs: List ClientCmd): Cmd ClientMsg = match cs {
+    Nil -> CmdNone,
+    _ -> cmdBatch(listMap(cs, translateClientCmd)),
+}
+
+def updateTingfeng(msg: ClientMsg, m0: ClientModel): (ClientModel, Cmd ClientMsg) = match msg {
+    MsgUi(kind, a1, a2) -> {
+        let (m1, cs) = handleUiAction(kind, a1, a2, m0);
+        let scrollCmd =
+            if (kind == "scroll_log_bottom") CmdScrollToBottom("log")
+            else if (kind == "desktop_drawer" || kind == "char_subtab" || kind == "mobile_tab") CmdScrollTo("drawer", 0.0)
+            else if (kind == "select_npc") CmdScrollTo("npc", 0.0)
+            else if (kind == "create_step" || kind == "create_pick" || kind == "login_mode") CmdScrollTo("onboard", 0.0)
+            else CmdNone;
+        (m1, cmdBatch([translateCmdList(cs), scrollCmd]))
+    },
+    MsgGoExit(dir) ->
+        if (m0.cmAuth.auConnected && !m0.cmWorld.wvStoryActive)
+            (m0, CmdSendNet(encodePlayerAction(ActGo(dir))))
+        else
+            (m0, CmdNone),
+    MsgPanMap(dx, dy) -> (panCameraBy(dx, dy, m0), CmdNone),
+    MsgZoomWheel(dy) -> (zoomCameraBy(if (dy < 0.0) 1.09 else 0.92, m0), CmdNone),
+    MsgInputLogin(val) -> (handleTextInput("login", val, m0), CmdNone),
+    MsgSubmitLogin -> {
+        let (m1, cs) = handleTextSubmit("login", m0);
+        (m1, translateCmdList(cs))
+    },
+    MsgInputSay(val) -> (handleTextInput("say", val, m0), CmdNone),
+    MsgSubmitSay -> {
+        let (m1, cs) = handleTextSubmit("say", m0);
+        (m1, cmdBatch([translateCmdList(cs), CmdScrollToBottom("log")]))
+    },
+    MsgLab(cmd, a1, a2, a3, num) -> {
+        let (m1, cs) = handleLabCommand(cmd, a1, a2, a3, num, m0);
+        (m1, translateCmdList(cs))
+    },
+    MsgLabScrub(ratio) -> {
+        let dur = match m0.cmBattle.btActiveTimeline { Some(tl) -> tl.tlDurationMs, None -> 0.0 };
+        let (m1, c1) = handleLabCommand("pause", "true", "", "", 0.0, m0);
+        let (m2, c2) = handleLabCommand("seek", "", "", "", ratio * dur, m1);
+        (m2, translateCmdList(listAppend(c1, c2)))
+    },
+    MsgKeyDown(key) -> {
+        let (m1, cs) = handleKeyDown(key, m0);
+        (m1, translateCmdList(cs))
+    },
+    MsgNetOpen(mode, userRaw, pass) -> {
+        let u = utf8Trim(userRaw);
+        cellSet(activeWsModeRef, mode);
+        if (mode == "config_only") {
+            (m0, CmdSendNet(encodeRequestCreationConfig()))
+        } else {
+            let mChoice = cellGet(pendingCreationRef);
+            cellSet(pendingCreationRef, None);
+            let au0 = m0.cmAuth;
+            let wv0 = m0.cmWorld;
+            let m1 = markDirty(withWorld(
+                withAuth(m0, MkAuthState {
+                    auConnected: true,
+                    auConnecting: false,
+                    auUsername: u,
+                    auLastError: au0.auLastError,
+                    auLoginMode: au0.auLoginMode,
+                    auCreateStep: au0.auCreateStep,
+                    auCreationCfg: au0.auCreationCfg,
+                    auCreateChoice: au0.auCreateChoice,
+                    auDevReset: au0.auDevReset,
+                }),
+                MkWorldView {
+                    wvRoomName: wv0.wvRoomName,
+                    wvRoomDesc: wv0.wvRoomDesc,
+                    wvRoomChars: wv0.wvRoomChars,
+                    wvRoomExits: wv0.wvRoomExits,
+                    wvMapOverview: wv0.wvMapOverview,
+                    wvMapCache: wv0.wvMapCache,
+                    wvRequestedInit: false,
+                    wvStoryActive: wv0.wvStoryActive,
+                    wvStoryQueue: wv0.wvStoryQueue,
+                    wvStoryDelayRemMs: wv0.wvStoryDelayRemMs,
+                    wvTransitionBanner: wv0.wvTransitionBanner,
+                }
+            ));
+            (m1, CmdSendNet(encodeLogin(u, pass, mChoice)))
         }
-    }
+    },
+    MsgNetMessage(raw) -> match decodeServerMsg(raw) {
+        Err(_) -> (m0, CmdNone),
+        Ok(sm) -> {
+            let (m1, cs) = applyServerMessage(sm, m0);
+            (m1, translateCmdList(cs))
+        },
+    },
+    MsgNetClose -> {
+        let lastMode = cellGet(activeWsModeRef);
+        if (lastMode != "config_only" && m0.cmWorld.wvRoomName != "竹间试招") {
+            let au0 = m0.cmAuth;
+            let errMsg =
+                if (au0.auConnecting || !au0.auConnected)
+                    Some("无法连接游戏服务端，请稍后重试。")
+                else au0.auLastError;
+            let m1 = markDirty(withAuth(m0, MkAuthState {
+                auConnected: false,
+                auConnecting: false,
+                auUsername: au0.auUsername,
+                auLastError: errMsg,
+                auLoginMode: au0.auLoginMode,
+                auCreateStep: au0.auCreateStep,
+                auCreationCfg: au0.auCreationCfg,
+                auCreateChoice: au0.auCreateChoice,
+                auDevReset: au0.auDevReset,
+            }));
+            (m1, CmdNone)
+        } else (m0, CmdNone)
+    },
+    MsgSetHidden(hidden) -> (setDocumentHidden(hidden, m0), CmdNone),
 }
 
-def flushState(m: ClientModel): ClientModel = {
-    hostSyncLabState(buildLabStateJson(m));
-    clearDirty(m)
+def tickTingfeng(dtMs: Float, vp: Rect, m0: ClientModel): (ClientModel, Cmd ClientMsg) = {
+    let (m1, cs) = stepClientFrame(dtMs, vp.rw, vp.rh, m0);
+    (m1, translateCmdList(cs))
+}
+
+def buildAppConfig(poseLib: PoseLibrary, cat: ActionCatalog): AppConfig ClientModel ClientMsg = MkAppConfig {
+    appTheme: tingfengTheme(false),
+    appDynamicTheme: Some((m) -> tingfengTheme(m.cmBattle.btInBattle || pageEq(m.cmVp.vpPage, PageBattleLab))),
+    appPaperGrain: true,
+    appInit: (vp) -> {
+        let page = cellGet(seededPageRef);
+        let red = cellGet(seededReducedRef);
+        let m0 = initClientModel(page, poseLib, cat, vp.rw, vp.rh, red);
+        if (pageEq(page, PageBattleLab)) {
+            let (m1, cs) = handleLabCommand("seed", "female", "male", "", 0.0, m0);
+            (m1, translateCmdList(cs))
+        } else (m0, CmdNone)
+    },
+    appUpdate: updateTingfeng,
+    appView: (vp, m) -> viewRoot(vp, isLogPinned(), m),
+    appTick: Some(tickTingfeng),
+    appOnKey: Some((k) -> Some(MsgKeyDown(k))),
+    appOnNetOpen: None,
+    appOnNetMessage: Some((raw) -> Some(MsgNetMessage(raw))),
+    appOnNetClose: Some(MsgNetClose),
 }
 
 // ============================================================================
-// Exported WebAssembly Entry Points (`tf_*`)
+// Exported Kagura Host Entry Points (`kagura_*`) + Asset/Lab Hooks (`tf_*`)
 // ============================================================================
 
-pub def tf_init_app(
+pub def tf_seed_assets(
     pageStr: String,
     poseStr: String,
     stgStr: String,
     fistStr: String,
     swordStr: String,
     effStr: String,
-    w: Float,
-    h: Float,
     redInt: Int
 ): Void = {
     let page = match pageStr {
@@ -119,303 +252,124 @@ pub def tf_init_app(
         "poses" -> PagePoseSheet,
         _ -> PageGame,
     };
+    cellSet(seededPageRef, page);
+    cellSet(seededReducedRef, redInt != 0);
     match parsePoseLibrary(poseStr) {
         Err(err) -> printLn("PoseLibrary error: " + err),
         Ok(poseLib) -> match parseActionCatalog(stgStr, [fistStr, swordStr, effStr]) {
             Err(err) -> printLn("ActionCatalog error: " + err),
-            Ok(cat) -> {
-                let m0 = initClientModel(page, poseLib, cat, w, h, redInt != 0);
-                let (m1, cmds) =
-                    if (pageEq(page, PageBattleLab))
-                        handleLabCommand("seed", "female", "male", "", 0.0, m0)
-                    else (m0, Nil);
-                runCmds(cmds);
-                let m2 = flushState(m1);
-                cellSet(globalModelRef, Some(m2))
-            },
+            Ok(cat) -> cellSet(seededAssetsRef, Some((poseLib, cat))),
         },
     }
 }
 
-pub def tf_step_frame(dtMs: Float, w: Float, h: Float, redInt: Int): Void =
-    match cellGet(globalModelRef) {
-        None -> (),
-        Some(m0) -> {
-            let t0 = hostNowMs();
-            let vp0 = m0.cmVp;
-            let mRed = withVp(m0, MkViewportState {
-                vpPage: vp0.vpPage,
-                vpLocale: vp0.vpLocale,
-                vpReducedMotion: redInt != 0,
-                vpDocHidden: vp0.vpDocHidden,
-                vpSoundOn: vp0.vpSoundOn,
-                vpLookStyle: vp0.vpLookStyle,
-                vpWidth: vp0.vpWidth,
-                vpHeight: vp0.vpHeight,
-                vpClockMs: vp0.vpClockMs,
-                vpLastSyncTickMs: vp0.vpLastSyncTickMs,
-                vpWasmStepMs: vp0.vpWasmStepMs,
-                vpDrawCmdCount: vp0.vpDrawCmdCount,
-            });
-            let (m1, cmds) = stepClientFrame(dtMs, w, h, mRed);
-            let fb = buildFrameBatch(m1);
-            let t1 = hostNowMs();
-            let elapsed = maxFloat(0.03, t1 - t0);
-            let vp1 = m1.cmVp;
-            let smoothMs = vp1.vpWasmStepMs * 0.88 + elapsed * 0.12;
-            let sh1 = m1.cmScroll;
-            let nextLogScroll =
-                if (sh1.shLogStickBottom) fb.fbLogMaxScroll
-                else minFloat(fb.fbLogMaxScroll, sh1.shLogScroll);
-            let m2 = withScroll(
-                withVp(m1, MkViewportState {
-                    vpPage: vp1.vpPage,
-                    vpLocale: vp1.vpLocale,
-                    vpReducedMotion: vp1.vpReducedMotion,
-                    vpDocHidden: vp1.vpDocHidden,
-                    vpSoundOn: vp1.vpSoundOn,
-                    vpLookStyle: vp1.vpLookStyle,
-                    vpWidth: vp1.vpWidth,
-                    vpHeight: vp1.vpHeight,
-                    vpClockMs: vp1.vpClockMs,
-                    vpLastSyncTickMs: vp1.vpLastSyncTickMs,
-                    vpWasmStepMs: smoothMs,
-                    vpDrawCmdCount: fb.fbCmdCount,
-                }),
-                MkScrollHitState {
-                    shLogScroll: nextLogScroll,
-                    shLogMaxScroll: fb.fbLogMaxScroll,
-                    shLogStickBottom: sh1.shLogStickBottom,
-                    shDrawerScroll: sh1.shDrawerScroll,
-                    shDrawerMaxScroll: fb.fbDrawerMaxScroll,
-                    shOnboardScroll: sh1.shOnboardScroll,
-                    shOnboardMaxScroll: fb.fbOnboardMaxScroll,
-                    shNpcScroll: sh1.shNpcScroll,
-                    shNpcMaxScroll: fb.fbNpcMaxScroll,
-                    shHovered: sh1.shHovered,
-                    shHitboxes: fb.fbHits,
-                    shScrollZones: fb.fbScrollZones,
-                }
-            );
-            hostSubmitFrame(fb.fbText);
-            runCmds(cmds);
-            let m3 = flushState(m2);
-            cellSet(globalModelRef, Some(m3))
+pub def kagura_init(w: Float, h: Float): Void =
+    match cellGet(seededAssetsRef) {
+        None -> printLn("kagura_init called before tf_seed_assets"),
+        Some((poseLib, cat)) -> {
+            let cfg = buildAppConfig(poseLib, cat);
+            let rt = runtimeCreate(cfg, maxFloat(320.0, w), maxFloat(220.0, h), envHost());
+            cellSet(runtimeRef, Some(rt))
         },
     }
 
-pub def tf_on_ws_open(mode: String, userRaw: String, pass: String): Void = {
-    let u = utf8Trim(userRaw);
-    cellSet(activeWsModeRef, mode);
-    if (mode == "config_only") {
-        hostSendWs(encodeRequestCreationConfig())
-    } else {
-        let mChoice = cellGet(pendingCreationRef);
-        cellSet(pendingCreationRef, None);
-        hostSendWs(encodeLogin(u, pass, mChoice));
-        match cellGet(globalModelRef) {
-            None -> (),
-            Some(m0) -> {
-                let au0 = m0.cmAuth;
-                let wv0 = m0.cmWorld;
-                let m1 = markDirty(withWorld(
-                    withAuth(m0, MkAuthState {
-                        auConnected: true,
-                        auConnecting: false,
-                        auUsername: u,
-                        auLastError: au0.auLastError,
-                        auLoginMode: au0.auLoginMode,
-                        auCreateStep: au0.auCreateStep,
-                        auCreationCfg: au0.auCreationCfg,
-                        auCreateChoice: au0.auCreateChoice,
-                        auDevReset: au0.auDevReset,
-                    }),
-                    MkWorldView {
-                        wvRoomName: wv0.wvRoomName,
-                        wvRoomDesc: wv0.wvRoomDesc,
-                        wvRoomChars: wv0.wvRoomChars,
-                        wvRoomExits: wv0.wvRoomExits,
-                        wvMapOverview: wv0.wvMapOverview,
-                        wvMapCache: wv0.wvMapCache,
-                        wvRequestedInit: false,
-                        wvStoryActive: wv0.wvStoryActive,
-                        wvStoryQueue: wv0.wvStoryQueue,
-                        wvStoryDelayRemMs: wv0.wvStoryDelayRemMs,
-                        wvTransitionBanner: wv0.wvTransitionBanner,
-                    }
-                ));
-                let m2 = flushState(m1);
-                cellSet(globalModelRef, Some(m2))
-            },
-        }
-    }
-}
-
-pub def tf_on_ws_message(raw: String): Void =
-    match cellGet(globalModelRef) {
-        None -> (),
-        Some(m0) -> match decodeServerMsg(raw) {
-            Err(_) -> (),
-            Ok(sm) -> {
-                let (m1, cmds) = applyServerMessage(sm, m0);
-                runCmds(cmds);
-                let m2 = flushState(m1);
-                cellSet(globalModelRef, Some(m2))
-            },
+pub def kagura_step_frame(dtMs: Float, w: Float, h: Float): Void =
+    match cellGet(runtimeRef) {
+        Some(rt) -> {
+            let _ = rtStepFrame(rt, dtMs, w, h);
+            ()
         },
+        None -> (),
     }
 
-pub def tf_on_ws_close(): Void = {
-    let lastMode = cellGet(activeWsModeRef);
-    match cellGet(globalModelRef) {
+pub def kagura_pointer_move(x: Float, y: Float): Void =
+    match cellGet(runtimeRef) {
+        Some(rt) -> rtPointerMove(rt, x, y),
         None -> (),
-        Some(m0) -> {
-            if (lastMode != "config_only" && m0.cmWorld.wvRoomName != "竹间试招") {
-                let au0 = m0.cmAuth;
-                let errMsg =
-                    if (au0.auConnecting || !au0.auConnected)
-                        Some("无法连接游戏服务端，请稍后重试。")
-                    else au0.auLastError;
-                let m1 = markDirty(withAuth(m0, MkAuthState {
-                    auConnected: false,
-                    auConnecting: false,
-                    auUsername: au0.auUsername,
-                    auLastError: errMsg,
-                    auLoginMode: au0.auLoginMode,
-                    auCreateStep: au0.auCreateStep,
-                    auCreationCfg: au0.auCreationCfg,
-                    auCreateChoice: au0.auCreateChoice,
-                    auDevReset: au0.auDevReset,
-                }));
-                let m2 = flushState(m1);
-                cellSet(globalModelRef, Some(m2))
-            } else ()
-        },
-    }
-}
-
-pub def tf_set_hidden(hiddenInt: Int): Void =
-    match cellGet(globalModelRef) {
-        None -> (),
-        Some(m0) -> {
-            let m1 = setDocumentHidden(hiddenInt != 0, m0);
-            let m2 = flushState(m1);
-            cellSet(globalModelRef, Some(m2))
-        },
     }
 
-pub def tf_pointer_move(x: Float, y: Float): Void =
-    match cellGet(globalModelRef) {
+pub def kagura_pointer_click(x: Float, y: Float): Void =
+    match cellGet(runtimeRef) {
+        Some(rt) -> rtPointerClick(rt, x, y),
         None -> (),
-        Some(m0) -> {
-            let (m1, cmds) = handlePointerMove(x, y, m0);
-            runCmds(cmds);
-            cellSet(globalModelRef, Some(m1))
-        },
     }
 
-pub def tf_pointer_click(x: Float, y: Float): Void =
-    match cellGet(globalModelRef) {
+pub def kagura_pointer_drag(sx: Float, sy: Float, cx: Float, cy: Float, dx: Float, dy: Float): Void =
+    match cellGet(runtimeRef) {
+        Some(rt) -> rtPointerDrag(rt, sx, sy, cx, cy, dx, dy),
         None -> (),
-        Some(m0) -> {
-            let (m1, cmds) = handlePointerClick(x, y, m0);
-            runCmds(cmds);
-            let m2 = flushState(m1);
-            cellSet(globalModelRef, Some(m2))
-        },
     }
 
-pub def tf_pan_zoom(dx: Float, dy: Float, zFactor: Float): Void =
-    match cellGet(globalModelRef) {
+pub def kagura_scroll_wheel(x: Float, y: Float, deltaY: Float): Void =
+    match cellGet(runtimeRef) {
+        Some(rt) -> rtScrollWheel(rt, x, y, deltaY),
         None -> (),
-        Some(m0) -> {
-            let m1 = zoomCameraBy(zFactor, panCameraBy(dx, dy, m0));
-            let m2 = flushState(m1);
-            cellSet(globalModelRef, Some(m2))
-        },
     }
 
-pub def tf_drag_at(x: Float, y: Float, dx: Float, dy: Float): Void =
-    match cellGet(globalModelRef) {
+pub def kagura_text_input(inpId: String, valStr: String): Void =
+    match cellGet(runtimeRef) {
+        Some(rt) -> rtTextInput(rt, inpId, valStr),
         None -> (),
-        Some(m0) -> {
-            let m1 = handleDragAt(x, y, dx, dy, m0);
-            cellSet(globalModelRef, Some(m1))
-        },
     }
 
-pub def tf_scroll_at(x: Float, y: Float, deltaY: Float): Void =
-    match cellGet(globalModelRef) {
+pub def kagura_text_submit(inpId: String): Void =
+    match cellGet(runtimeRef) {
+        Some(rt) -> rtTextSubmit(rt, inpId),
         None -> (),
-        Some(m0) -> {
-            let m1 = handleScrollAt(x, y, deltaY, m0);
-            cellSet(globalModelRef, Some(m1))
-        },
     }
 
-pub def tf_text_input(inpId: String, valStr: String): Void =
-    match cellGet(globalModelRef) {
+pub def kagura_blur_input(): Void =
+    match cellGet(runtimeRef) {
+        Some(rt) -> rtBlurInput(rt),
         None -> (),
-        Some(m0) -> {
-            let m1 = handleTextInput(inpId, valStr, m0);
-            cellSet(globalModelRef, Some(m1))
-        },
     }
 
-pub def tf_text_submit(inpId: String): Void =
-    match cellGet(globalModelRef) {
+pub def kagura_key_down(keyStr: String): Void =
+    match cellGet(runtimeRef) {
+        Some(rt) -> rtKeyDown(rt, keyStr),
         None -> (),
-        Some(m0) -> {
-            let (m1, cmds) = handleTextSubmit(inpId, m0);
-            runCmds(cmds);
-            let m2 = flushState(m1);
-            cellSet(globalModelRef, Some(m2))
-        },
     }
 
-pub def tf_focus_input_id(inpId: String): Void =
-    match cellGet(globalModelRef) {
+pub def kagura_on_net_open(mode: String, user: String, pass: String): Void =
+    match cellGet(runtimeRef) {
+        Some(rt) -> rtDispatch(rt, MsgNetOpen(mode, user, pass)),
         None -> (),
-        Some(m0) -> cellSet(globalModelRef, Some(handleFocusInputId(inpId, m0))),
     }
 
-pub def tf_blur_input(): Void =
-    match cellGet(globalModelRef) {
+pub def kagura_on_net_message(raw: String): Void =
+    match cellGet(runtimeRef) {
+        Some(rt) -> rtDispatch(rt, MsgNetMessage(raw)),
         None -> (),
-        Some(m0) -> cellSet(globalModelRef, Some(handleBlurInput(m0))),
     }
 
-pub def tf_key_down(keyStr: String): Void =
-    match cellGet(globalModelRef) {
+pub def kagura_on_net_close(): Void =
+    match cellGet(runtimeRef) {
+        Some(rt) -> rtDispatch(rt, MsgNetClose),
         None -> (),
-        Some(m0) -> {
-            let (m1, cmds) = handleKeyDown(keyStr, m0);
-            runCmds(cmds);
-            let m2 = flushState(m1);
-            cellSet(globalModelRef, Some(m2))
-        },
     }
 
 pub def tf_ui_action(kind: String, a1: String, a2: String): Void =
-    match cellGet(globalModelRef) {
+    match cellGet(runtimeRef) {
+        Some(rt) -> rtDispatch(rt, MsgUi(kind, a1, a2)),
         None -> (),
-        Some(m0) -> {
-            let (m1, cmds) = handleUiAction(kind, a1, a2, m0);
-            runCmds(cmds);
-            let m2 = flushState(m1);
-            cellSet(globalModelRef, Some(m2))
-        },
     }
 
 pub def tf_lab_cmd(cmd: String, a1: String, a2: String, a3: String, numArg: Float): Void =
-    match cellGet(globalModelRef) {
+    match cellGet(runtimeRef) {
+        Some(rt) -> rtDispatch(rt, MsgLab(cmd, a1, a2, a3, numArg)),
         None -> (),
-        Some(m0) -> {
-            let (m1, cmds) = handleLabCommand(cmd, a1, a2, a3, numArg, m0);
-            runCmds(cmds);
-            let m2 = flushState(m1);
-            cellSet(globalModelRef, Some(m2))
-        },
+    }
+
+pub def tf_set_hidden(hiddenInt: Int): Void =
+    match cellGet(runtimeRef) {
+        Some(rt) -> rtDispatch(rt, MsgSetHidden(hiddenInt != 0)),
+        None -> (),
+    }
+
+pub def tf_lab_state_json(): String =
+    match cellGet(runtimeRef) {
+        Some(rt) -> buildLabStateJson(rtModel(rt)),
+        None -> "{}",
     }
 
 def main(): Void =

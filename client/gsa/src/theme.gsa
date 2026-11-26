@@ -1,0 +1,157 @@
+// Song-Dynasty Xuan-Paper Design System & Message Algebra (`theme`) built on `kagura.ui`.
+
+use std.option.{Option, Some, None}
+use std.list.listAppend
+use kagura.gfx.{Color, rgba, hexColor, withAlpha, fontSans}
+use kagura.ui.{
+    Theme, MkTheme, StyleMod, Element,
+    hFixed, wGrow, padXY, bg, border, rounded,
+    styledButton, progressBar, badge
+}
+use protocol.Direction
+
+pub data ClientMsg {
+    MsgUi(String, String, String),
+    MsgGoExit(Direction),
+    MsgPanMap(Float, Float),
+    MsgZoomWheel(Float),
+    MsgInputLogin(String),
+    MsgSubmitLogin,
+    MsgInputSay(String),
+    MsgSubmitSay,
+    MsgLab(String, String, String, String, Float),
+    MsgLabScrub(Float),
+    MsgKeyDown(String),
+    MsgNetOpen(String, String, String),
+    MsgNetMessage(String),
+    MsgNetClose,
+    MsgSetHidden(Bool),
+}
+
+pub data BtnTone {
+    ToneDefault,
+    TonePrimary,
+    ToneDanger,
+    ToneJade,
+    ToneGhost,
+    ToneActive,
+}
+
+pub def tingfengTheme(inBattle: Bool): Theme = MkTheme {
+    thBgTop: if (inBattle) hexColor("#f4efe4") else hexColor("#f7f3e9"),
+    thBgMid: if (inBattle) hexColor("#ece4d4") else hexColor("#efe8d9"),
+    thBgBot: if (inBattle) hexColor("#e3d9c5") else hexColor("#e7decb"),
+    thSurfaceTop: hexColor("#faf6ee"),
+    thSurfaceBot: hexColor("#f2ebdc"),
+    thInk: hexColor("#1c1915"),
+    thMuted: hexColor("#6b6255"),
+    thBorder: rgba(130, 118, 98, 78),
+    thPrimary: hexColor("#275247"),
+    thPrimaryHover: hexColor("#21473c"),
+    thAccent: hexColor("#a87d38"),
+    thDanger: hexColor("#9e2a22"),
+    thShadow: rgba(28, 22, 16, 28),
+}
+
+pub def woodBtn(
+    btnKey: String,
+    extraMods: List StyleMod,
+    height: Float,
+    fontSz: Float,
+    tone: BtnTone,
+    disabled: Bool,
+    labelTxt: String,
+    targetMsg: ClientMsg
+): Element ClientMsg = {
+    let al = if (disabled) 0.42 else 0.98;
+    let (normBg, normBd, hovBg, hovBd, fg, lw) = match tone {
+        TonePrimary -> (
+            withAlpha(hexColor("#275247"), al),
+            withAlpha(hexColor("#1e3f35"), al),
+            withAlpha(hexColor("#21473c"), al),
+            withAlpha(hexColor("#a87d38"), al),
+            withAlpha(hexColor("#faf6ee"), al),
+            0.9
+        ),
+        ToneDanger -> (
+            withAlpha(hexColor("#9e2a22"), al),
+            withAlpha(hexColor("#7a1f18"), al),
+            withAlpha(hexColor("#852018"), al),
+            withAlpha(hexColor("#691710"), al),
+            withAlpha(hexColor("#faf6ee"), al),
+            0.9
+        ),
+        ToneJade -> (
+            withAlpha(hexColor("#f2f6f3"), al),
+            withAlpha(rgba(39, 82, 71, 74), al),
+            withAlpha(hexColor("#e6f0eb"), al),
+            withAlpha(rgba(39, 82, 71, 120), al),
+            withAlpha(hexColor("#275247"), al),
+            0.85
+        ),
+        ToneActive -> (
+            withAlpha(hexColor("#1c1915"), al),
+            withAlpha(hexColor("#b89552"), al),
+            withAlpha(hexColor("#1c1915"), al),
+            withAlpha(hexColor("#c8a45e"), al),
+            withAlpha(hexColor("#faf6ee"), al),
+            1.0
+        ),
+        ToneGhost -> (
+            0,
+            0,
+            rgba(28, 25, 21, 16),
+            rgba(130, 118, 98, 68),
+            withAlpha(hexColor("#5c5346"), al),
+            0.75
+        ),
+        ToneDefault -> (
+            withAlpha(hexColor("#faf6ee"), al),
+            withAlpha(rgba(130, 118, 98, 88), al),
+            withAlpha(hexColor("#f4ede0"), al),
+            withAlpha(rgba(168, 125, 56, 136), al),
+            withAlpha(hexColor("#2a241d"), al),
+            0.85
+        ),
+    };
+    let normMods = listAppend(
+        [padXY(8.0, 4.0), hFixed(height), bg(normBg), border(if (normBd == 0) 0.0 else lw, normBd), rounded(3.0)],
+        extraMods
+    );
+    let hovMods = [bg(hovBg), border(if (hovBd == 0) 0.0 else lw + 0.1, hovBd)];
+    styledButton(
+        btnKey,
+        normMods,
+        hovMods,
+        fontSans(fontSz, 600),
+        fg,
+        labelTxt,
+        if (disabled) None else Some(targetMsg)
+    )
+}
+
+pub def vitalBar(
+    extraMods: List StyleMod,
+    height: Float,
+    ratio: Float,
+    trail: Float,
+    fillStart: Color,
+    fillEnd: Color,
+    trailCol: Color,
+    rightLbl: String
+): Element ClientMsg = {
+    let r = if (height * 0.4 < 2.5) height * 0.4 else 2.5;
+    progressBar(
+        listAppend([wGrow(1.0), hFixed(height), rounded(r)], extraMods),
+        ratio,
+        trail,
+        fillStart,
+        fillEnd,
+        trailCol,
+        rgba(42, 35, 26, 24),
+        rightLbl
+    )
+}
+
+pub def sealPill(txt: String, fg: Color, bgCol: Color, bdCol: Color): Element ClientMsg =
+    badge(txt, fg, bgCol, bdCol)

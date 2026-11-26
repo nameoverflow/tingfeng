@@ -15,26 +15,10 @@ pub use std.control.{
 }
 
 // ============================================================================
-// Portable IEEE-754 Math Externs (`libm` on native, `env.Math.*` on wasm32)
+// Portable IEEE-754 Math Re-exported from `kagura.gfx`
 // ============================================================================
 
-extern "sin" def c_sin(x: Float): Float
-extern "cos" def c_cos(x: Float): Float
-extern "acos" def c_acos(x: Float): Float
-extern "atan2" def c_atan2(y: Float, x: Float): Float
-extern "sqrt" def c_sqrt(x: Float): Float
-extern "exp" def c_exp(x: Float): Float
-
-pub def sin(x: Float): Float = c_sin(x)
-pub def cos(x: Float): Float = c_cos(x)
-pub def acos(x: Float): Float = c_acos(x)
-pub def atan2(y: Float, x: Float): Float = c_atan2(y, x)
-pub def sqrt(x: Float): Float = c_sqrt(x)
-pub def exp(x: Float): Float = c_exp(x)
-
-pub def pi(): Float = 3.141592653589793
-
-pub def degToRad(deg: Float): Float = deg * pi() / 180.0
+pub use kagura.gfx.{sin, cos, acos, atan2, sqrt, exp, pi, degToRad}
 
 // ============================================================================
 // Total Ordering (`Ord`), `Semigroup`, `Monoid`, and `MonadWriter`

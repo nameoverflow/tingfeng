@@ -59,16 +59,31 @@ export function resolveGeishaToolchain() {
     ...buildDirs.map((d) => path.join(d, "wasm_rt.o")),
   ]);
 
-  return { geisha, nativeRuntime, wasmRuntime };
+  const kaguraLib = firstExisting([
+    process.env.KAGURA_LIB,
+    path.resolve(REPO_ROOT, "../kagura/lib"),
+    path.join(home, "code/kagura/lib"),
+  ]);
+  if (!kaguraLib) {
+    throw new Error("Kagura library not found. Set KAGURA_LIB=/path/to/kagura/lib or clone ../kagura.");
+  }
+
+  const kaguraWebHost = firstExisting([
+    path.resolve(kaguraLib, "../host/web/kagura.js"),
+    path.join(CLIENT_DIR, "public/kagura.js"),
+  ]);
+
+  return { geisha, nativeRuntime, wasmRuntime, kaguraLib, kaguraWebHost };
 }
 
 export function buildNativeClientSpec() {
-  const { geisha, nativeRuntime } = resolveGeishaToolchain();
+  const { geisha, nativeRuntime, kaguraLib } = resolveGeishaToolchain();
   const buildDir = path.join(GSA_DIR, "build");
   fs.mkdirSync(buildDir, { recursive: true });
   const bin = path.join(buildDir, "client-spec");
   const srcDir = path.join(GSA_DIR, "src");
   const entry = path.join(srcDir, "mod.gsa");
+  const stubC = path.join(GSA_DIR, "kagura_host_stub.c");
 
   let needsBuild = !fs.existsSync(bin);
   if (!needsBuild) {
@@ -84,10 +99,25 @@ export function buildNativeClientSpec() {
   }
 
   if (needsBuild) {
-    const args = ["--src-root", GSA_DIR];
-    if (nativeRuntime) args.push("--runtime", nativeRuntime);
-    args.push("-o", bin, entry);
-    execFileSync(geisha, args, { cwd: CLIENT_DIR, stdio: "inherit" });
+    const tmpLl = path.join(buildDir, "client-spec.ll");
+    execFileSync(geisha, ["--src-root", GSA_DIR, "-L", kaguraLib, "-e", "-o", tmpLl, entry], {
+      cwd: CLIENT_DIR,
+      stdio: "inherit",
+    });
+    const ccArgs = [
+      "-target", "arm64-apple-macosx14.0",
+      "-O2", "-Wno-override-module",
+      "-x", "ir", tmpLl,
+      "-x", "none", stubC,
+    ];
+    if (nativeRuntime) ccArgs.push(nativeRuntime);
+    ccArgs.push("-lm", "-lpthread", "-o", bin);
+    execFileSync("cc", ccArgs, {
+      cwd: CLIENT_DIR,
+      env: { ...process.env, MACOSX_DEPLOYMENT_TARGET: "14.0" },
+      stdio: "inherit",
+    });
+    fs.rmSync(tmpLl, { force: true });
   }
   return bin;
 }

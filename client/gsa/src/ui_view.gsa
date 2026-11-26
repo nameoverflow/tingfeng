@@ -1,0 +1,1300 @@
+// Declarative Song-Dynasty Xuan-Paper UI (`ui_view`) built 100% on `kagura.ui`.
+// Replaces 1,700+ lines of imperative coordinate/tape code with composable `Element ClientMsg` trees.
+
+use std.option.{Option, Some, None}
+use std.list.{listLen, listAppend, listMap}
+use std.str.{intToStr, strJoin}
+use kagura.gfx.{
+    Vec2, Rect, rect,
+    Color, rgba, hexColor, withAlpha,
+    AlignCenter, AlignRight, fontSans, fontSerif,
+    minInt, maxInt, clampInt, minFloat, maxFloat, clamp01,
+    floorInt, ceilInt, roundInt,
+    drawRect, drawFillRect, drawCircle, drawLine
+}
+use kagura.ui.{
+    Theme, AlignMid, AlignEnd, AlignStretch,
+    wFixed, hFixed, fixedSize, wGrow, hGrow, fillSpace, wPct, maxW, maxH,
+    pad, padXY, padTRBL, gap, alignX, alignY, centerContent,
+    bg, bgGrad, border, rounded, shadow, clipped,
+    Element, CanvasHit, canvasHit,
+    emptyEl, spacer, growSpacer, box, card, plaqueCard,
+    row, wrapRow, col, zstack, scrollView, scrollViewSticky,
+    label, textAligned, heading, paragraph,
+    imageBox, interactive, textInput, canvasStage, canvasInteractive
+}
+use prelude.{
+    mconcat, floorMod, optIsSome, optIsNone, listIsEmpty, listNthOr, listFind, listFilter, listTake, listConcatMap,
+    utf8Trim, strReplace, listContainsStr
+}
+use ordmap.mapLookup
+use i18n.{isZh, tr, trParams, artRankTitle, formatArtType}
+use protocol.{
+    CreationBonus, CreationOption,
+    BusyInfo, EffectInfo
+}
+use pose.{LookMaiden, lookEq}
+use state.{
+    AppPage, PageGame, PageBattleLab, PagePoseSheet,
+    ClientModel, isCameraPanned, labActionOrder, liveEffectsOf, evalSkillState, portraitScoreFile
+}
+use theme.{
+    ClientMsg, MsgUi, MsgPanMap, MsgZoomWheel,
+    MsgInputLogin, MsgSubmitLogin, MsgInputSay, MsgSubmitSay,
+    MsgLab, MsgLabScrub,
+    BtnTone, ToneDefault, TonePrimary, ToneDanger, ToneJade, ToneGhost, ToneActive,
+    woodBtn, vitalBar, sealPill
+}
+use stage_view.{
+    drawAtmosphere, renderOnboardingStage, renderMapStage, renderBattleStage, viewPoseSheet
+}
+
+// ============================================================================
+// Shared Presentation Helpers
+// ============================================================================
+
+def optStrEqLocal(a: Option String, b: Option String): Bool = match (a, b) {
+    (None, None) -> true,
+    (Some(x), Some(y)) -> x == y,
+    _ -> false,
+}
+
+def portraitUrl(gender: String, score: Int, name: String): String =
+    "/portraits/" + portraitScoreFile(gender, score, name) + ".png"
+
+def busyTargetDisplayName(m: ClientModel, bi: BusyInfo): String =
+    if (bi.biAction == "meditate" || strLen(bi.biTarget) == 0) ""
+    else if (strLen(bi.biTargetName) > 0) bi.biTargetName
+    else match listFind(m.cmHero.hsArts, (a) -> a.aiId == bi.biTarget) {
+        Some(a) -> a.aiName,
+        None -> match listFind(m.cmHero.hsInventory, (it) -> it.iiId == bi.biTarget) {
+            Some(it) -> it.iiName,
+            None -> {
+                let allTeach = listConcatMap(m.cmWorld.wvRoomChars, (rc) -> rc.rcTeaches);
+                match listFind(allTeach, (ta) -> ta.taId == bi.biTarget) {
+                    Some(ta) -> ta.taName,
+                    None -> bi.biTarget,
+                }
+            },
+        },
+    }
+
+def busyActionTitle(m: ClientModel, bi: BusyInfo): String = {
+    let actLbl = tr(m.cmVp.vpLocale, "training.action." + bi.biAction);
+    let tName = busyTargetDisplayName(m, bi);
+    let tot = bi.biCompleted + bi.biRemaining;
+    if (strLen(tName) > 0)
+        actLbl + " " + tName + " " + intToStr(bi.biCompleted) + "/" + intToStr(tot)
+    else
+        actLbl + " " + intToStr(bi.biCompleted) + "/" + intToStr(tot)
+}
+
+def fmtTenthSec(sec: Float): String = {
+    let tenths = roundInt(sec * 10.0);
+    let q = tenths / 10;
+    let r = if (tenths < 0) (-tenths) % 10 else tenths % 10;
+    intToStr(q) + "." + intToStr(r)
+}
+
+def presentedVitals(m: ClientModel): (Int, Int, Int, Int) = {
+    let st = m.cmHero.hsStats;
+    let bt = m.cmBattle;
+    let hp = match (bt.btInBattle, bt.btPresentation, bt.btSnap) {
+        (true, Some(pr), _) -> pr.prPlayerHp,
+        (true, None, Some(bs)) -> bs.bsPlayer.cbHp,
+        _ -> st.psHp,
+    };
+    let mhp = match (bt.btInBattle, bt.btSnap) {
+        (true, Some(bs)) -> bs.bsPlayer.cbMaxHp,
+        _ -> st.psMaxHp,
+    };
+    let qi = match (bt.btInBattle, bt.btPresentation, bt.btSnap) {
+        (true, Some(pr), _) -> pr.prPlayerQi,
+        (true, None, Some(bs)) -> bs.bsPlayer.cbQi,
+        _ -> st.psQi,
+    };
+    let mqi = match (bt.btInBattle, bt.btSnap) {
+        (true, Some(bs)) -> bs.bsPlayer.cbMaxQi,
+        _ -> st.psMaxQi,
+    };
+    (hp, mhp, qi, mqi)
+}
+
+def enemyVitals(m: ClientModel): (String, Int, Int, Int, Int) = {
+    let bt = m.cmBattle;
+    let name = match bt.btSnap { Some(bs) -> bs.bsEnemy.cbName, None -> "对手" };
+    let hp = match (bt.btPresentation, bt.btSnap) {
+        (Some(pr), _) -> pr.prEnemyHp,
+        (None, Some(bs)) -> bs.bsEnemy.cbHp,
+        _ -> 0,
+    };
+    let mhp = match bt.btSnap { Some(bs) -> bs.bsEnemy.cbMaxHp, None -> 1 };
+    let qi = match (bt.btPresentation, bt.btSnap) {
+        (Some(pr), _) -> pr.prEnemyQi,
+        (None, Some(bs)) -> bs.bsEnemy.cbQi,
+        _ -> 0,
+    };
+    let mqi = match bt.btSnap { Some(bs) -> bs.bsEnemy.cbMaxQi, None -> 1 };
+    (name, hp, mhp, qi, mqi)
+}
+
+def currentMapName(m: ClientModel): String = match m.cmWorld.wvMapOverview {
+    Some(mo) -> {
+        let rn = m.cmWorld.wvRoomName;
+        let matchesCur = strLen(rn) == 0 || optIsSome(listFind(mo.moRooms, (r) -> {
+            let (rx, ry) = r.mrPos;
+            let (cx, cy) = mo.moCurrentPos;
+            rx == cx && ry == cy && r.mrRoomName == rn
+        }));
+        if (matchesCur) mo.moMapName else ""
+    },
+    None -> "",
+}
+
+def lineColor(k: String): Color = match k {
+    "move" -> hexColor("#946623"),
+    "combat" -> hexColor("#a32c22"),
+    "dialogue" -> hexColor("#2b594b"),
+    "say" -> hexColor("#294e6d"),
+    "reward" -> hexColor("#8f5f16"),
+    "error" -> hexColor("#a32c22"),
+    "system" -> hexColor("#5c5346"),
+    _ -> hexColor("#1e1a16"),
+}
+
+def hRule(col: Color): Element ClientMsg =
+    box([wGrow(1.0), hFixed(1.0), bg(col)], emptyEl())
+
+// ============================================================================
+// 1. Battle Top HUD, Active Skill Grid & Battle Lab Controls
+// ============================================================================
+
+def viewEffectPills(effs: List (EffectInfo, Float)): Element ClientMsg =
+    if (listIsEmpty(effs)) emptyEl()
+    else wrapRow([wGrow(1.0), gap(4.0)], 4.0, listMap(listTake(effs, 4), (pair) -> match pair {
+        (ef, remS) -> {
+            let isBad = ef.efType == "dot" || ef.efType == "debuff";
+            let lbl = ef.efName + " " + intToStr(ceilInt(remS)) + "s";
+            sealPill(
+                lbl,
+                if (isBad) hexColor("#8e241c") else hexColor("#224a3f"),
+                if (isBad) rgba(158, 42, 34, 26) else rgba(39, 82, 71, 26),
+                if (isBad) rgba(158, 42, 34, 88) else rgba(39, 82, 71, 88)
+            )
+        },
+    }))
+
+def viewCombatantCard(
+    th: Theme,
+    name: String,
+    hp: Int, mhp: Int, hpTrail: Float,
+    qi: Int, mqi: Int,
+    apVal: Float,
+    effs: List (EffectInfo, Float),
+    hitFlash: Bool
+): Element ClientMsg = {
+    let hpRatio = intToFloat(hp) / intToFloat(maxInt(1, mhp));
+    let qiRatio = intToFloat(qi) / intToFloat(maxInt(1, mqi));
+    let apRatio = apVal / 100.0;
+    let vitalsTxt = intToStr(hp) + "/" + intToStr(mhp) + " · " + intToStr(qi);
+    card(th, [
+        wGrow(1.0),
+        pad(10.0),
+        gap(5.0),
+        bgGrad(if (hitFlash) hexColor("#faece8") else hexColor("#faf6ee"), hexColor("#f2ebdc")),
+        border(if (hitFlash) 1.4 else 0.85, if (hitFlash) rgba(158, 42, 34, 190) else rgba(130, 118, 98, 76))
+    ], [
+        row([wGrow(1.0), alignY(AlignMid)], [
+            label(fontSerif(14.0, 700), hexColor("#1c1915"), name),
+            growSpacer(),
+            label(fontSans(10.5, 600), hexColor("#6b6255"), vitalsTxt)
+        ]),
+        vitalBar([], 8.0, hpRatio, hpTrail, hexColor("#8e241c"), hexColor("#bc3f32"), hexColor("#d99b82"), ""),
+        vitalBar([], 5.5, qiRatio, 0.0, hexColor("#224a3f"), hexColor("#3c7564"), 0, ""),
+        row([wGrow(1.0), gap(6.0), alignY(AlignMid)], [
+            vitalBar([], 4.0, apRatio, 0.0, hexColor("#8a6220"), hexColor("#be9142"), 0, ""),
+            label(fontSans(9.5, 600), hexColor("#8a6220"), "动 " + intToStr(roundInt(apVal)))
+        ]),
+        viewEffectPills(effs)
+    ])
+}
+
+def viewBattleTopBar(th: Theme, m: ClientModel, isMob: Bool): Element ClientMsg = {
+    let zh = isZh(m.cmVp.vpLocale);
+    let (pHp, pMaxHp, pQi, pMaxQi) = presentedVitals(m);
+    let (eName, eHp, eMaxHp, eQi, eMaxQi) = enemyVitals(m);
+    let pEffs = liveEffectsOf(m, true);
+    let eEffs = liveEffectsOf(m, false);
+    let pName = if (strLen(m.cmAuth.auUsername) == 0) "行者" else m.cmAuth.auUsername;
+    let sndLbl = if (zh) (if (m.cmVp.vpSoundOn) "音效：开" else "音效：关") else (if (m.cmVp.vpSoundOn) "SFX On" else "SFX Off");
+    let pCard = viewCombatantCard(th, pName, pHp, pMaxHp, m.cmFx.fxPlayerHpTrail, pQi, pMaxQi, m.cmFx.fxPlayerApAnim, pEffs, m.cmFx.fxPlayerHitFlashMs > 0.0);
+    let eCard = viewCombatantCard(th, eName, eHp, eMaxHp, m.cmFx.fxEnemyHpTrail, eQi, eMaxQi, m.cmFx.fxEnemyApAnim, eEffs, m.cmFx.fxEnemyHitFlashMs > 0.0);
+
+    if (isMob) {
+        col([wGrow(1.0), gap(4.0)], [
+            row([wGrow(1.0), gap(8.0), alignY(AlignStretch)], [pCard, eCard]),
+            row([wGrow(1.0)], [
+                growSpacer(),
+                woodBtn("btn-sfx", [wFixed(68.0)], 24.0, 10.5, ToneGhost, false, sndLbl, MsgUi("toggle_sound", "", ""))
+            ])
+        ])
+    } else {
+        row([wGrow(1.0), maxW(760.0), gap(10.0), alignY(AlignMid)], [
+            pCard,
+            woodBtn("btn-sfx", [wFixed(76.0)], 28.0, 11.0, ToneGhost, false, sndLbl, MsgUi("toggle_sound", "", "")),
+            eCard
+        ])
+    }
+}
+
+def viewBattleSkills(m: ClientModel, isMob: Bool): Element ClientMsg = {
+    let evals = evalSkillState(m);
+    if (listIsEmpty(evals)) emptyEl()
+    else {
+        let zh = isZh(m.cmVp.vpLocale);
+        let btnW = if (isMob) minFloat(116.0, (m.cmVp.vpWidth - 36.0) / 3.0) else 124.0;
+        let idxCell = cellNew(0);
+        let cardsRev: Cell (List (Element ClientMsg)) = cellNew(Nil);
+        let cur = cellNew(evals);
+        while (match cellGet(cur) { Nil -> false, _ -> true }) {
+            match cellGet(cur) {
+                Cons(ev, rest) -> {
+                    let idx = cellGet(idxCell);
+                    let sk = ev.seSkill;
+                    let al = if (ev.seReady || ev.seQueued) 0.98 else 0.56;
+                    let bgCol = if (ev.seQueued) hexColor("#f5ebd5") else hexColor("#faf6ee");
+                    let bdCol =
+                        if (ev.seQueued) hexColor("#a87d38")
+                        else if (ev.seUltimate) rgba(158, 42, 34, 166)
+                        else if (ev.seReady) rgba(39, 82, 71, 118)
+                        else rgba(130, 118, 98, 68);
+                    let rCol = if (ev.seQueued) hexColor("#8a6220") else if (ev.seCdRem > 0.05) hexColor("#9e2a22") else hexColor("#6b6255");
+                    let cdPct = if (ev.seCdRem > 0.05) minFloat(1.0, ev.seCdRem / ev.seCdTotal) else 0.0;
+                    let keyTag =
+                        if (ev.seQueued) (if (zh) "蓄" else "Q")
+                        else if (idx < 6 && !isMob) intToStr(idx + 1)
+                        else "";
+                    let item = interactive(
+                        "skill:" + sk.asId,
+                        [fixedSize(btnW, 48.0), padXY(6.0, 5.0), bg(withAlpha(bgCol, al)), border(if (ev.seReady || ev.seQueued) 1.0 else 0.75, bdCol), rounded(3.0)],
+                        [bg(hexColor("#fbf8f1")), border(1.1, hexColor("#a87d38"))],
+                        if (ev.seReady) Some(MsgUi("perform", sk.asId, "")) else None,
+                        col([fillSpace(), gap(2.0), alignX(AlignMid)], [
+                            row([wGrow(1.0), alignY(AlignMid)], [
+                                if (strLen(keyTag) > 0)
+                                    label(fontSans(9.5, 700), if (ev.seQueued) hexColor("#9e2a22") else hexColor("#8b7f6e"), keyTag)
+                                else emptyEl(),
+                                growSpacer(),
+                                textAligned(fontSerif(12.5, 700), AlignCenter, withAlpha(hexColor("#1c1915"), al), sk.asName),
+                                growSpacer()
+                            ]),
+                            if (cdPct > 0.01)
+                                vitalBar([], 3.0, cdPct, 0.0, rgba(168, 125, 56, 120), rgba(168, 125, 56, 120), 0, "")
+                            else spacer(0.0, 1.0),
+                            textAligned(fontSans(9.8, 500), AlignCenter, withAlpha(rCol, al), ev.seReason)
+                        ])
+                    );
+                    cellSet(cardsRev, Cons(item, cellGet(cardsRev)));
+                    cellSet(idxCell, idx + 1);
+                    cellSet(cur, rest)
+                },
+                Nil -> (),
+            }
+        };
+        wrapRow([wGrow(1.0), maxW(760.0), gap(8.0), alignX(AlignMid)], 6.0, std.list.listRev(cellGet(cardsRev)))
+    }
+}
+
+def viewBattleLabDock(th: Theme, m: ClientModel, isMob: Bool): Element ClientMsg = {
+    let acts = labActionOrder(m);
+    let curActId =
+        if (listIsEmpty(acts)) "rig.fist.punch_a"
+        else listNthOr(acts, floorMod(m.cmLab.labActionIdx, listLen(acts)), "rig.fist.punch_a");
+    let curActLbl = match mapLookup(m.cmCatalog.acActions, curActId) {
+        Some(ad) -> ad.adLabel,
+        None -> curActId,
+    };
+    let outLbl = listNthOr(["命中", "闪避", "招架", "效果"], floorMod(m.cmLab.labOutcomeIdx, 4), "命中");
+    let sideLbl = listNthOr(["行者", "守擂人"], floorMod(m.cmLab.labSideIdx, 2), "行者");
+    let lookLbl = if (lookEq(m.cmVp.vpLookStyle, LookMaiden)) "发髻披发" else "高马尾";
+
+    let dur = match m.cmBattle.btActiveTimeline { Some(tl) -> tl.tlDurationMs, None -> 0.0 };
+    let elap = m.cmBattle.btTimelineElapsedMs;
+    let ratio = if (dur > 0.1) clamp01(elap / dur) else 0.0;
+    let tLbl = "时间轴 " + intToStr(roundInt(elap)) + " / " + intToStr(roundInt(dur)) + " ms";
+
+    let row1 = row([wGrow(1.0), gap(6.0), alignY(AlignMid)], [
+        woodBtn("lab-demo", [wFixed(104.0)], 28.0, 12.0, TonePrimary, false, "播放完整交锋", MsgLab("demo", "", "", "", 0.0)),
+        woodBtn("lab-pause", [wFixed(56.0)], 28.0, 12.0, ToneDefault, false, if (m.cmLab.labPaused) "继续" else "暂停", MsgLab("pause", if (m.cmLab.labPaused) "false" else "true", "", "", 0.0)),
+        woodBtn("lab-prev", [wFixed(28.0)], 28.0, 14.0, ToneDefault, false, "‹", MsgUi("lab_cycle_action", "prev", "")),
+        box([wGrow(1.0), hFixed(28.0), padXY(8.0, 4.0), bg(hexColor("#efe7d4")), border(1.0, hexColor("#c5b9a0")), rounded(3.0), centerContent()],
+            textAligned(fontSans(11.5, 600), AlignCenter, hexColor("#1e1a16"), curActLbl)
+        ),
+        woodBtn("lab-next", [wFixed(28.0)], 28.0, 14.0, ToneDefault, false, "›", MsgUi("lab_cycle_action", "next", ""))
+    ]);
+    let row2 = row([wGrow(1.0), gap(6.0), alignY(AlignMid)], [
+        woodBtn("lab-out", [wFixed(58.0)], 28.0, 11.5, ToneDefault, false, outLbl, MsgUi("lab_cycle_outcome", "", "")),
+        woodBtn("lab-side", [wFixed(62.0)], 28.0, 11.5, ToneDefault, false, sideLbl, MsgUi("lab_cycle_side", "", "")),
+        woodBtn("lab-look", [wFixed(72.0)], 28.0, 11.5, ToneDefault, false, lookLbl, MsgUi("toggle_look", "", "")),
+        woodBtn("lab-play", [wFixed(86.0)], 28.0, 11.5, ToneJade, false, "播放这一招", MsgUi("lab_play_selected", "", ""))
+    ]);
+
+    let scrubber = canvasInteractive(
+        [wGrow(1.0), hFixed(22.0)],
+        Some((r, pt, _d) -> MsgLabScrub(clamp01((pt.vx - r.rx) / maxFloat(1.0, r.rw)))),
+        None,
+        (r, pt, _hk, dl) -> {
+            let ty = r.ry + r.rh * 0.5 - 4.0;
+            drawRect(dl, rect(r.rx, ty, r.rw, 8.0), 2.0, hexColor("#dfd5be"), hexColor("#b8aa91"), 0.8);
+            drawFillRect(dl, rect(r.rx, ty, r.rw * ratio, 8.0), 2.0, hexColor("#946623"));
+            drawCircle(dl, r.rx + r.rw * ratio, ty + 4.0, 6.0, hexColor("#a32c22"), hexColor("#f6f0e2"), 1.5);
+            let clickRatio = clamp01((pt.vx - r.rx) / maxFloat(1.0, r.rw));
+            [canvasHit(r, "lab:scrub", "ew-resize", MsgLabScrub(clickRatio))]
+        }
+    );
+
+    card(th, [wGrow(1.0), maxW(900.0), pad(10.0), gap(8.0)], [
+        if (isMob) col([wGrow(1.0), gap(6.0)], [row1, row2])
+        else row([wGrow(1.0), gap(8.0), alignY(AlignMid)], [row1, row2]),
+        row([wGrow(1.0), gap(10.0), alignY(AlignMid)], [
+            label(fontSans(11.5, 600), hexColor("#5c5346"), tLbl),
+            scrubber
+        ])
+    ])
+}
+
+def viewBattleLab(th: Theme, vp: Rect, m: ClientModel): Element ClientMsg = {
+    let isMob = vp.rw <= 768.0;
+    zstack([fillSpace()], [
+        canvasStage([fillSpace()], (r, ptr, dl) -> {
+            drawAtmosphere(dl, r, m);
+            renderBattleStage(r, ptr, dl, m)
+        }),
+        col([fillSpace(), padXY(12.0, 14.0), alignX(AlignMid)], [
+            viewBattleTopBar(th, m, isMob),
+            growSpacer(),
+            viewBattleLabDock(th, m, isMob)
+        ])
+    ])
+}
+
+// ============================================================================
+// 2. Onboarding & Six-Step Character Creation View
+// ============================================================================
+
+def viewLoginBody(th: Theme, m: ClientModel, zh: Bool): Element ClientMsg = {
+    let uTxt = m.cmAuth.auUsername;
+    let passFlag = if (m.cmAuth.auDevReset) "reset" else "";
+    let goLbl = if (m.cmAuth.auConnecting) (if (zh) "入世中…" else "Joining…") else (if (zh) "踏入江湖" else "Enter");
+    col([wGrow(1.0), gap(10.0)], [
+        heading(th, 19.0, if (zh) "重入江湖" else "Return to Jianghu"),
+        paragraph(
+            fontSans(12.5, 400), 18.0, hexColor("#5c5346"),
+            if (zh) "输入角色名号续接存档，或切换至「创建角色」定制身世与先天根骨。"
+            else "Enter your character name to continue your journey."
+        ),
+        row([wGrow(1.0), gap(8.0), alignY(AlignMid)], [
+            textInput(
+                th, "login", [wGrow(1.0), hFixed(36.0)],
+                if (zh) "点击输入角色名号…" else "Character Name…",
+                uTxt,
+                (v) -> MsgInputLogin(v),
+                Some(MsgSubmitLogin)
+            ),
+            woodBtn("btn-login-go", [wFixed(96.0)], 36.0, 13.0, TonePrimary, m.cmAuth.auConnecting, goLbl, MsgUi("login_submit", uTxt, passFlag))
+        ]),
+        interactive(
+            "chk-dev-reset",
+            [padXY(2.0, 4.0)],
+            [],
+            Some(MsgUi("toggle_dev_reset", "", "")),
+            row([gap(8.0), alignY(AlignMid)], [
+                box([
+                    fixedSize(16.0, 16.0),
+                    bg(if (m.cmAuth.auDevReset) hexColor("#2b594b") else hexColor("#fcf9f2")),
+                    border(1.1, hexColor("#8b7f6e")),
+                    rounded(2.0),
+                    centerContent()
+                ], if (m.cmAuth.auDevReset) textAligned(fontSans(11.0, 700), AlignCenter, hexColor("#f7f1e3"), "✓") else emptyEl()),
+                label(fontSans(12.0, 400), hexColor("#5c5346"), if (zh) "测试重开存档（需 MUD_DEV_MODE=1）" else "Dev reset save")
+            ])
+        ),
+        match m.cmAuth.auLastError {
+            Some(errTxt) -> paragraph(fontSans(12.0, 600), 17.0, hexColor("#a32c22"), errTxt),
+            None -> emptyEl(),
+        }
+    ])
+}
+
+def viewCreateBody(th: Theme, m: ClientModel, zh: Bool): Element ClientMsg =
+    match m.cmAuth.auCreationCfg {
+        None -> col([wGrow(1.0), gap(12.0)], [
+            label(fontSans(13.0, 400), hexColor("#5c5346"), if (zh) "正在向服务端读取身世配置…" else "Loading creation config…"),
+            woodBtn("btn-retry-cfg", [wFixed(96.0)], 32.0, 12.5, ToneDefault, false, if (zh) "重试读取" else "Retry", MsgUi("request_creation_cfg", "", ""))
+        ]),
+        Some(cfg) -> {
+            let step = m.cmAuth.auCreateStep;
+            let cc = m.cmAuth.auCreateChoice;
+            let uTxt = m.cmAuth.auUsername;
+            let stepLabels = if (zh) ["名号", "性别", "出身", "幼年", "后来", "预览"] else ["Name", "Sex", "Origin", "Early", "Youth", "Done"];
+            let stepIdx = cellNew(0);
+            let stepBtnsRev: Cell (List (Element ClientMsg)) = cellNew(Nil);
+            let scur = cellNew(stepLabels);
+            while (match cellGet(scur) { Nil -> false, _ -> true }) {
+                match cellGet(scur) {
+                    Cons(lbl, rest) -> {
+                        let i = cellGet(stepIdx);
+                        let b = woodBtn(
+                            "cstep-" + intToStr(i),
+                            [wGrow(1.0)], 26.0, 11.0,
+                            if (step == i) ToneActive else ToneGhost,
+                            false, lbl, MsgUi("create_step", intToStr(i), "")
+                        );
+                        cellSet(stepBtnsRev, Cons(b, cellGet(stepBtnsRev)));
+                        cellSet(stepIdx, i + 1);
+                        cellSet(scur, rest)
+                    },
+                    Nil -> (),
+                }
+            };
+            let stepper = row([wGrow(1.0), gap(4.0)], std.list.listRev(cellGet(stepBtnsRev)));
+
+            let stepContent =
+                if (step == 0) {
+                    col([wGrow(1.0), gap(10.0)], [
+                        heading(th, 17.0, if (zh) "立定名号" else "Choose a Name"),
+                        row([wGrow(1.0), gap(8.0), alignY(AlignMid)], [
+                            textInput(
+                                th, "login", [wGrow(1.0), hFixed(36.0)],
+                                if (zh) "如：沈青蝉" else "Name",
+                                uTxt,
+                                (v) -> MsgInputLogin(v),
+                                Some(MsgSubmitLogin)
+                            ),
+                            woodBtn("cstep-next", [wFixed(84.0)], 36.0, 12.5, TonePrimary, false, if (zh) "下一步" else "Next", MsgUi("create_step", "1", ""))
+                        ]),
+                        match m.cmAuth.auLastError {
+                            Some(errTxt) -> paragraph(fontSans(12.0, 600), 17.0, hexColor("#a32c22"), errTxt),
+                            None -> emptyEl(),
+                        }
+                    ])
+                } else if (step == 1) {
+                    let who = if (strLen(uTxt) == 0) "无名客" else uTxt;
+                    col([wGrow(1.0), gap(8.0)], listAppend(
+                        [heading(th, 17.0, who + (if (zh) " 是：" else ":"))],
+                        listMap(cfg.cfgGenders, (pair) -> match pair {
+                            (gid, glbl) ->
+                                woodBtn(
+                                    "gender-" + gid, [wGrow(1.0)], 36.0, 13.5,
+                                    if (cc.ccGender == gid) ToneJade else ToneDefault,
+                                    false, glbl, MsgUi("create_pick", "gender", gid)
+                                ),
+                        })
+                    ))
+                } else if (step >= 2 && step <= 4) {
+                    let (field, opts, title, curId) =
+                        if (step == 2) ("origin", cfg.cfgOrigins, if (zh) "出身来历" else "Origin", cc.ccOrigin)
+                        else if (step == 3) ("childhood1", cfg.cfgChildhood1, if (zh) "幼年经历" else "Childhood", cc.ccChildhood1)
+                        else ("childhood2", cfg.cfgChildhood2, if (zh) "后来际遇" else "Youth", cc.ccChildhood2);
+                    let pName = if (strLen(utf8Trim(uTxt)) == 0) "无名客" else utf8Trim(uTxt);
+                    let optCards = listMap(opts, (o) -> {
+                        let sel = curId == o.coId;
+                        interactive(
+                            "cpick:" + field + ":" + o.coId,
+                            [
+                                wGrow(1.0), pad(10.0),
+                                bg(if (sel) hexColor("#ebe3cf") else hexColor("#faf5e9")),
+                                border(if (sel) 1.5 else 1.0, if (sel) hexColor("#946623") else hexColor("#c8bca4")),
+                                rounded(3.0)
+                            ],
+                            [bg(hexColor("#f2ead8")), border(1.2, hexColor("#2b594b"))],
+                            Some(MsgUi("create_pick", field, o.coId)),
+                            col([wGrow(1.0), gap(4.0)], [
+                                label(fontSans(13.0, 700), hexColor("#1e1a16"), o.coLabel),
+                                paragraph(fontSans(11.5, 400), 16.5, hexColor("#5c5346"), strReplace(o.coStory, "{name}", pName))
+                            ])
+                        )
+                    });
+                    col([wGrow(1.0), gap(8.0)], listAppend([heading(th, 17.0, title)], optCards))
+                } else {
+                    let bonusOf = (nid: String, xs: List CreationOption) -> match listFind(xs, (o) -> o.coId == nid) {
+                        Some(o) -> o.coBonus,
+                        None -> protocol.emptyBonus(),
+                    };
+                    let tot: CreationBonus = mconcat([
+                        cfg.cfgBaseStats,
+                        bonusOf(cc.ccOrigin, cfg.cfgOrigins),
+                        bonusOf(cc.ccChildhood1, cfg.cfgChildhood1),
+                        bonusOf(cc.ccChildhood2, cfg.cfgChildhood2)
+                    ]);
+                    let passFlag = if (m.cmAuth.auDevReset) "reset" else "";
+                    col([wGrow(1.0), gap(10.0)], [
+                        heading(th, 17.0, if (zh) "入世预览" else "Character Preview"),
+                        row([wGrow(1.0), pad(10.0), gap(12.0), bg(hexColor("#efe7d4")), border(1.0, hexColor("#c5b9a0")), rounded(3.0), alignY(AlignMid)], [
+                            imageBox(portraitUrl(cc.ccGender, tot.cbAppearance, uTxt), 64.0, 64.0, 3.0),
+                            col([wGrow(1.0), gap(4.0)], [
+                                label(fontSerif(16.0, 700), hexColor("#1e1a16"), if (strLen(uTxt) == 0) "无名客" else uTxt),
+                                label(fontSans(12.0, 500), hexColor("#5c5346"),
+                                    "臂力 " + intToStr(tot.cbStrength) + " · 身法 " + intToStr(tot.cbAgilityValue) + " · 根骨 " + intToStr(tot.cbVitality)),
+                                label(fontSans(12.0, 500), hexColor("#2b594b"),
+                                    "内力 " + intToStr(tot.cbMaxQiBonus) + " · 容貌 " + intToStr(clampInt(0, 10, tot.cbAppearance)))
+                            ])
+                        ]),
+                        woodBtn("btn-create-submit", [wGrow(1.0)], 38.0, 13.5, TonePrimary, m.cmAuth.auConnecting, if (zh) "确认踏入江湖" else "Create & Enter", MsgUi("create_submit", uTxt, passFlag))
+                    ])
+                };
+
+            col([wGrow(1.0), gap(12.0)], [stepper, stepContent])
+        },
+    }
+
+def viewOnboarding(th: Theme, vp: Rect, m: ClientModel): Element ClientMsg = {
+    let zh = isZh(m.cmVp.vpLocale);
+    let isCreate = m.cmAuth.auLoginMode == "create";
+    let maxCardBodyH = maxFloat(160.0, vp.rh - 160.0);
+
+    let topBar = row([
+        wGrow(1.0), hFixed(50.0), padXY(16.0, 10.0), gap(10.0), alignY(AlignMid),
+        bg(withAlpha(hexColor("#f5efe1"), 0.98)), border(0.8, hexColor("#c6baa3"))
+    ], [
+        box([fixedSize(28.0, 28.0), bg(hexColor("#a32c22")), border(1.0, hexColor("#7d2018")), rounded(3.0), centerContent()],
+            textAligned(fontSerif(16.0, 700), AlignCenter, hexColor("#f7f1e3"), "武")
+        ),
+        label(fontSerif(18.0, 700), hexColor("#1e1a16"), if (zh) "听风录" else "Tingfeng"),
+        growSpacer(),
+        woodBtn("btn-onboard-loc", [wFixed(42.0)], 28.0, 11.5, ToneGhost, false, if (zh) "EN" else "中", MsgUi("toggle_locale", "", ""))
+    ]);
+
+    let onboardCard = plaqueCard(th, [wGrow(1.0), maxW(500.0), pad(18.0), gap(12.0)], [
+        box([wGrow(1.0), hFixed(2.5), bg(hexColor("#9e2a22")), rounded(1.0)], emptyEl()),
+        row([wGrow(1.0), gap(8.0)], [
+            woodBtn("tab-login", [wGrow(1.0)], 32.0, 13.0, if (!isCreate) ToneActive else ToneGhost, false, if (zh) "登录江湖" else "Sign In", MsgUi("login_mode", "login", "")),
+            woodBtn("tab-create", [wGrow(1.0)], 32.0, 13.0, if (isCreate) ToneActive else ToneGhost, false, if (zh) "创建角色" else "New Character", MsgUi("login_mode", "create", ""))
+        ]),
+        scrollView("onboard", [wGrow(1.0), maxH(maxCardBodyH)],
+            if (!isCreate) viewLoginBody(th, m, zh) else viewCreateBody(th, m, zh)
+        )
+    ]);
+
+    zstack([fillSpace()], [
+        canvasStage([fillSpace()], (r, ptr, dl) -> renderOnboardingStage(r, ptr, dl, m)),
+        col([fillSpace()], [
+            topBar,
+            box([fillSpace(), pad(14.0), centerContent()], onboardCard)
+        ])
+    ])
+}
+
+// ============================================================================
+// 3. Connected Main Game Headers, Room Card, Message Dock & Drawers
+// ============================================================================
+
+def viewDesktopHeader(th: Theme, m: ClientModel): Element ClientMsg = {
+    let zh = isZh(m.cmVp.vpLocale);
+    let st = m.cmHero.hsStats;
+    let (presHp, presMaxHp, presQi, presMaxQi) = presentedVitals(m);
+    let hpPct = intToFloat(presHp) / intToFloat(maxInt(1, presMaxHp));
+    let qiPct = intToFloat(presQi) / intToFloat(maxInt(1, presMaxQi));
+    let pillActive = m.cmUi.uiDesktopDrawer == "character";
+    let activeQ = listLen(listFilter(m.cmHero.hsQuests, (q) -> !q.qiCompleted));
+
+    let heroPill = interactive(
+        "hdr-hero-pill",
+        [
+            padXY(8.0, 5.0),
+            bg(if (pillActive) rgba(28, 25, 21, 18) else 0),
+            border(if (pillActive) 0.9 else 0.0, if (pillActive) rgba(168, 125, 56, 118) else 0),
+            rounded(3.0)
+        ],
+        [bg(rgba(28, 25, 21, 12))],
+        Some(MsgUi("desktop_drawer", "character", "")),
+        row([gap(8.0), alignY(AlignMid)], [
+            imageBox(portraitUrl(st.psGender, st.psAppearance, m.cmAuth.auUsername), 30.0, 30.0, 3.0),
+            col([wFixed(92.0), gap(3.0)], [
+                label(fontSerif(13.0, 700), hexColor("#1c1915"), m.cmAuth.auUsername),
+                vitalBar([], 4.0, clamp01(hpPct), 0.0, hexColor("#8e241c"), hexColor("#bc3f32"), 0, ""),
+                vitalBar([], 3.5, clamp01(qiPct), 0.0, hexColor("#224a3f"), hexColor("#3c7564"), 0, "")
+            ]),
+            label(fontSans(11.0, 600), hexColor("#6b6255"), intToStr(presHp) + "/" + intToStr(presQi))
+        ])
+    );
+
+    let busyChip = match st.psBusy {
+        Some(bi) if (!m.cmBattle.btInBattle) -> {
+            let ageS = maxFloat(0.0, (m.cmVp.vpClockMs - m.cmHero.hsBusySyncedAtMs) / 1000.0);
+            let remS = maxFloat(0.0, bi.biSeconds - ageS);
+            let lbl = busyActionTitle(m, bi) + " · " + intToStr(ceilInt(remS)) + "s";
+            woodBtn("hdr-busy", [], 30.0, 11.5, ToneJade, false, lbl, MsgUi("desktop_drawer", "arts", ""))
+        },
+        _ -> emptyEl(),
+    };
+
+    let questLbl =
+        (if (zh) "任务" else "Quests")
+            + (if (activeQ > 0) " · " + intToStr(activeQ) else "");
+
+    row([
+        wGrow(1.0), hFixed(52.0), padXY(14.0, 6.0), gap(8.0), alignY(AlignMid),
+        bg(withAlpha(th.thSurfaceTop, 0.99)), border(0.75, rgba(130, 118, 98, 72))
+    ], [
+        heroPill,
+        busyChip,
+        growSpacer(),
+        woodBtn("hdr-arts", [wFixed(58.0)], 30.0, 12.5, if (m.cmUi.uiDesktopDrawer == "arts") ToneActive else ToneGhost, false, if (zh) "武学" else "Arts", MsgUi("desktop_drawer", "arts", "")),
+        woodBtn("hdr-quests", [], 30.0, 12.5, if (m.cmUi.uiDesktopDrawer == "quests") ToneActive else ToneGhost, false, questLbl, MsgUi("desktop_drawer", "quests", "")),
+        woodBtn("hdr-loc", [wFixed(38.0)], 30.0, 11.5, ToneGhost, false, if (zh) "EN" else "中", MsgUi("toggle_locale", "", ""))
+    ])
+}
+
+def viewMobileHeader(th: Theme, m: ClientModel): Element ClientMsg = {
+    let zh = isZh(m.cmVp.vpLocale);
+    let (presHp, presMaxHp, presQi, presMaxQi) = presentedVitals(m);
+    let hpPct = intToFloat(presHp) / intToFloat(maxInt(1, presMaxHp));
+    let qiPct = intToFloat(presQi) / intToFloat(maxInt(1, presMaxQi));
+    let mName = currentMapName(m);
+    let rName = m.cmWorld.wvRoomName;
+    let titleTxt =
+        if (m.cmBattle.btInBattle) {
+            match m.cmBattle.btSnap {
+                Some(bs) -> bs.bsEnemy.cbName,
+                None -> if (zh) "交锋" else "Battle",
+            }
+        } else if (strLen(mName) > 0 && mName != rName && strLen(rName) > 0) {
+            mName + " · " + rName
+        } else if (strLen(rName) > 0) {
+            rName
+        } else {
+            if (zh) "听风录" else "Tingfeng"
+        };
+
+    col([
+        wGrow(1.0), hFixed(54.0), padTRBL(6.0, 12.0, 6.0, 14.0), gap(5.0),
+        bg(withAlpha(th.thSurfaceTop, 0.99)), border(0.8, rgba(130, 118, 98, 72))
+    ], [
+        row([wGrow(1.0), gap(6.0), alignY(AlignMid)], [
+            box([wGrow(1.0)], label(fontSerif(15.5, 700), hexColor("#1c1915"), titleTxt)),
+            woodBtn("mhdr-char", [], 26.0, 11.0, ToneGhost, false, intToStr(presHp) + "/" + intToStr(presQi), MsgUi("mobile_tab", "character", "")),
+            woodBtn("mhdr-loc", [wFixed(34.0)], 26.0, 11.0, ToneGhost, false, if (zh) "EN" else "中", MsgUi("toggle_locale", "", ""))
+        ]),
+        row([wGrow(1.0), gap(6.0)], [
+            vitalBar([], 4.5, clamp01(hpPct), 0.0, hexColor("#8e241c"), hexColor("#bc3f32"), 0, ""),
+            vitalBar([], 4.5, clamp01(qiPct), 0.0, hexColor("#224a3f"), hexColor("#3c7564"), 0, "")
+        ])
+    ])
+}
+
+def viewMobileTabbar(th: Theme, m: ClientModel): Element ClientMsg = {
+    let zh = isZh(m.cmVp.vpLocale);
+    let activeQ = listLen(listFilter(m.cmHero.hsQuests, (q) -> !q.qiCompleted));
+    let ageS = maxFloat(0.0, (m.cmVp.vpClockMs - m.cmHero.hsStatsSyncedAtMs) / 1000.0);
+    let liveInj = maxInt(0, m.cmHero.hsStats.psInjuredSeconds - floorInt(ageS));
+    let inB = m.cmBattle.btInBattle;
+
+    let tabs = [
+        ("world", if (zh) (if (inB) "交锋" else "江湖") else (if (inB) "Duel" else "World"), inB && m.cmUi.uiMobileTab != "world", 0),
+        ("log", if (zh) "纪事" else "Log", false, m.cmUi.uiUnreadLogs),
+        ("arts", if (zh) "武学" else "Arts", optIsSome(m.cmHero.hsStats.psBusy), 0),
+        ("character", if (zh) "角色" else "Hero", liveInj > 0, 0),
+        ("quests", if (zh) "任务" else "Quests", false, activeQ)
+    ];
+
+    row([
+        wGrow(1.0), hFixed(54.0),
+        bg(withAlpha(th.thSurfaceTop, 0.99)), border(0.75, rgba(130, 118, 98, 68))
+    ], listMap(tabs, (item) -> match item {
+        (tid, lbl, hasDot, badgeCnt) -> {
+            let act = m.cmUi.uiMobileTab == tid;
+            let colIcon = if (act) hexColor("#a32c22") else hexColor("#5c5346");
+            interactive(
+                "mtab:" + tid,
+                [wGrow(1.0), hFixed(54.0)],
+                [bg(rgba(28, 25, 21, 10))],
+                Some(MsgUi("mobile_tab", tid, "")),
+                col([fillSpace(), alignX(AlignMid)], [
+                    if (act) box([wPct(0.65), hFixed(2.5), bg(hexColor("#a32c22"))], emptyEl()) else spacer(0.0, 2.5),
+                    canvasStage([fixedSize(44.0, 26.0)], (r, _ptr, dl) -> {
+                        let cx = r.rx + r.rw * 0.5;
+                        let y0 = r.ry;
+                        match tid {
+                            "world" -> {
+                                drawCircle(dl, cx, y0 + 15.0, 7.5, 0, colIcon, 1.4);
+                                drawLine(dl, cx - 3.5, y0 + 18.5, cx + 3.5, y0 + 11.5, 1.4, colIcon, false)
+                            },
+                            "log" -> {
+                                drawRect(dl, rect(cx - 8.0, y0 + 8.0, 16.0, 12.0), 2.0, 0, colIcon, 1.3);
+                                drawLine(dl, cx - 4.0, y0 + 12.5, cx + 4.0, y0 + 12.5, 1.2, colIcon, false);
+                                drawLine(dl, cx - 4.0, y0 + 16.0, cx + 2.0, y0 + 16.0, 1.2, colIcon, false)
+                            },
+                            "arts" -> {
+                                drawRect(dl, rect(cx - 8.0, y0 + 8.0, 7.5, 13.0), 1.0, 0, colIcon, 1.3);
+                                drawRect(dl, rect(cx + 0.5, y0 + 8.0, 7.5, 13.0), 1.0, 0, colIcon, 1.3)
+                            },
+                            "character" -> {
+                                drawCircle(dl, cx, y0 + 11.5, 3.6, 0, colIcon, 1.3);
+                                drawLine(dl, cx - 6.0, y0 + 21.0, cx + 6.0, y0 + 21.0, 1.4, colIcon, false)
+                            },
+                            _ -> {
+                                drawRect(dl, rect(cx - 6.5, y0 + 7.5, 13.0, 14.0), 1.5, 0, colIcon, 1.3);
+                                drawLine(dl, cx - 3.5, y0 + 12.0, cx + 3.5, y0 + 12.0, 1.2, colIcon, false);
+                                drawLine(dl, cx - 3.5, y0 + 16.0, cx + 2.0, y0 + 16.0, 1.2, colIcon, false)
+                            },
+                        };
+                        if (badgeCnt > 0) {
+                            drawFillRect(dl, rect(cx + 7.0, y0 + 3.0, 16.0, 14.0), 7.0, hexColor("#a32c22"));
+                            kagura.gfx.drawText(
+                                dl, cx + 15.0, y0 + 13.3, fontSans(9.5, 700), AlignCenter, hexColor("#f7f1e3"),
+                                if (badgeCnt > 9) "9+" else intToStr(badgeCnt)
+                            )
+                        } else if (hasDot) {
+                            drawCircle(dl, cx + 11.0, y0 + 7.5, 3.2, if (tid == "arts") hexColor("#2b594b") else hexColor("#a32c22"), 0, 0.0)
+                        } else ();
+                        Nil
+                    }),
+                    textAligned(fontSans(10.5, if (act) 700 else 500), AlignCenter, colIcon, lbl)
+                ])
+            )
+        },
+    }))
+}
+
+def viewRoomCard(th: Theme, m: ClientModel, isMob: Bool): Element ClientMsg = {
+    let mName = currentMapName(m);
+    let chars = m.cmWorld.wvRoomChars;
+    let npcChips =
+        if (listIsEmpty(chars)) emptyEl()
+        else wrapRow([wGrow(1.0), gap(6.0)], 6.0, listMap(chars, (npc) -> {
+            let isHostile = listContainsStr(npc.rcActions, "attack");
+            let sel = optStrEqLocal(m.cmUi.uiSelectedNpc, Some(npc.rcId));
+            let tone = if (sel) ToneActive else if (isHostile) ToneDanger else ToneJade;
+            woodBtn("npc:" + npc.rcId, [], 26.0, 11.5, tone, m.cmWorld.wvStoryActive, npc.rcName, MsgUi("select_npc", npc.rcId, ""))
+        }));
+
+    card(th, [
+        if (isMob) wGrow(1.0) else wFixed(minFloat(420.0, m.cmVp.vpWidth - 32.0)),
+        pad(if (isMob) 10.0 else 12.0),
+        gap(6.0),
+        rounded(3.0),
+        bgGrad(withAlpha(hexColor("#faf6ee"), 0.99), withAlpha(hexColor("#f2ebdc"), 0.99))
+    ], [
+        row([wGrow(1.0), gap(8.0), alignY(AlignMid)], [
+            box([fixedSize(2.5, 16.0), bg(hexColor("#9e2a22")), rounded(1.0)], emptyEl()),
+            box([wGrow(1.0)], label(fontSerif(if (isMob) 15.0 else 16.0, 700), hexColor("#1c1915"), m.cmWorld.wvRoomName)),
+            if (strLen(mName) > 0)
+                sealPill(mName, hexColor("#6b6255"), rgba(42, 35, 26, 14), rgba(130, 118, 98, 58))
+            else emptyEl()
+        ]),
+        if (strLen(m.cmWorld.wvRoomDesc) > 0)
+            paragraph(fontSans(12.0, 400), 17.5, hexColor("#4a4136"), m.cmWorld.wvRoomDesc)
+        else emptyEl(),
+        npcChips
+    ])
+}
+
+def viewMapControls(m: ClientModel, isMob: Bool): Element ClientMsg = {
+    let zh = isZh(m.cmVp.vpLocale);
+    let panned = isCameraPanned(m);
+    let zoomBtns = [
+        woodBtn("map-zoom-in", [wFixed(30.0)], 28.0, 15.0, ToneDefault, false, "+", MsgUi("zoom_in", "", "")),
+        woodBtn("map-zoom-out", [wFixed(30.0)], 28.0, 15.0, ToneDefault, false, "−", MsgUi("zoom_out", "", ""))
+    ];
+    let items =
+        if (!panned) zoomBtns
+        else if (isMob)
+            Cons(woodBtn("map-reset", [wFixed(56.0)], 26.0, 11.0, TonePrimary, false, if (zh) "归位" else "Center", MsgUi("reset_cam", "", "")), zoomBtns)
+        else
+            listAppend(zoomBtns, [woodBtn("map-reset", [wFixed(56.0)], 26.0, 11.0, TonePrimary, false, if (zh) "归位" else "Center", MsgUi("reset_cam", "", ""))]);
+    col([gap(4.0), alignX(AlignEnd)], items)
+}
+
+def viewMessageDock(
+    th: Theme,
+    m: ClientModel,
+    isMob: Bool,
+    dockH: Float,
+    compact: Bool,
+    logPinnedBottom: Bool
+): Element ClientMsg = {
+    let zh = isZh(m.cmVp.vpLocale);
+    let logItems =
+        if (listIsEmpty(m.cmUi.uiLogs))
+            [label(fontSans(12.0, 400), hexColor("#8b7f6e"), if (zh) "风声渐起……" else "Listening to the wind...")]
+        else
+            listMap(m.cmUi.uiLogs, (l) -> {
+                let wt = if (l.llKind == "move" || l.llKind == "reward") 600 else 400;
+                paragraph(fontSans(12.5, wt), 18.0, lineColor(l.llKind), l.llText)
+            });
+
+    let logScroll = scrollViewSticky(
+        "log",
+        [fillSpace()],
+        col([wGrow(1.0), gap(3.0)], logItems)
+    );
+
+    let logStack =
+        if (!logPinnedBottom && listLen(m.cmUi.uiLogs) > 3) {
+            zstack([fillSpace()], [
+                logScroll,
+                col([fillSpace(), pad(6.0), alignX(AlignEnd), alignY(AlignEnd)], [
+                    woodBtn("btn-log-latest", [wFixed(66.0)], 22.0, 10.5, TonePrimary, false, if (zh) "↓ 最新" else "↓ Latest", MsgUi("scroll_log_bottom", "", ""))
+                ])
+            ])
+        } else logScroll;
+
+    let canType = !m.cmWorld.wvStoryActive && optIsNone(m.cmUi.uiSelectedNpc) && (isMob || strLen(m.cmUi.uiDesktopDrawer) == 0);
+    let draft = m.cmUi.uiSayDraft;
+    let ph = if (zh) "输入发言，回车发送…" else "Say something…";
+
+    let inputRow =
+        if (compact) emptyEl()
+        else col([wGrow(1.0), gap(6.0)], [
+            hRule(hexColor("#d6cab2")),
+            row([wGrow(1.0), gap(6.0), alignY(AlignMid)], [
+                if (canType)
+                    textInput(th, "say", [wGrow(1.0), hFixed(28.0), padXY(8.0, 4.0)], ph, draft, (v) -> MsgInputSay(v), Some(MsgSubmitSay))
+                else
+                    box([wGrow(1.0), hFixed(28.0), padXY(8.0, 4.0), bg(hexColor("#f3ede0")), border(1.0, hexColor("#d4c8b2")), rounded(3.0), alignY(AlignMid)],
+                        label(fontSans(12.0, 400), hexColor("#8b7f6e"), if (strLen(draft) == 0) ph else draft)
+                    ),
+                woodBtn("btn-say-send", [wFixed(52.0)], 28.0, 11.5, TonePrimary, m.cmWorld.wvStoryActive, if (zh) "发送" else "Send", MsgUi("send_say_draft", "", "")),
+                woodBtn("btn-say-clear", [wFixed(50.0)], 28.0, 11.5, ToneGhost, false, if (zh) "清屏" else "Clear", MsgUi("clear_logs", "", ""))
+            ])
+        ]);
+
+    card(th, [
+        if (isMob) wGrow(1.0) else wFixed(minFloat(760.0, m.cmVp.vpWidth - 32.0)),
+        hFixed(dockH),
+        pad(8.0),
+        gap(6.0),
+        rounded(3.0),
+        bgGrad(withAlpha(hexColor("#faf6ee"), 0.99), withAlpha(hexColor("#f2ebdc"), 0.99))
+    ], [
+        logStack,
+        inputRow
+    ])
+}
+
+// ============================================================================
+// 4. Side Drawers (Character / Inventory, Martial Arts, Quests) & NPC Modal
+// ============================================================================
+
+def viewBusyBannerCard(m: ClientModel, zh: Bool): Element ClientMsg =
+    match m.cmHero.hsStats.psBusy {
+        None -> emptyEl(),
+        Some(bi) -> {
+            let ageS = maxFloat(0.0, (m.cmVp.vpClockMs - m.cmHero.hsBusySyncedAtMs) / 1000.0);
+            let remS = maxFloat(0.0, bi.biSeconds - ageS);
+            let stepS = maxFloat(0.2, bi.biStepSeconds);
+            let fillSpan = maxFloat(0.2, stepS - 0.12);
+            let prog = clamp01((stepS - remS) / fillSpan);
+            let lbl = busyActionTitle(m, bi) + " · " + fmtTenthSec(remS) + "s";
+            col([wGrow(1.0), pad(10.0), gap(8.0), bg(hexColor("#f2e7cf")), border(1.3, hexColor("#946623")), rounded(3.0)], [
+                row([wGrow(1.0), gap(6.0), alignY(AlignMid)], [
+                    box([wGrow(1.0)], label(fontSans(12.5, 700), hexColor("#5e3d0e"), lbl)),
+                    woodBtn("btn-halt", [wFixed(52.0)], 24.0, 11.5, ToneDanger, false, if (zh) "停下" else "Stop", MsgUi("halt", "", ""))
+                ]),
+                vitalBar([], 10.0, prog, 0.0, hexColor("#946623"), hexColor("#be8e3e"), 0, "")
+            ])
+        },
+    }
+
+def viewCharDrawerBody(m: ClientModel, zh: Bool): Element ClientMsg = {
+    let st = m.cmHero.hsStats;
+    let idle = m.cmAuth.auConnected && !m.cmBattle.btInBattle && !m.cmWorld.wvStoryActive && optIsNone(st.psBusy);
+    if (m.cmUi.uiCharSubTab == "inventory") {
+        let invList =
+            if (listIsEmpty(m.cmHero.hsInventory))
+                [label(fontSans(12.5, 400), hexColor("#8b7f6e"), if (zh) "行囊空空如也。" else "Inventory is empty.")]
+            else
+                listMap(m.cmHero.hsInventory, (it) -> {
+                    let lbl = it.iiName + " ×" + intToStr(it.iiAmount) + (if (it.iiEquipped) (if (zh) " · 已佩带" else " · Eq") else "");
+                    let useLbl = if (optIsSome(it.iiEquipSlot)) (if (it.iiEquipped) (if (zh) "卸下" else "Unequip") else (if (zh) "佩带" else "Equip")) else (if (zh) "使用" else "Use");
+                    row([
+                        wGrow(1.0), padXY(10.0, 8.0), gap(6.0), alignY(AlignMid),
+                        bg(hexColor("#faf5e9")), border(1.0, if (it.iiEquipped) hexColor("#946623") else hexColor("#c8bca4")), rounded(3.0)
+                    ], [
+                        box([wGrow(1.0)], label(fontSans(12.5, 600), hexColor("#1e1a16"), lbl)),
+                        if (it.iiUsable)
+                            woodBtn("inv-use:" + it.iiId, [wFixed(54.0)], 26.0, 11.5, ToneDefault, m.cmBattle.btInBattle || m.cmWorld.wvStoryActive, useLbl, MsgUi("use", it.iiId, ""))
+                        else emptyEl(),
+                        if (it.iiStudyable)
+                            woodBtn("inv-study:" + it.iiId, [wFixed(54.0)], 26.0, 11.5, ToneJade, !idle, if (zh) "研读" else "Study", MsgUi("study", it.iiId, ""))
+                        else emptyEl()
+                    ])
+                });
+        col([wGrow(1.0), gap(8.0)], listAppend([
+            viewBusyBannerCard(m, zh),
+            row([wGrow(1.0), padXY(12.0, 8.0), alignY(AlignMid), bg(hexColor("#efe7d4")), border(1.0, hexColor("#c5b9a0")), rounded(3.0)], [
+                label(fontSans(13.0, 600), hexColor("#5c5346"), if (zh) "随身碎银" else "Silver"),
+                growSpacer(),
+                label(fontSans(14.0, 700), hexColor("#946623"), intToStr(m.cmHero.hsMoney))
+            ])
+        ], invList))
+    } else {
+        let (presHp, presMaxHp, presQi, presMaxQi) = presentedVitals(m);
+        let ageS = maxFloat(0.0, (m.cmVp.vpClockMs - m.cmHero.hsStatsSyncedAtMs) / 1000.0);
+        let liveInj = maxInt(0, st.psInjuredSeconds - floorInt(ageS));
+        let pEffs = liveEffectsOf(m, true);
+        let appTxt = if (strLen(st.psAppearanceText) == 0) "容貌 " + intToStr(st.psAppearance) else st.psAppearanceText;
+
+        let statCell = (k: String, v: Int) ->
+            col([wGrow(1.0), padXY(8.0, 6.0), gap(2.0), alignX(AlignMid), bg(hexColor("#faf5e9")), border(1.0, hexColor("#c8bca4")), rounded(3.0)], [
+                textAligned(fontSans(11.0, 500), AlignCenter, hexColor("#6e6354"), k),
+                textAligned(fontSans(14.5, 700), AlignCenter, hexColor("#1e1a16"), intToStr(v))
+            ]);
+
+        col([wGrow(1.0), gap(10.0)], [
+            viewBusyBannerCard(m, zh),
+            row([wGrow(1.0), pad(10.0), gap(10.0), alignY(AlignMid), bg(hexColor("#efe7d4")), border(1.0, hexColor("#c5b9a0")), rounded(3.0)], [
+                imageBox(portraitUrl(st.psGender, st.psAppearance, m.cmAuth.auUsername), 64.0, 64.0, 3.0),
+                col([wGrow(1.0), gap(4.0)], [
+                    label(fontSerif(15.5, 700), hexColor("#1e1a16"), m.cmAuth.auUsername),
+                    label(fontSans(12.0, 400), hexColor("#5c5346"), tr(m.cmVp.vpLocale, "gender." + st.psGender) + " · " + appTxt),
+                    if (liveInj > 0)
+                        label(fontSans(11.5, 700), hexColor("#a32c22"), "重伤未愈 " + intToStr(liveInj) + "s")
+                    else if (st.psCombatInsight > 0)
+                        label(fontSans(11.5, 600), hexColor("#2b594b"), "实战印证 " + intToStr(st.psCombatInsight) + " 层")
+                    else emptyEl()
+                ])
+            ]),
+            col([wGrow(1.0), pad(10.0), gap(6.0), bg(hexColor("#faf5e9")), border(1.0, hexColor("#c8bca4")), rounded(3.0)], [
+                label(fontSans(11.5, 600), hexColor("#5c5346"), if (zh) "气血" else "HP"),
+                vitalBar([], 13.0, intToFloat(presHp) / intToFloat(maxInt(1, presMaxHp)), 0.0, hexColor("#a32c22"), hexColor("#c24436"), 0, intToStr(presHp) + "/" + intToStr(presMaxHp)),
+                label(fontSans(11.5, 600), hexColor("#5c5346"), if (zh) "内力" else "Qi"),
+                vitalBar([], 13.0, intToFloat(presQi) / intToFloat(maxInt(1, presMaxQi)), 0.0, hexColor("#2b594b"), hexColor("#3f7a68"), 0, intToStr(presQi) + "/" + intToStr(presMaxQi)),
+                label(fontSans(11.5, 600), hexColor("#5c5346"), if (zh) "精神" else "Spirit"),
+                vitalBar([], 13.0, intToFloat(st.psJing) / intToFloat(maxInt(1, st.psMaxJing)), 0.0, hexColor("#946623"), hexColor("#be8e3e"), 0, intToStr(st.psJing) + "/" + intToStr(st.psMaxJing)),
+                row([wGrow(1.0), gap(8.0), padTRBL(4.0, 0.0, 0.0, 0.0)], [
+                    woodBtn("btn-meditate", [wFixed(124.0)], 26.0, 11.5, ToneJade, !idle || st.psQi < 20, if (zh) "打坐周天" else "Meditate", MsgUi("meditate", "", "")),
+                    woodBtn("btn-refresh", [wFixed(86.0)], 26.0, 11.5, ToneGhost, false, if (zh) "刷新状态" else "Refresh", MsgUi("refresh", "", ""))
+                ])
+            ]),
+            row([wGrow(1.0), gap(7.0)], [
+                statCell(if (zh) "碎银" else "Silver", m.cmHero.hsMoney),
+                statCell(if (zh) "潜能" else "Potential", st.psPotential),
+                statCell(if (zh) "实战经验" else "Exp", st.psCombatExp)
+            ]),
+            row([wGrow(1.0), gap(7.0)], [
+                statCell(if (zh) "臂力" else "STR", st.psStrength),
+                statCell(if (zh) "身法" else "AGI", st.psAgility),
+                statCell(if (zh) "根骨" else "VIT", st.psVitality)
+            ]),
+            if (listIsEmpty(pEffs)) emptyEl()
+            else col([wGrow(1.0), gap(6.0)], [
+                label(fontSans(11.5, 700), hexColor("#6e6354"), if (zh) "当前状态" else "Effects"),
+                viewEffectPills(pEffs)
+            ])
+        ])
+    }
+}
+
+def viewArtsDrawerBody(m: ClientModel, zh: Bool): Element ClientMsg = {
+    let st = m.cmHero.hsStats;
+    let idle = m.cmAuth.auConnected && !m.cmBattle.btInBattle && !m.cmWorld.wvStoryActive && optIsNone(st.psBusy);
+    let loc = m.cmVp.vpLocale;
+    let cards =
+        if (listIsEmpty(m.cmHero.hsArts))
+            [label(fontSans(12.5, 400), hexColor("#8b7f6e"), if (zh) "尚未习得武学。" else "No martial arts learned.")]
+        else
+            listMap(m.cmHero.hsArts, (a) -> {
+                let blkTxt = match a.aiBlocker {
+                    Some("combat_exp") -> trParams(loc, "art.blocker.combat_exp", [("required", intToStr(a.aiNextCombatExp))]),
+                    Some("foundation") -> tr(loc, "art.blocker.foundation"),
+                    Some("max_level") -> tr(loc, "art.blocker.max_level"),
+                    _ -> "",
+                };
+                let movesTxt = strJoin(listAppend(a.aiUnlockedMoves, a.aiUnlockedSkills), " / ");
+                let canRes = !a.aiIsFoundation && a.aiLevel >= a.aiResearchFrom && a.aiLevel < a.aiMaxLevel;
+                let maxed = optStrEqLocal(a.aiBlocker, Some("max_level"));
+
+                col([
+                    wGrow(1.0), pad(10.0), gap(6.0),
+                    bg(if (a.aiEnabled) hexColor("#f3ead6") else hexColor("#faf5e9")),
+                    border(if (a.aiEnabled) 1.5 else 1.0, if (a.aiEnabled) hexColor("#946623") else hexColor("#c8bca4")),
+                    rounded(3.0)
+                ], [
+                    row([wGrow(1.0), alignY(AlignMid)], [
+                        label(fontSans(13.5, 700), hexColor("#1e1a16"), a.aiName),
+                        growSpacer(),
+                        label(fontSans(11.0, 600), hexColor("#6e6354"), formatArtType(loc, a.aiType))
+                    ]),
+                    label(fontSans(11.5, 400), hexColor("#5c5346"),
+                        artRankTitle(loc, a.aiLevel) + " · " + trParams(loc, "art.level", [("level", intToStr(a.aiLevel)), ("max", intToStr(a.aiMaxLevel))])),
+                    if (a.aiNextProgress > 0)
+                        vitalBar([], 7.0, intToFloat(a.aiProgress) / intToFloat(maxInt(1, a.aiNextProgress)), 0.0, hexColor("#2b594b"), hexColor("#3f7a68"), 0, "")
+                    else emptyEl(),
+                    if (strLen(blkTxt) > 0) label(fontSans(11.0, 600), hexColor("#a32c22"), blkTxt) else emptyEl(),
+                    if (strLen(movesTxt) > 0) paragraph(fontSans(11.0, 400), 16.0, hexColor("#6e6354"), movesTxt) else emptyEl(),
+                    if (!a.aiIsFoundation)
+                        wrapRow([wGrow(1.0), gap(6.0)], 6.0, [
+                            if (!maxed) woodBtn("prac1:" + a.aiId, [wFixed(54.0)], 25.0, 11.5, ToneDefault, !idle, if (zh) "练功" else "Train", MsgUi("practice", a.aiId, "1")) else emptyEl(),
+                            if (!maxed) woodBtn("prac10:" + a.aiId, [wFixed(60.0)], 25.0, 11.5, ToneDefault, !idle, if (zh) "练十次" else "×10", MsgUi("practice", a.aiId, "10")) else emptyEl(),
+                            if (canRes) woodBtn("res:" + a.aiId, [wFixed(52.0)], 25.0, 11.5, ToneJade, !idle, if (zh) "自研" else "Study", MsgUi("research", a.aiId, "")) else emptyEl(),
+                            if (a.aiEnabled)
+                                box([hFixed(25.0), padXY(6.0, 3.0), alignY(AlignMid)], label(fontSans(11.5, 700), hexColor("#946623"), if (zh) "✓ 已启用" else "✓ On"))
+                            else
+                                woodBtn("en:" + a.aiId, [wFixed(54.0)], 25.0, 11.5, TonePrimary, m.cmBattle.btInBattle, if (zh) "启用" else "Enable", MsgUi("enable", a.aiType, a.aiId))
+                        ])
+                    else emptyEl()
+                ])
+            });
+
+    col([wGrow(1.0), gap(8.0)], listAppend([viewBusyBannerCard(m, zh)], cards))
+}
+
+def viewQuestsDrawerBody(m: ClientModel, zh: Bool): Element ClientMsg =
+    if (listIsEmpty(m.cmHero.hsQuests))
+        label(fontSans(12.5, 400), hexColor("#8b7f6e"), if (zh) "暂无江湖轶闻。" else "No quests yet.")
+    else
+        col([wGrow(1.0), gap(8.0)], listMap(m.cmHero.hsQuests, (q) -> {
+            let rewTxt = strJoin(listMap(q.qiRewards, (r) -> r.rwName + " ×" + intToStr(r.rwAmount)), "、");
+            col([
+                wGrow(1.0), pad(10.0), gap(6.0),
+                bg(hexColor("#faf5e9")),
+                border(1.0, if (q.qiCompleted) hexColor("#c8bca4") else hexColor("#946623")),
+                rounded(3.0)
+            ], [
+                row([wGrow(1.0), alignY(AlignMid)], [
+                    label(fontSans(13.0, 700), hexColor("#1e1a16"), q.qiName),
+                    growSpacer(),
+                    label(fontSans(11.0, 700), if (q.qiCompleted) hexColor("#2b594b") else hexColor("#946623"),
+                        if (q.qiCompleted) (if (zh) "已完成" else "Done") else (if (zh) "进行中" else "Active"))
+                ]),
+                match q.qiObjective {
+                    Some(obj) if (strLen(obj) > 0) -> paragraph(fontSans(12.0, 400), 17.0, hexColor("#4a4136"), obj),
+                    _ -> emptyEl(),
+                },
+                if (strLen(rewTxt) > 0)
+                    paragraph(fontSans(11.0, 500), 16.0, hexColor("#8b7f6e"), (if (zh) "奖励：" else "Reward: ") + rewTxt)
+                else emptyEl()
+            ])
+        }))
+
+def viewSideDrawerPanel(m: ClientModel, isMob: Bool, drawerKind: String): Element ClientMsg = {
+    let zh = isZh(m.cmVp.vpLocale);
+    let hdrRow = match drawerKind {
+        "character" -> row([wGrow(1.0), gap(6.0), alignY(AlignMid)], [
+            woodBtn("sub-status", [wFixed(92.0)], 28.0, 12.0, if (m.cmUi.uiCharSubTab == "status") ToneActive else ToneGhost, false, if (zh) "角色属性" else "Status", MsgUi("char_subtab", "status", "")),
+            woodBtn("sub-bag", [wFixed(110.0)], 28.0, 12.0, if (m.cmUi.uiCharSubTab == "inventory") ToneActive else ToneGhost, false, (if (zh) "行囊器物 " else "Bag ") + "(" + intToStr(listLen(m.cmHero.hsInventory)) + ")", MsgUi("char_subtab", "inventory", "")),
+            growSpacer(),
+            if (!isMob) woodBtn("drw-close", [wFixed(30.0), padXY(4.0, 4.0)], 28.0, 15.0, ToneGhost, false, "×", MsgUi("desktop_drawer", "", "")) else emptyEl()
+        ]),
+        "arts" -> row([wGrow(1.0), alignY(AlignMid)], [
+            label(fontSerif(16.0, 700), hexColor("#1e1a16"), (if (zh) "武学修为" else "Martial Arts") + " (" + intToStr(listLen(m.cmHero.hsArts)) + ")"),
+            growSpacer(),
+            if (!isMob) woodBtn("drw-close", [wFixed(30.0), padXY(4.0, 4.0)], 28.0, 15.0, ToneGhost, false, "×", MsgUi("desktop_drawer", "", "")) else emptyEl()
+        ]),
+        _ -> row([wGrow(1.0), alignY(AlignMid)], [
+            label(fontSerif(16.0, 700), hexColor("#1e1a16"), (if (zh) "江湖轶闻" else "Quests") + " (" + intToStr(listLen(m.cmHero.hsQuests)) + ")"),
+            growSpacer(),
+            if (!isMob) woodBtn("drw-close", [wFixed(30.0), padXY(4.0, 4.0)], 28.0, 15.0, ToneGhost, false, "×", MsgUi("desktop_drawer", "", "")) else emptyEl()
+        ]),
+    };
+
+    let bodyEl = match drawerKind {
+        "character" -> viewCharDrawerBody(m, zh),
+        "arts" -> viewArtsDrawerBody(m, zh),
+        _ -> viewQuestsDrawerBody(m, zh),
+    };
+
+    col([
+        if (isMob) fillSpace() else wFixed(380.0),
+        hGrow(1.0),
+        pad(14.0),
+        gap(10.0),
+        bg(withAlpha(hexColor("#f6f0e2"), 0.99)),
+        border(if (isMob) 0.0 else 1.0, hexColor("#b8aa91"))
+    ], [
+        hdrRow,
+        hRule(hexColor("#d6cab2")),
+        scrollView("drawer", [fillSpace()], bodyEl)
+    ])
+}
+
+def viewNpcModal(th: Theme, vp: Rect, m: ClientModel): Element ClientMsg = {
+    let mNpc = match m.cmUi.uiSelectedNpc {
+        Some(cid) -> listFind(m.cmWorld.wvRoomChars, (c) -> c.rcId == cid),
+        None -> None,
+    };
+    match mNpc {
+        None -> emptyEl(),
+        Some(npc) -> {
+            let zh = isZh(m.cmVp.vpLocale);
+            let idle = !m.cmWorld.wvStoryActive && optIsNone(m.cmHero.hsStats.psBusy);
+            let canTalk = listContainsStr(npc.rcActions, "talk") || listContainsStr(npc.rcActions, "dialogue") || listIsEmpty(npc.rcActions);
+            let canAtk = listContainsStr(npc.rcActions, "attack");
+
+            let innerContent = col([wGrow(1.0), gap(10.0)], [
+                if (strLen(npc.rcDesc) > 0)
+                    paragraph(fontSans(12.5, 400), 18.0, hexColor("#4a4136"), npc.rcDesc)
+                else emptyEl(),
+                row([gap(8.0)], [
+                    if (canTalk) woodBtn("npc-talk", [wFixed(88.0)], 30.0, 12.5, TonePrimary, m.cmWorld.wvStoryActive, if (zh) "交谈" else "Talk", MsgUi("talk", npc.rcId, "")) else emptyEl(),
+                    if (canAtk) woodBtn("npc-atk", [wFixed(96.0)], 30.0, 12.5, ToneDanger, m.cmWorld.wvStoryActive, if (zh) "动手攻击" else "Attack", MsgUi("attack", npc.rcId, "")) else emptyEl()
+                ]),
+                if (listIsEmpty(npc.rcTeaches)) emptyEl()
+                else col([wGrow(1.0), gap(6.0)], listAppend(
+                    [label(fontSans(11.5, 700), hexColor("#8b7f6e"), if (zh) "可传武学" else "Teaches")],
+                    listMap(npc.rcTeaches, (ta) ->
+                        row([wGrow(1.0), gap(6.0), alignY(AlignMid)], [
+                            box([wGrow(1.0)], label(fontSans(12.5, 600), hexColor("#1e1a16"), ta.taName + " (≤" + intToStr(ta.taMaxLevel) + ")")),
+                            woodBtn("lrn1:" + ta.taId, [wFixed(56.0)], 26.0, 11.5, ToneDefault, !idle, if (zh) "学艺" else "Learn", MsgUi("learn", npc.rcId + ":" + ta.taId, "1")),
+                            woodBtn("lrn10:" + ta.taId, [wFixed(60.0)], 26.0, 11.5, ToneDefault, !idle, if (zh) "学十次" else "×10", MsgUi("learn", npc.rcId + ":" + ta.taId, "10"))
+                        ])
+                    )
+                )),
+                if (listIsEmpty(npc.rcShop)) emptyEl()
+                else col([wGrow(1.0), gap(6.0)], listAppend(
+                    [label(fontSans(11.5, 700), hexColor("#8b7f6e"), if (zh) "行商货架" else "Shop")],
+                    listMap(npc.rcShop, (s) -> {
+                        let canAfford = m.cmHero.hsMoney >= s.siPrice && !m.cmWorld.wvStoryActive && !m.cmBattle.btInBattle;
+                        row([wGrow(1.0), gap(6.0), alignY(AlignMid)], [
+                            box([wGrow(1.0)], label(fontSans(12.5, 600), hexColor("#1e1a16"), s.siName + " (" + intToStr(s.siPrice) + (if (zh) "碎银)" else "s)"))),
+                            woodBtn("buy:" + s.siId, [wFixed(64.0)], 26.0, 11.5, ToneJade, !canAfford, if (zh) "购买" else "Buy", MsgUi("buy", npc.rcId + ":" + s.siId, ""))
+                        ])
+                    })
+                ))
+            ]);
+
+            zstack([fillSpace()], [
+                interactive(
+                    "modal-backdrop",
+                    [fillSpace(), bg(rgba(30, 26, 22, 82))],
+                    [],
+                    Some(MsgUi("select_npc", "", "")),
+                    emptyEl()
+                ),
+                box([fillSpace(), pad(14.0), centerContent()],
+                    card(th, [
+                        wGrow(1.0), maxW(420.0),
+                        pad(16.0), gap(10.0),
+                        bg(hexColor("#f6f0e2")), border(1.4, hexColor("#946623")), rounded(4.0)
+                    ], [
+                        row([wGrow(1.0), alignY(AlignMid)], [
+                            label(fontSerif(17.0, 700), hexColor("#1e1a16"), npc.rcName),
+                            growSpacer(),
+                            woodBtn("npc-close", [wFixed(30.0), padXY(4.0, 4.0)], 28.0, 15.0, ToneGhost, false, "×", MsgUi("select_npc", "", ""))
+                        ]),
+                        hRule(hexColor("#d6cab2")),
+                        scrollView("npc", [wGrow(1.0), maxH(maxFloat(140.0, vp.rh - 220.0))], innerContent)
+                    ])
+                )
+            ])
+        },
+    }
+}
+
+// ============================================================================
+// 5. Root Declarative View (`viewRoot`)
+// ============================================================================
+
+def viewMainGame(th: Theme, vp: Rect, logPinnedBottom: Bool, m: ClientModel): Element ClientMsg = {
+    let isMob = vp.rw <= 768.0;
+    let mapInteractiveEl = (framed: Bool) -> canvasInteractive(
+        if (framed) [fillSpace(), rounded(3.0), border(0.75, rgba(130, 118, 98, 56)), bg(rgba(246, 240, 226, 66))]
+        else [fillSpace()],
+        Some((_r, _pt, delta) -> MsgPanMap(delta.vx, delta.vy)),
+        Some((_r, _pt, dy) -> MsgZoomWheel(dy)),
+        (r, ptr, hk, dl) -> renderMapStage(r, ptr, hk, dl, m)
+    );
+
+    let battleStageEl = canvasStage([fillSpace()], (r, ptr, dl) -> renderBattleStage(r, ptr, dl, m));
+
+    let bodyEl =
+        if (isMob) {
+            let tab = m.cmUi.uiMobileTab;
+            let midEl =
+                if (tab == "log") {
+                    box([fillSpace(), padXY(10.0, 6.0)], viewMessageDock(th, m, true, maxFloat(180.0, vp.rh - 122.0), false, logPinnedBottom))
+                } else if (tab != "world") {
+                    viewSideDrawerPanel(m, true, tab)
+                } else if (m.cmBattle.btInBattle) {
+                    col([fillSpace(), padXY(10.0, 6.0), gap(6.0)], [
+                        viewBattleTopBar(th, m, true),
+                        zstack([fillSpace()], [
+                            battleStageEl,
+                            col([fillSpace(), padXY(0.0, 4.0), alignX(AlignMid), alignY(AlignEnd)], [
+                                viewBattleSkills(m, true)
+                            ])
+                        ]),
+                        viewMessageDock(th, m, true, 112.0, true, logPinnedBottom)
+                    ])
+                } else {
+                    col([fillSpace(), padXY(10.0, 6.0), gap(6.0)], [
+                        viewRoomCard(th, m, true),
+                        zstack([fillSpace()], [
+                            mapInteractiveEl(true),
+                            col([fillSpace(), pad(8.0), alignX(AlignEnd), alignY(AlignEnd)], [
+                                viewMapControls(m, true)
+                            ])
+                        ]),
+                        viewMessageDock(th, m, true, 164.0, false, logPinnedBottom)
+                    ])
+                };
+            col([fillSpace()], [
+                viewMobileHeader(th, m),
+                midEl,
+                viewMobileTabbar(th, m)
+            ])
+        } else {
+            let drw = m.cmUi.uiDesktopDrawer;
+            let mainCenter =
+                if (m.cmBattle.btInBattle) {
+                    zstack([fillSpace()], [
+                        battleStageEl,
+                        col([fillSpace(), padXY(16.0, 12.0), alignX(AlignMid)], [
+                            viewBattleTopBar(th, m, false),
+                            growSpacer(),
+                            viewBattleSkills(m, false),
+                            spacer(0.0, 8.0),
+                            viewMessageDock(th, m, false, 124.0, true, logPinnedBottom)
+                        ])
+                    ])
+                } else {
+                    zstack([fillSpace()], [
+                        mapInteractiveEl(false),
+                        if (strLen(drw) > 0)
+                            interactive("desk-drw-dim", [fillSpace(), bg(rgba(30, 26, 22, 48))], [], Some(MsgUi("desktop_drawer", "", "")), emptyEl())
+                        else emptyEl(),
+                        col([fillSpace(), padXY(16.0, 12.0)], [
+                            row([wGrow(1.0), alignY(AlignStretch)], [
+                                viewRoomCard(th, m, false),
+                                growSpacer(),
+                                viewMapControls(m, false)
+                            ]),
+                            growSpacer(),
+                            row([wGrow(1.0), alignX(AlignMid)], [
+                                viewMessageDock(th, m, false, 192.0, false, logPinnedBottom)
+                            ])
+                        ])
+                    ])
+                };
+
+            col([fillSpace()], [
+                viewDesktopHeader(th, m),
+                row([fillSpace()], [
+                    mainCenter,
+                    if (strLen(drw) > 0) viewSideDrawerPanel(m, false, drw) else emptyEl()
+                ])
+            ])
+        };
+
+    zstack([fillSpace()], [
+        canvasStage([fillSpace()], (r, _ptr, dl) -> {
+            drawAtmosphere(dl, r, m);
+            Nil
+        }),
+        bodyEl,
+        viewNpcModal(th, vp, m)
+    ])
+}
+
+pub def viewRoot(vp: Rect, logPinnedBottom: Bool, m: ClientModel): Element ClientMsg = {
+    let th = theme.tingfengTheme(m.cmBattle.btInBattle || state.pageEq(m.cmVp.vpPage, PageBattleLab));
+    match m.cmVp.vpPage {
+        PagePoseSheet -> viewPoseSheet(vp, m),
+        PageBattleLab -> viewBattleLab(th, vp, m),
+        PageGame ->
+            if (!m.cmAuth.auConnected && !m.cmBattle.btInBattle) viewOnboarding(th, vp, m)
+            else viewMainGame(th, vp, logPinnedBottom, m),
+    }
+}

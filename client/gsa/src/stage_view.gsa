@@ -1,287 +1,221 @@
-// Single-Pass Full-Canvas Command Tape Assembler (`render`):
-// Song-Dynasty Xuan-Paper Backdrop, Cartographic Map Stage, Ink-Wash Combat Stage & Pose Sheet.
+// 2D Game Stage Renderers (`stage_view`) built directly on `kagura.gfx.DrawList` & `kagura.ui`.
+// Renders Xuan-paper parallax ink mountains, ink-silhouette martial artists,
+// 3-pass Song-Dynasty cartographic maps, combat choreography, and the 41-pose inspector grid.
 
 use std.option.{Option, Some, None}
-use std.list.{listLen, listAppend}
-use std.buf.{StringBuf, bufWithCap, bufPushByte, bufPushStr, bufPushInt, bufPushBuf, bufToString}
+use std.list.{listLen, listMap, listRev}
 use std.vec.{Vec, vecNew, vecPush, vecToList}
 use std.str.intToStr
-use prelude.{
-    sin, absFloat, minInt, maxInt, minFloat, maxFloat, clampFloat, clamp01,
-    floorInt, fmodPos, optOr, optIsSome, listNthOr, listFind, intRange,
-    utf8CharCount, bufPushF1, bufPushF2, bufPushSanitized
+use kagura.gfx.{
+    Vec2, vec2, Rect, rect,
+    Color, rgba, hexColor, withAlpha,
+    AlignCenter, fontSans, fontSerif,
+    sin, cos, absFloat, minInt, maxInt, minFloat, maxFloat, clampFloat, floorInt,
+    DrawList, drawCard, drawRect, drawFillRect, drawCircle, drawEllipse,
+    drawLine, drawPolygon, drawRibbon, drawText,
+    pushClip, pushCircleClip, popClip, pushTransform, popTransform
 }
-use ordmap.{OrdMap, mapLookup, mapFromList}
+use kagura.ui.{
+    Element, CanvasHit, canvasHit, fillSpace, canvasStage
+}
+use prelude.{fmodPos, optOr, optIsSome, listFind, utf8CharCount}
+use ordmap.{mapLookup, mapFromList}
 use i18n.tr
 use protocol.{
-    Direction, dirEq, directionLabel, directionGridDelta,
+    Direction, dirEq, directionText, directionLabel, directionGridDelta,
     RoomExit, MapRoom, MapEdge, MapOverview,
     CombatResult, ResHit, ResDodge, ResParry, ResEffect
 }
 use pose.{
     CombatStyle, StyleFist, StyleSword, styleEq, parseCombatStyle,
     VisualProfile, ProfileMale, ProfileFemale, parseVisualProfile,
-    LookStyle, SvgPose, ShapePrim, SCircle, SPoly, JoinPatch, ActorPart,
+    LookStyle, SvgPose, ShapePrim, SCircle, SPoly,
     allPoseIds, svgPose, blendPose, swordTipOf, buildActorParts
 }
-use catalog.{FrameHold, MkFrameHold, idleActionIdForStyle}
+use catalog.{MkFrameHold, idleActionIdForStyle}
 use battle.{
-    BattleSide, SidePlayer, SideEnemy, sideEq, sideHome,
-    ActorVisual, MkActorVisual, ResolvedHit, ResolvedTimeline, InkParticle,
-    sampleSvgPose, sampleBattleScene
+    SidePlayer, SideEnemy, sideEq, sideHome,
+    ActorVisual, MkActorVisual, sampleSvgPose, sampleBattleScene
 }
-use state.{
-    AppPage, PageGame, PageBattleLab, PagePoseSheet, pageEq,
-    HitTarget, HitExit, optHitEq, CanvasHitbox, MkCanvasHitbox, ScrollZone,
-    ClientModel, worldPosFromGrid
-}
-use uicanvas.{UiOutput, buildUiOverlay, mapStageViewport}
-
-pub data FrameBatch {
-    MkFrameBatch {
-        fbText: String,
-        fbHits: List CanvasHitbox,
-        fbScrollZones: List ScrollZone,
-        fbLogMaxScroll: Float,
-        fbDrawerMaxScroll: Float,
-        fbOnboardMaxScroll: Float,
-        fbNpcMaxScroll: Float,
-        fbCmdCount: Int,
-    },
-}
+use state.{ClientModel, worldPosFromGrid}
+use theme.{ClientMsg, MsgGoExit}
 
 // ============================================================================
-// Streaming Primitive Helpers on `StringBuf`
+// 1. Parallax Ink-Wash Mountains & Xuan-Paper Dust Motes
 // ============================================================================
 
-def emitCirc(b: StringBuf, cx: Float, cy: Float, r: Float, fill: String, bd: String, lw: Float, al: Float): Void = {
-    bufPushStr(b, "CI|");
-    bufPushF1(b, cx); bufPushByte(b, 124);
-    bufPushF1(b, cy); bufPushByte(b, 124);
-    bufPushF1(b, r); bufPushByte(b, 124);
-    bufPushStr(b, fill); bufPushByte(b, 124);
-    bufPushStr(b, bd); bufPushByte(b, 124);
-    bufPushF1(b, lw); bufPushByte(b, 124);
-    bufPushF2(b, al);
-    bufPushByte(b, 10)
-}
-
-def emitEll(b: StringBuf, cx: Float, cy: Float, rx: Float, ry: Float, fill: String, alStr: String): Void = {
-    bufPushStr(b, "ELL|");
-    bufPushF1(b, cx); bufPushByte(b, 124);
-    bufPushF1(b, cy); bufPushByte(b, 124);
-    bufPushF1(b, rx); bufPushByte(b, 124);
-    bufPushF1(b, ry); bufPushByte(b, 124);
-    bufPushStr(b, fill); bufPushByte(b, 124);
-    bufPushStr(b, alStr);
-    bufPushByte(b, 10)
-}
-
-def emitLine(b: StringBuf, x1: Float, y1: Float, x2: Float, y2: Float, lw: Float, col: String, al: Float, dashed: Bool): Void = {
-    bufPushStr(b, "LN|");
-    bufPushF1(b, x1); bufPushByte(b, 124);
-    bufPushF1(b, y1); bufPushByte(b, 124);
-    bufPushF1(b, x2); bufPushByte(b, 124);
-    bufPushF1(b, y2); bufPushByte(b, 124);
-    bufPushF1(b, lw); bufPushByte(b, 124);
-    bufPushStr(b, col); bufPushByte(b, 124);
-    bufPushF2(b, al); bufPushByte(b, 124);
-    bufPushByte(b, if (dashed) 49 else 48);
-    bufPushByte(b, 10)
-}
-
-def emitRect(b: StringBuf, x: Float, y: Float, w: Float, h: Float, r: Float, fill: String, bd: String, lw: Float, al: Float): Void = {
-    bufPushStr(b, "RR|");
-    bufPushF1(b, x); bufPushByte(b, 124);
-    bufPushF1(b, y); bufPushByte(b, 124);
-    bufPushF1(b, w); bufPushByte(b, 124);
-    bufPushF1(b, h); bufPushByte(b, 124);
-    bufPushF1(b, r); bufPushByte(b, 124);
-    bufPushStr(b, fill); bufPushByte(b, 124);
-    bufPushStr(b, bd); bufPushByte(b, 124);
-    bufPushF1(b, lw); bufPushByte(b, 124);
-    bufPushF2(b, al);
-    bufPushByte(b, 10)
-}
-
-def emitCard(
-    b: StringBuf, x: Float, y: Float, w: Float, h: Float, r: Float,
-    fill: String, bd: String, lw: Float, alStr: String, shY: Float, shBlur: Float, dbl: String
+def drawMountainRidge(
+    dl: DrawList,
+    vp: Rect,
+    yBase: Float,
+    amp: Float,
+    parallax: Float,
+    camShiftX: Float,
+    col: Color
 ): Void = {
-    bufPushStr(b, "CARD|");
-    bufPushF1(b, x); bufPushByte(b, 124);
-    bufPushF1(b, y); bufPushByte(b, 124);
-    bufPushF1(b, w); bufPushByte(b, 124);
-    bufPushF1(b, h); bufPushByte(b, 124);
-    bufPushF1(b, r); bufPushByte(b, 124);
-    bufPushStr(b, fill); bufPushByte(b, 124);
-    bufPushStr(b, bd); bufPushByte(b, 124);
-    bufPushF1(b, lw); bufPushByte(b, 124);
-    bufPushStr(b, alStr); bufPushByte(b, 124);
-    bufPushF1(b, shY); bufPushByte(b, 124);
-    bufPushF1(b, shBlur); bufPushByte(b, 124);
-    bufPushStr(b, dbl);
-    bufPushByte(b, 10)
+    let step = 32.0;
+    let ptsRev: Cell (List Vec2) = cellNew([vec2(vp.rx, vp.ry + vp.rh)]);
+    let xCell = cellNew(vp.rx);
+    while (cellGet(xCell) <= vp.rx + vp.rw + step) {
+        let x = minFloat(vp.rx + vp.rw, cellGet(xCell));
+        let wx = (x + camShiftX * parallax) * 0.0052;
+        let wave = sin(wx) * 0.52 + sin(wx * 2.1 + 1.3) * 0.30 + cos(wx * 3.7 + 0.6) * 0.18;
+        let y = yBase - wave * amp;
+        cellSet(ptsRev, Cons(vec2(x, y), cellGet(ptsRev)));
+        cellSet(xCell, cellGet(xCell) + step)
+    };
+    let pts = listRev(Cons(vec2(vp.rx + vp.rw, vp.ry + vp.rh), cellGet(ptsRev)));
+    drawPolygon(dl, pts, col, 0, 0.0)
 }
 
-def emitTx(b: StringBuf, op: String, x: Float, y: Float, sz: Float, wt: String, align: String, col: String, al: Float, txt: String): Void = {
-    bufPushStr(b, op); bufPushByte(b, 124);
-    bufPushF1(b, x); bufPushByte(b, 124);
-    bufPushF1(b, y); bufPushByte(b, 124);
-    bufPushF1(b, sz); bufPushByte(b, 124);
-    bufPushStr(b, wt); bufPushByte(b, 124);
-    bufPushStr(b, align); bufPushByte(b, 124);
-    bufPushStr(b, col); bufPushByte(b, 124);
-    bufPushF2(b, al); bufPushByte(b, 124);
-    bufPushSanitized(b, txt);
-    bufPushByte(b, 10)
-}
+pub def drawAtmosphere(dl: DrawList, vp: Rect, m: ClientModel): Void = {
+    let w = vp.rw;
+    let h = vp.rh;
+    let tSec = m.cmVp.vpClockMs / 1000.0;
+    let camShiftX = m.cmCam.camX - m.cmCam.panX;
+    let camShiftY = m.cmCam.camY - m.cmCam.panY;
 
-def emitMt(b: StringBuf, yBase: Float, amp: Float, parStr: String, camX: Float, col: String, alStr: String): Void = {
-    bufPushStr(b, "MT|");
-    bufPushF1(b, yBase); bufPushByte(b, 124);
-    bufPushF1(b, amp); bufPushByte(b, 124);
-    bufPushStr(b, parStr); bufPushByte(b, 124);
-    bufPushF1(b, camX); bufPushByte(b, 124);
-    bufPushStr(b, col); bufPushByte(b, 124);
-    bufPushStr(b, alStr);
-    bufPushByte(b, 10)
-}
+    drawMountainRidge(dl, vp, h * 0.50, 40.0, 0.05, camShiftX, rgba(159, 154, 142, 34));
+    drawMountainRidge(dl, vp, h * 0.62, 26.0, 0.11, camShiftX + 280.0, rgba(135, 131, 119, 38));
+    drawMountainRidge(dl, vp, h * 0.74, 18.0, 0.19, camShiftX + 560.0, rgba(113, 108, 97, 42));
 
-def emitClip(b: StringBuf, x: Float, y: Float, w: Float, h: Float): Void = {
-    bufPushStr(b, "CLIP|");
-    bufPushF1(b, x); bufPushByte(b, 124);
-    bufPushF1(b, y); bufPushByte(b, 124);
-    bufPushF1(b, w); bufPushByte(b, 124);
-    bufPushF1(b, h);
-    bufPushByte(b, 10)
-}
-
-def emitUnclip(b: StringBuf): Void = bufPushStr(b, "UNCLIP\n")
-
-// ============================================================================
-// Ink Silhouette Actor Serialization (`encodeActor`)
-// ============================================================================
-
-def emitShape(b: StringBuf, s: ShapePrim, alpha: Float): Void = match s {
-    SCircle(cx, cy, r, mFill, op) -> {
-        bufPushStr(b, "ACIRC|");
-        bufPushF1(b, cx); bufPushByte(b, 124);
-        bufPushF1(b, cy); bufPushByte(b, 124);
-        bufPushF1(b, r); bufPushByte(b, 124);
-        bufPushStr(b, optOr(mFill, "")); bufPushByte(b, 124);
-        bufPushF2(b, op * alpha);
-        bufPushByte(b, 10)
-    },
-    SPoly(pts, mFill, op) -> {
-        bufPushStr(b, "APOLY|");
-        bufPushStr(b, optOr(mFill, "")); bufPushByte(b, 124);
-        bufPushF2(b, op * alpha); bufPushByte(b, 124);
-        let first = cellNew(true);
-        let cur = cellNew(pts);
-        while (match cellGet(cur) { Nil -> false, _ -> true }) {
-            match cellGet(cur) {
-                Cons((px, py), rest) -> {
-                    if (!cellGet(first)) bufPushByte(b, 44) else cellSet(first, false);
-                    bufPushF1(b, px); bufPushByte(b, 44); bufPushF1(b, py);
-                    cellSet(cur, rest)
-                },
-                Nil -> (),
-            }
-        };
-        bufPushByte(b, 10)
-    },
-}
-
-def emitShapeList(b: StringBuf, xs: List ShapePrim, alpha: Float): Void = {
-    let cur = cellNew(xs);
-    while (match cellGet(cur) { Nil -> false, _ -> true }) {
-        match cellGet(cur) {
-            Cons(s, rest) -> {
-                emitShape(b, s, alpha);
-                cellSet(cur, rest)
-            },
-            Nil -> (),
+    if (!m.cmVp.vpReducedMotion) {
+        let i = cellNew(1);
+        while (cellGet(i) <= 10) {
+            let idx = cellGet(i);
+            let fi = intToFloat(idx);
+            let mx = fmodPos(fi * 211.3 - camShiftX * 0.18 + tSec * (6.5 + intToFloat(idx % 3) * 2.5), w);
+            let my = fmodPos(fi * 137.7 - camShiftY * 0.12 + sin(tSec * 0.55 + fi) * 12.0, h * 0.72);
+            let mr = 1.1 + intToFloat(idx % 3) * 0.65;
+            let ma = 0.07 + 0.03 * sin(tSec * 0.9 + fi);
+            drawCircle(dl, mx, my, mr, withAlpha(hexColor("#6e6354"), ma), 0, 0.0);
+            cellSet(i, idx + 1)
         }
+    } else ()
+}
+
+// ============================================================================
+// 2. Ink-Silhouette Martial Artist Renderer on Binary `DrawList`
+// ============================================================================
+
+def polyToVec2List(pts: List (Float, Float)): List Vec2 =
+    listMap(pts, (xy) -> match xy { (px, py) -> vec2(px, py) })
+
+def emitShapeStroke(dl: DrawList, s: ShapePrim, strokeCol: Color): Void = match s {
+    SCircle(cx, cy, r, _, _) -> drawCircle(dl, cx, cy, r, 0, strokeCol, 3.8),
+    SPoly(pts, _, _) -> drawPolygon(dl, polyToVec2List(pts), 0, strokeCol, 3.8),
+}
+
+def emitShapeFill(dl: DrawList, s: ShapePrim, defaultFill: Color, flash: Float, partAlpha: Float): Void = {
+    let hitCol = hexColor("#a32c22");
+    match s {
+        SCircle(cx, cy, r, mFill, op) -> {
+            let base = if (flash > 0.2) hitCol else match mFill { Some(h) -> hexColor(h), None -> defaultFill };
+            drawCircle(dl, cx, cy, r, withAlpha(base, op * partAlpha), 0, 0.0)
+        },
+        SPoly(pts, mFill, op) -> {
+            let base = if (flash > 0.2) hitCol else match mFill { Some(h) -> hexColor(h), None -> defaultFill };
+            drawPolygon(dl, polyToVec2List(pts), withAlpha(base, op * partAlpha), 0, 0.0)
+        },
     }
 }
 
-def encodeActor(
-    b: StringBuf,
-    wx: Float, wy: Float, scaleSign: Float, rotDeg: Float,
-    fillCol: String, outlineCol: String, flash: Float, alpha: Float,
+pub def drawInkActor(
+    dl: DrawList,
+    wx: Float, wy: Float,
+    scaleSign: Float, rotDeg: Float,
+    fillCol: Color, outlineCol: Color,
+    flash: Float, alpha: Float,
     pose: SvgPose, style: CombatStyle, prof: VisualProfile, look: LookStyle,
     hairFlow: (Float, Float), clockMs: Float
-): Int = {
+): Void = {
     let parts = buildActorParts(pose, style, prof, look, hairFlow, clockMs);
-    bufPushStr(b, "ACTOR_BEGIN|");
-    bufPushF1(b, wx); bufPushByte(b, 124);
-    bufPushF1(b, wy); bufPushByte(b, 124);
-    bufPushF2(b, scaleSign); bufPushByte(b, 124);
-    bufPushF1(b, rotDeg); bufPushByte(b, 124);
-    bufPushStr(b, fillCol); bufPushByte(b, 124);
-    bufPushStr(b, outlineCol); bufPushByte(b, 124);
-    bufPushF2(b, flash);
-    bufPushByte(b, 10);
-
-    let cnt = cellNew(0);
+    pushTransform(dl, wx, wy, scaleSign, absFloat(scaleSign), rotDeg);
+    let outCol = withAlpha(outlineCol, alpha);
     let pcur = cellNew(parts);
     while (match cellGet(pcur) { Nil -> false, _ -> true }) {
         match cellGet(pcur) {
             Cons(part, prest) -> {
-                bufPushStr(b, "APART_BEGIN|");
-                bufPushF2(b, alpha);
-                bufPushByte(b, 10);
-                emitShapeList(b, part.apShapes, alpha);
-                bufPushStr(b, "APART_FILL\n");
+                // Pass A: outer halo stroke across all shapes of the body part
+                let s1 = cellNew(part.apShapes);
+                while (match cellGet(s1) { Nil -> false, _ -> true }) {
+                    match cellGet(s1) {
+                        Cons(sh, srest) -> {
+                            emitShapeStroke(dl, sh, outCol);
+                            cellSet(s1, srest)
+                        },
+                        Nil -> (),
+                    }
+                };
+                // Pass B: unified silhouette fill
+                let s2 = cellNew(part.apShapes);
+                while (match cellGet(s2) { Nil -> false, _ -> true }) {
+                    match cellGet(s2) {
+                        Cons(sh, srest) -> {
+                            emitShapeFill(dl, sh, fillCol, flash, alpha);
+                            cellSet(s2, srest)
+                        },
+                        Nil -> (),
+                    }
+                };
+                // Pass C: circular joint patch fills (`OP_PUSH_CIRCLE_CLIP`)
                 let jcur = cellNew(part.apJoins);
                 while (match cellGet(jcur) { Nil -> false, _ -> true }) {
                     match cellGet(jcur) {
                         Cons(jn, jrest) -> {
                             let (jx, jy) = jn.jpAt;
-                            bufPushStr(b, "AJOIN_BEGIN|");
-                            bufPushF1(b, jx); bufPushByte(b, 124);
-                            bufPushF1(b, jy); bufPushByte(b, 124);
-                            bufPushF1(b, jn.jpRadius);
-                            bufPushByte(b, 10);
-                            emitShapeList(b, jn.jpShapes, alpha);
-                            bufPushStr(b, "AJOIN_END\n");
+                            pushCircleClip(dl, jx, jy, jn.jpRadius);
+                            let js = cellNew(jn.jpShapes);
+                            while (match cellGet(js) { Nil -> false, _ -> true }) {
+                                match cellGet(js) {
+                                    Cons(sh, jsrest) -> {
+                                        emitShapeFill(dl, sh, fillCol, flash, alpha);
+                                        cellSet(js, jsrest)
+                                    },
+                                    Nil -> (),
+                                }
+                            };
+                            popClip(dl);
                             cellSet(jcur, jrest)
                         },
                         Nil -> (),
                     }
                 };
-                cellSet(cnt, cellGet(cnt) + listLen(part.apShapes) + listLen(part.apJoins) * 2);
                 cellSet(pcur, prest)
             },
             Nil -> (),
         }
     };
-    bufPushStr(b, "ACTOR_END\n");
-    cellGet(cnt)
+    popTransform(dl)
 }
 
 // ============================================================================
-// Stage 1: Calm Ink-Wash Onboarding Backdrop
+// 3. Stage 1: Calm Onboarding Backdrop
 // ============================================================================
 
-def buildOnboardingBackdrop(b: StringBuf, m: ClientModel): Int = {
-    let w = m.cmVp.vpWidth;
-    let h = m.cmVp.vpHeight;
+pub def renderOnboardingStage(stageRect: Rect, _ptr: Vec2, dl: DrawList, m: ClientModel): List (CanvasHit ClientMsg) = {
+    drawAtmosphere(dl, stageRect, m);
+    let w = stageRect.rw;
+    let h = stageRect.rh;
     let breath = if (m.cmVp.vpReducedMotion) 0.1 else sin(m.cmVp.vpClockMs / 540.0) * 0.14 + 0.14;
     let cc = m.cmAuth.auCreateChoice;
     let prof = if (m.cmAuth.auLoginMode == "create") parseVisualProfile(cc.ccGender) else ProfileFemale;
     let pose = blendPose(m.cmPoseLib, "idle", "guard", breath, StyleSword);
-    let ax = if (w > 960.0) w * 0.80 else w * 0.5;
-    let ay = if (w > 960.0) h * 0.65 else h * 0.88;
+    let ax = stageRect.rx + (if (w > 960.0) w * 0.80 else w * 0.50);
+    let ay = stageRect.ry + (if (w > 960.0) h * 0.66 else h * 0.88);
     let sc = if (w > 960.0) 1.04 else 0.72;
-    emitCirc(b, ax, ay - 84.0, 116.0, "#dfd4be", "", 0.0, 0.48);
-    let cnt = encodeActor(b, ax, ay, sc, 0.0, "#cfc4af", "#ece4d2", 0.0, 0.96, pose, StyleSword, prof, m.cmVp.vpLookStyle, (0.0, 0.0), m.cmVp.vpClockMs);
-    cnt + 1
+    drawCircle(dl, ax, ay - 84.0, 116.0, withAlpha(hexColor("#dfd4be"), 0.48), 0, 0.0);
+    drawInkActor(
+        dl, ax, ay, sc, 0.0,
+        hexColor("#cfc4af"), hexColor("#ece4d2"),
+        0.0, 0.96, pose, StyleSword, prof, m.cmVp.vpLookStyle,
+        (0.0, 0.0), m.cmVp.vpClockMs
+    );
+    Nil
 }
 
 // ============================================================================
-// Stage 2: Song-Dynasty Xuan-Paper Cartographic Map Stage
+// 4. Stage 2: 3-Pass Song-Dynasty Cartographic Map Stage
 // ============================================================================
 
 def posEq(a: (Int, Int), b: (Int, Int)): Bool = match (a, b) {
@@ -331,28 +265,12 @@ data DirBadge {
     },
 }
 
-def pushClippedMapHit(
-    hitsOut: Vec CanvasHitbox,
-    vx: Float, vy: Float, vw: Float, vh: Float,
-    hx: Float, hy: Float, hw: Float, hh: Float,
-    target: HitTarget
-): Void = {
-    let x1 = maxFloat(vx, hx);
-    let y1 = maxFloat(vy, hy);
-    let x2 = minFloat(vx + vw, hx + hw);
-    let y2 = minFloat(vy + vh, hy + hh);
-    if (x2 - x1 >= 8.0 && y2 - y1 >= 8.0) {
-        vecPush(hitsOut, MkCanvasHitbox {
-            chX: x1, chY: y1, chW: x2 - x1, chH: y2 - y1,
-            chTarget: target, chCursor: "pointer",
-        })
-    } else ()
-}
+def exitHitKey(d: Direction): String = "exit:" + directionText(d)
 
 def emitDirSeal(
-    b: StringBuf,
-    hitsOut: Vec CanvasHitbox,
-    vx: Float, vy: Float, vw: Float, vh: Float,
+    dl: DrawList,
+    hitsOut: Vec (CanvasHit ClientMsg),
+    storyLocked: Bool,
     db: DirBadge
 ): Void = {
     let nChars = utf8CharCount(db.dbLabel);
@@ -360,12 +278,14 @@ def emitDirSeal(
     let ph = 16.5;
     let bx = db.dbMx - pw * 0.5;
     let by = db.dbMy - ph * 0.5;
-    let bg = if (db.dbHovered) "#fbf6ea" else if (db.dbIsCross) "#f5ead4" else "#f7f1e3";
-    let bd = if (db.dbHovered) "#9e2a22" else if (db.dbIsCross) "#946623" else "#2a564a";
-    let fg = if (db.dbHovered) "#9e2a22" else if (db.dbIsCross) "#7d5318" else "#224a3f";
-    emitRect(b, bx, by, pw, ph, 3.5, bg, bd, 0.85, 0.99);
-    emitTx(b, "TX", db.dbMx, db.dbMy + 3.7, 10.0, "700", "center", fg, 1.0, db.dbLabel);
-    pushClippedMapHit(hitsOut, vx, vy, vw, vh, bx, by, pw, ph, HitExit(db.dbDir))
+    let bg = if (db.dbHovered) hexColor("#fbf6ea") else if (db.dbIsCross) hexColor("#f5ead4") else hexColor("#f7f1e3");
+    let bd = if (db.dbHovered) hexColor("#9e2a22") else if (db.dbIsCross) hexColor("#946623") else hexColor("#2a564a");
+    let fg = if (db.dbHovered) hexColor("#9e2a22") else if (db.dbIsCross) hexColor("#7d5318") else hexColor("#224a3f");
+    drawRect(dl, rect(bx, by, pw, ph), 3.5, withAlpha(bg, 0.99), bd, 0.85);
+    drawText(dl, db.dbMx, db.dbMy + 3.7, fontSans(10.0, 700), AlignCenter, fg, db.dbLabel);
+    if (!storyLocked) {
+        vecPush(hitsOut, canvasHit(rect(bx, by, pw, ph), exitHitKey(db.dbDir), "pointer", MsgGoExit(db.dbDir)))
+    } else ()
 }
 
 def roomPlaqueSize(name: String, isCur: Bool, isMobile: Bool, zoom: Float): (Float, Float, Float) = {
@@ -382,7 +302,7 @@ def roomPlaqueSize(name: String, isCur: Bool, isMobile: Bool, zoom: Float): (Flo
 }
 
 def drawRoomPlaque(
-    b: StringBuf,
+    dl: DrawList,
     r: MapRoom,
     sx: Float, sy: Float,
     fontSz: Float, nw: Float, nh: Float,
@@ -392,60 +312,77 @@ def drawRoomPlaque(
     let rx = sx - nw * 0.5;
     let ry = sy - nh * 0.5;
     let kindAccent = match r.mrRoomKind {
-        "landmark" -> "#9e2a22",
-        "transit" -> "#a67c37",
-        "building" -> "#8f8575",
-        _ -> "#b5aa98",
+        "landmark" -> hexColor("#9e2a22"),
+        "transit" -> hexColor("#a67c37"),
+        "building" -> hexColor("#8f8575"),
+        _ -> hexColor("#b5aa98"),
     };
-    let (bg, bd, txtCol, lw, shBlur, useDbl) =
-        if (isCur) ("#1c1915", "#b89552", "#f8f4eb", 1.1, 14.0, "1")
-        else if (hov) ("#fbf8f1", "#9e2a22", "#1c1915", 1.1, 12.0, "0")
-        else if (isReachable) ("#faf6ee", "rgba(42,86,74,0.46)", "#1c1915", 0.9, 8.0, "0")
-        else ("#f1eadc", "rgba(130,118,98,0.30)", "#6b6255", 0.75, 0.0, "0");
+    let (fillTop, fillBot, bdCol, txtCol, lw, shBlur, useDbl) =
+        if (isCur) (hexColor("#1c1915"), hexColor("#26211c"), hexColor("#b89552"), hexColor("#f8f4eb"), 1.1, 14.0, true)
+        else if (hov) (hexColor("#fbf8f1"), hexColor("#f3ecdd"), hexColor("#9e2a22"), hexColor("#1c1915"), 1.1, 12.0, false)
+        else if (isReachable) (hexColor("#faf6ee"), hexColor("#f2ebdc"), rgba(42, 86, 74, 118), hexColor("#1c1915"), 0.9, 8.0, false)
+        else (hexColor("#f1eadc"), hexColor("#ebe2d0"), rgba(130, 118, 98, 76), hexColor("#6b6255"), 0.75, 0.0, false);
 
     if (isCur) {
-        emitCirc(b, sx, sy, 24.0 * pulse * effZoom, "", "#b89552", 1.0, 0.28)
+        drawCircle(dl, sx, sy, 24.0 * pulse * effZoom, 0, withAlpha(hexColor("#b89552"), 0.28), 1.0)
     } else ();
-    emitCard(b, rx, ry, nw, nh, 3.0, bg, bd, lw, "0.99", 3.0, shBlur, useDbl);
+    drawCard(
+        dl, rect(rx, ry, nw, nh), 3.0,
+        withAlpha(fillTop, 0.99), withAlpha(fillBot, 0.99),
+        bdCol, lw,
+        if (shBlur > 0.0) rgba(28, 22, 16, 28) else 0, 3.0, shBlur, useDbl
+    );
     if (isCur) {
-        emitCirc(b, rx + 10.0, sy, 2.5, "#b33529", "", 0.0, 0.95)
+        drawCircle(dl, rx + 10.0, sy, 2.5, withAlpha(hexColor("#b33529"), 0.95), 0, 0.0)
     } else if (isReachable) {
-        emitRect(b, rx + 1.0, ry + 5.0, 2.4, nh - 10.0, 1.0, "#2a564a", "", 0.0, 0.85)
+        drawFillRect(dl, rect(rx + 1.0, ry + 5.0, 2.4, nh - 10.0), 1.0, withAlpha(hexColor("#2a564a"), 0.85))
     } else if (r.mrRoomKind == "landmark" || r.mrRoomKind == "transit") {
-        emitCirc(b, rx + 8.0, sy, 2.0, kindAccent, "", 0.0, 0.55)
+        drawCircle(dl, rx + 8.0, sy, 2.0, withAlpha(kindAccent, 0.55), 0, 0.0)
     } else ();
-    emitTx(b, "TXS", if (isCur) sx + 3.0 else sx, sy + fontSz * 0.35, fontSz, if (isCur) "700" else "600", "center", txtCol, 1.0, r.mrRoomName)
+    drawText(
+        dl,
+        if (isCur) sx + 3.0 else sx,
+        sy + fontSz * 0.35,
+        fontSerif(fontSz, if (isCur) 700 else 600),
+        AlignCenter,
+        txtCol,
+        r.mrRoomName
+    )
 }
 
-def buildMapStage(b: StringBuf, hitsOut: Vec CanvasHitbox, m: ClientModel): Int = {
-    let w = m.cmVp.vpWidth;
-    let h = m.cmVp.vpHeight;
+pub def renderMapStage(
+    stageRect: Rect,
+    _ptr: Vec2,
+    hoveredKey: String,
+    dl: DrawList,
+    m: ClientModel
+): List (CanvasHit ClientMsg) = {
+    let hitsOut: Vec (CanvasHit ClientMsg) = vecNew();
     let loc = m.cmVp.vpLocale;
-    let isMobile = w <= 768.0;
-    let (vx, vy, vw, vh) = mapStageViewport(m);
+    let isMobile = m.cmVp.vpWidth <= 768.0;
+    let vx = stageRect.rx;
+    let vy = stageRect.ry;
+    let vw = stageRect.rw;
+    let vh = stageRect.rh;
     let zoom = m.cmCam.mapZoom;
     let effZoom = zoom * (if (isMobile) 0.72 else 1.0);
     let baseCenterY =
         if (isMobile) vy + vh * 0.49
-        else 52.0 + maxFloat(160.0, h - 52.0 - 196.0) * 0.54;
+        else vy + maxFloat(160.0, vh - 196.0) * 0.54;
     let centerX = vx + vw * 0.5 + m.cmCam.panX - m.cmCam.camX * effZoom;
     let centerY = baseCenterY + m.cmCam.panY - m.cmCam.camY * effZoom;
     let tSec = m.cmVp.vpClockMs / 1000.0;
     let pulse = if (m.cmVp.vpReducedMotion) 1.0 else 1.0 + 0.12 * sin(tSec * 2.8);
+    let storyLocked = m.cmWorld.wvStoryActive;
     let inFrustum = (sx: Float, sy: Float) ->
         sx >= vx - 180.0 && sx <= vx + vw + 180.0 && sy >= vy - 120.0 && sy <= vy + vh + 120.0;
-
-    if (isMobile) {
-        emitRect(b, vx, vy, vw, vh, 3.0, "rgba(246,240,226,0.26)", "rgba(130,118,98,0.22)", 0.75, 0.95)
-    } else ();
-    emitClip(b, vx, vy, vw, vh);
 
     let rName = m.cmWorld.wvRoomName;
     let mapValid = (mo: MapOverview) ->
         !prelude.listIsEmpty(mo.moRooms)
             && (strLen(rName) == 0 || optIsSome(listFind(mo.moRooms, (r) -> posEq(r.mrPos, mo.moCurrentPos) && r.mrRoomName == rName)));
 
-    let cmdCnt = match m.cmWorld.wvMapOverview {
+    match m.cmWorld.wvMapOverview {
         Some(mo) if (mapValid(mo)) -> {
             let curPos = mo.moCurrentPos;
             let (curWx, curWy) = worldPosFromGrid(curPos);
@@ -466,7 +403,6 @@ def buildMapStage(b: StringBuf, hitsOut: Vec CanvasHitbox, m: ClientModel): Int 
                 else None
             ));
 
-            // Precompute directions already covered by same-map rooms or cross-map portal edges from `curPos`
             let preCovered: Cell (List Direction) = cellNew(Nil);
             let prCur = cellNew(mo.moRooms);
             while (match cellGet(prCur) { Nil -> false, _ -> true }) {
@@ -501,9 +437,7 @@ def buildMapStage(b: StringBuf, hitsOut: Vec CanvasHitbox, m: ClientModel): Int 
             };
             let coveredDirsList = cellGet(preCovered);
 
-            // ================================================================
-            // PASS 1: All Same-Map Roads, Cross-Map Portal Lines & Extra Lines
-            // ================================================================
+            // PASS 1: Roads & cross-map portal dashed lines
             let isSameEdge = (e: MapEdge) -> strLen(e.meToMapId) == 0 || e.meToMapId == mo.moMapId;
             let ecur = cellNew(mo.moEdges);
             while (match cellGet(ecur) { Nil -> false, _ -> true }) {
@@ -522,10 +456,9 @@ def buildMapStage(b: StringBuf, hitsOut: Vec CanvasHitbox, m: ClientModel): Int 
                                 let sy2 = centerY + y2 * effZoom;
                                 if (inFrustum(sx1, sy1) || inFrustum(sx2, sy2)) {
                                     let isNear = posEq(e.meFrom, curPos) || posEq(e.meTo, curPos);
-                                    let col = if (isNear) "#2a564a" else "#8f8575";
+                                    let col = if (isNear) withAlpha(hexColor("#2a564a"), 0.76) else withAlpha(hexColor("#8f8575"), 0.34);
                                     let lw = (if (isNear) 1.8 else 0.95) * minFloat(1.2, zoom);
-                                    let al = if (isNear) 0.76 else 0.34;
-                                    emitLine(b, sx1, sy1, sx2, sy2, lw, col, al, false)
+                                    drawLine(dl, sx1, sy1, sx2, sy2, lw, col, false)
                                 } else ()
                             } else ()
                         } else {
@@ -542,7 +475,7 @@ def buildMapStage(b: StringBuf, hitsOut: Vec CanvasHitbox, m: ClientModel): Int 
                                     && optIsSome(listFind(m.cmWorld.wvRoomExits, (ex) -> dirEq(ex.reDirection, e.meDirection)));
                                 let lw = if (isFromCur) 1.6 else 1.1;
                                 let al = if (isFromCur) 0.88 else 0.52;
-                                emitLine(b, sx1, sy1, sx2, sy2, lw, "#946623", al, true)
+                                drawLine(dl, sx1, sy1, sx2, sy2, lw, withAlpha(hexColor("#946623"), al), true)
                             } else ()
                         };
                         cellSet(ecur, rest)
@@ -562,10 +495,9 @@ def buildMapStage(b: StringBuf, hitsOut: Vec CanvasHitbox, m: ClientModel): Int 
                             let (tx0, ty0) = worldPosFromGrid((cpx + dgx, cpy + dgy));
                             let sx2 = centerX + tx0 * effZoom;
                             let sy2 = centerY + ty0 * effZoom;
-                            let hov = optHitEq(m.cmScroll.shHovered, Some(HitExit(d)));
                             let isCross = strLen(ex.reMapId) > 0 && ex.reMapId != mo.moMapId;
-                            let bd = if (hov) "#946623" else if (isCross) "#946623" else "#2b594b";
-                            emitLine(b, curSx, curSy, sx2, sy2, 1.7, bd, 0.80, isCross)
+                            let lCol = if (isCross) hexColor("#946623") else hexColor("#2b594b");
+                            drawLine(dl, curSx, curSy, sx2, sy2, 1.7, withAlpha(lCol, 0.80), isCross)
                         } else ();
                         cellSet(xlCur, rest)
                     },
@@ -573,14 +505,10 @@ def buildMapStage(b: StringBuf, hitsOut: Vec CanvasHitbox, m: ClientModel): Int 
                 }
             };
 
-            // ================================================================
-            // PASS 2: All Room Plaques, Portal Plaques & Current Plaque on Top
-            // ================================================================
+            // PASS 2: Plaques (current room plaque topmost)
             let badgesVec: Vec DirBadge = vecNew();
-            let nodeCnt = cellNew(0);
             let curRoomOpt: Cell (Option MapRoom) = cellNew(None);
 
-            // 2a. Non-current map room plaques
             let rcur = cellNew(mo.moRooms);
             while (match cellGet(rcur) { Nil -> false, _ -> true }) {
                 match cellGet(rcur) {
@@ -598,11 +526,11 @@ def buildMapStage(b: StringBuf, hitsOut: Vec CanvasHitbox, m: ClientModel): Int 
                                     None -> mapLookup(exitByPos, pos),
                                 };
                                 let hov = match mDir {
-                                    Some(d) -> optHitEq(m.cmScroll.shHovered, Some(HitExit(d))),
+                                    Some(d) -> !storyLocked && hoveredKey == exitHitKey(d),
                                     None -> false,
                                 };
                                 let (fontSz, nw, nh) = roomPlaqueSize(r.mrRoomName, false, isMobile, zoom);
-                                drawRoomPlaque(b, r, sx, sy, fontSz, nw, nh, false, optIsSome(mDir), hov, pulse, effZoom);
+                                drawRoomPlaque(dl, r, sx, sy, fontSz, nw, nh, false, optIsSome(mDir), hov, pulse, effZoom);
                                 match mDir {
                                     Some(d) -> {
                                         let (mx, my) = roadMidpoint(curSx, curSy, curW, curH, sx, sy, nw, nh);
@@ -611,11 +539,12 @@ def buildMapStage(b: StringBuf, hitsOut: Vec CanvasHitbox, m: ClientModel): Int 
                                             dbLabel: directionLabel(loc, d),
                                             dbDir: d, dbIsCross: false, dbHovered: hov,
                                         });
-                                        pushClippedMapHit(hitsOut, vx, vy, vw, vh, sx - nw * 0.5, sy - nh * 0.5, nw, nh, HitExit(d))
+                                        if (!storyLocked) {
+                                            vecPush(hitsOut, canvasHit(rect(sx - nw * 0.5, sy - nh * 0.5, nw, nh), exitHitKey(d), "pointer", MsgGoExit(d)))
+                                        } else ()
                                     },
                                     None -> (),
-                                };
-                                cellSet(nodeCnt, cellGet(nodeCnt) + 1)
+                                }
                             } else ()
                         };
                         cellSet(rcur, rest)
@@ -624,7 +553,6 @@ def buildMapStage(b: StringBuf, hitsOut: Vec CanvasHitbox, m: ClientModel): Int 
                 }
             };
 
-            // 2b. Cross-map portal destination plaques
             let pcur = cellNew(mo.moEdges);
             while (match cellGet(pcur) { Nil -> false, _ -> true }) {
                 match cellGet(pcur) {
@@ -642,7 +570,7 @@ def buildMapStage(b: StringBuf, hitsOut: Vec CanvasHitbox, m: ClientModel): Int 
                                 let sy2 = centerY + y2 * effZoom;
                                 let isFromCur = posEq(e.meFrom, curPos)
                                     && optIsSome(listFind(m.cmWorld.wvRoomExits, (ex) -> dirEq(ex.reDirection, d)));
-                                let hov = isFromCur && optHitEq(m.cmScroll.shHovered, Some(HitExit(d)));
+                                let hov = isFromCur && !storyLocked && hoveredKey == exitHitKey(d);
                                 let destRoom =
                                     if (strLen(e.meToRoomName) > 0) e.meToRoomName
                                     else if (strLen(e.meToMapName) > 0) e.meToMapName
@@ -653,18 +581,18 @@ def buildMapStage(b: StringBuf, hitsOut: Vec CanvasHitbox, m: ClientModel): Int 
                                 let nh = (if (isMobile) 28.0 else 30.0) * clampFloat(0.85, 1.12, zoom);
                                 let rx = sx2 - nw * 0.5;
                                 let ry = sy2 - nh * 0.5;
-                                let bg = if (hov) "#ebdcb9" else if (isFromCur) "#f3e8cf" else "#e9dfca";
-                                let bd = if (hov) "#a32c22" else if (isFromCur) "#946623" else "#9c8760";
-                                let txtCol = if (isFromCur) "#4f320d" else "#6f5d42";
+                                let bg = if (hov) hexColor("#ebdcb9") else if (isFromCur) hexColor("#f3e8cf") else hexColor("#e9dfca");
+                                let bd = if (hov) hexColor("#a32c22") else if (isFromCur) hexColor("#946623") else hexColor("#9c8760");
+                                let txtCol = if (isFromCur) hexColor("#4f320d") else hexColor("#6f5d42");
                                 let lw = if (isFromCur) 1.5 else 1.05;
 
-                                emitRect(b, rx, ry, nw, nh, 3.0, bg, bd, lw, 0.99);
-                                emitTx(b, "TX", sx2, sy2 + fontSz * 0.36, fontSz, "600", "center", txtCol, 1.0, labelTxt);
+                                drawRect(dl, rect(rx, ry, nw, nh), 3.0, withAlpha(bg, 0.99), bd, lw);
+                                drawText(dl, sx2, sy2 + fontSz * 0.36, fontSans(fontSz, 600), AlignCenter, txtCol, labelTxt);
                                 if (strLen(e.meToMapName) > 0 && e.meToMapName != destRoom) {
                                     let subW = maxFloat(44.0, intToFloat(utf8CharCount(e.meToMapName)) * 10.6 + 10.0);
                                     let subY = if (sy2 < sy1 - 4.0) ry - 16.5 else ry + nh + 2.5;
-                                    emitRect(b, sx2 - subW * 0.5, subY, subW, 14.0, 2.5, "#f5efe1", "", 0.0, 0.92);
-                                    emitTx(b, "TX", sx2, subY + 10.2, 10.0, "600", "center", "#8a5d1c", 0.92, e.meToMapName)
+                                    drawFillRect(dl, rect(sx2 - subW * 0.5, subY, subW, 14.0), 2.5, withAlpha(hexColor("#f5efe1"), 0.92));
+                                    drawText(dl, sx2, subY + 10.2, fontSans(10.0, 600), AlignCenter, withAlpha(hexColor("#8a5d1c"), 0.92), e.meToMapName)
                                 } else ();
                                 if (isFromCur) {
                                     let (mx, my) = roadMidpoint(curSx, curSy, curW, curH, sx2, sy2, nw, nh);
@@ -673,9 +601,10 @@ def buildMapStage(b: StringBuf, hitsOut: Vec CanvasHitbox, m: ClientModel): Int 
                                         dbLabel: directionLabel(loc, d),
                                         dbDir: d, dbIsCross: true, dbHovered: hov,
                                     });
-                                    pushClippedMapHit(hitsOut, vx, vy, vw, vh, rx, ry, nw, nh, HitExit(d))
-                                } else ();
-                                cellSet(nodeCnt, cellGet(nodeCnt) + 1)
+                                    if (!storyLocked) {
+                                        vecPush(hitsOut, canvasHit(rect(rx, ry, nw, nh), exitHitKey(d), "pointer", MsgGoExit(d)))
+                                    } else ()
+                                } else ()
                             } else ()
                         } else ();
                         cellSet(pcur, rest)
@@ -684,7 +613,6 @@ def buildMapStage(b: StringBuf, hitsOut: Vec CanvasHitbox, m: ClientModel): Int 
                 }
             };
 
-            // 2c. Extra exit plaques not covered by map graph
             let xcur = cellNew(m.cmWorld.wvRoomExits);
             while (match cellGet(xcur) { Nil -> false, _ -> true }) {
                 match cellGet(xcur) {
@@ -696,25 +624,26 @@ def buildMapStage(b: StringBuf, hitsOut: Vec CanvasHitbox, m: ClientModel): Int 
                             let (tx0, ty0) = worldPosFromGrid((cpx + dgx, cpy + dgy));
                             let sx2 = centerX + tx0 * effZoom;
                             let sy2 = centerY + ty0 * effZoom;
-                            let hov = optHitEq(m.cmScroll.shHovered, Some(HitExit(d)));
+                            let hov = !storyLocked && hoveredKey == exitHitKey(d);
                             let isCross = strLen(ex.reMapId) > 0 && ex.reMapId != mo.moMapId;
                             let lbl = (if (isCross) "⇄ " else "") + ex.reRoomName;
                             let ew = maxFloat(76.0, intToFloat(utf8CharCount(lbl)) * 13.0 + 22.0);
                             let eh = if (isMobile) 28.0 else 30.0;
                             let rx = sx2 - ew * 0.5;
                             let ry = sy2 - eh * 0.5;
-                            let bg = if (hov) "#efe4cc" else if (isCross) "#f3e8cf" else "#f8f3e6";
-                            let bd = if (hov) "#946623" else if (isCross) "#946623" else "#2b594b";
-                            emitRect(b, rx, ry, ew, eh, 3.0, bg, bd, 1.5, 0.99);
-                            emitTx(b, "TX", sx2, sy2 + 4.3, 11.8, "600", "center", "#1e1a16", 1.0, lbl);
+                            let bg = if (hov) hexColor("#efe4cc") else if (isCross) hexColor("#f3e8cf") else hexColor("#f8f3e6");
+                            let bd = if (hov) hexColor("#946623") else if (isCross) hexColor("#946623") else hexColor("#2b594b");
+                            drawRect(dl, rect(rx, ry, ew, eh), 3.0, withAlpha(bg, 0.99), bd, 1.5);
+                            drawText(dl, sx2, sy2 + 4.3, fontSans(11.8, 600), AlignCenter, hexColor("#1e1a16"), lbl);
                             let (mx, my) = roadMidpoint(curSx, curSy, curW, curH, sx2, sy2, ew, eh);
                             vecPush(badgesVec, MkDirBadge {
                                 dbMx: mx, dbMy: my,
                                 dbLabel: directionLabel(loc, d),
                                 dbDir: d, dbIsCross: isCross, dbHovered: hov,
                             });
-                            pushClippedMapHit(hitsOut, vx, vy, vw, vh, rx, ry, ew, eh, HitExit(d));
-                            cellSet(nodeCnt, cellGet(nodeCnt) + 1)
+                            if (!storyLocked) {
+                                vecPush(hitsOut, canvasHit(rect(rx, ry, ew, eh), exitHitKey(d), "pointer", MsgGoExit(d)))
+                            } else ()
                         } else ();
                         cellSet(xcur, rest)
                     },
@@ -722,58 +651,49 @@ def buildMapStage(b: StringBuf, hitsOut: Vec CanvasHitbox, m: ClientModel): Int 
                 }
             };
 
-            // 2d. Current room plaque drawn topmost among plaques
             match cellGet(curRoomOpt) {
                 Some(cr) ->
                     if (inFrustum(curSx, curSy)) {
                         let (fontSz, nw, nh) = roomPlaqueSize(cr.mrRoomName, true, isMobile, zoom);
-                        drawRoomPlaque(b, cr, curSx, curSy, fontSz, nw, nh, true, false, false, pulse, effZoom);
-                        cellSet(nodeCnt, cellGet(nodeCnt) + 1)
+                        drawRoomPlaque(dl, cr, curSx, curSy, fontSz, nw, nh, true, false, false, pulse, effZoom)
                     } else (),
                 None -> (),
             };
 
-            // ================================================================
-            // PASS 3: Opaque Xuan-Paper Direction Seal Capsules on Road Midpoints
-            // ================================================================
+            // PASS 3: Road-midpoint direction seal capsules
             let bcur = cellNew(vecToList(badgesVec));
             while (match cellGet(bcur) { Nil -> false, _ -> true }) {
                 match cellGet(bcur) {
                     Cons(db, rest) -> {
-                        emitDirSeal(b, hitsOut, vx, vy, vw, vh, db);
+                        emitDirSeal(dl, hitsOut, storyLocked, db);
                         cellSet(bcur, rest)
                     },
                     Nil -> (),
                 }
-            };
-
-            cellGet(nodeCnt) * 4 + 12
+            }
         },
         _ -> {
-            // Radial 8-direction fallback (also strict 3-pass: lines -> plaques -> midpoint seals)
             let cx = vx + vw * 0.5 + m.cmCam.panX;
             let cy = baseCenterY + m.cmCam.panY;
             let dispRoom = if (strLen(rName) == 0) tr(loc, "app.title") else rName;
             let (curFont, curW, curH) = roomPlaqueSize(dispRoom, true, isMobile, zoom);
 
-            // Pass 1: all radial lines first
             let lcur = cellNew(m.cmWorld.wvRoomExits);
             while (match cellGet(lcur) { Nil -> false, _ -> true }) {
                 match cellGet(lcur) {
                     Cons(ex, rest) -> {
                         let (wx, wy) = worldPosFromGrid(directionGridDelta(ex.reDirection));
                         let isCross = strLen(ex.reMapId) > 0;
-                        emitLine(b, cx, cy, cx + wx * effZoom, cy + wy * effZoom, 1.7, if (isCross) "#946623" else "#2a564a", 0.76, isCross);
+                        let lCol = if (isCross) hexColor("#946623") else hexColor("#2a564a");
+                        drawLine(dl, cx, cy, cx + wx * effZoom, cy + wy * effZoom, 1.7, withAlpha(lCol, 0.76), isCross);
                         cellSet(lcur, rest)
                     },
                     Nil -> (),
                 }
             };
 
-            // Pass 2: neighbor plaques + current room plaque
             let badgesVec: Vec DirBadge = vecNew();
             let xcur = cellNew(m.cmWorld.wvRoomExits);
-            let exCnt = cellNew(0);
             while (match cellGet(xcur) { Nil -> false, _ -> true }) {
                 match cellGet(xcur) {
                     Cons(ex, rest) -> {
@@ -784,58 +704,70 @@ def buildMapStage(b: StringBuf, hitsOut: Vec CanvasHitbox, m: ClientModel): Int 
                         let (efont, ew, eh) = roomPlaqueSize(ex.reRoomName, false, isMobile, zoom);
                         let rx = exX - ew * 0.5;
                         let ry = exY - eh * 0.5;
-                        let hov = optHitEq(m.cmScroll.shHovered, Some(HitExit(d)));
-                        let bg = if (hov) "#fbf8f1" else "#faf6ee";
-                        let bd = if (hov) "#9e2a22" else "rgba(42,86,74,0.46)";
-                        emitCard(b, rx, ry, ew, eh, 3.0, bg, bd, 0.9, "0.99", 3.0, 8.0, "0");
-                        emitRect(b, rx + 1.0, ry + 5.0, 2.4, eh - 10.0, 1.0, "#2a564a", "", 0.0, 0.85);
-                        emitTx(b, "TXS", exX, exY + efont * 0.35, efont, "600", "center", "#1c1915", 1.0, ex.reRoomName);
+                        let hov = !storyLocked && hoveredKey == exitHitKey(d);
+                        let bg = if (hov) hexColor("#fbf8f1") else hexColor("#faf6ee");
+                        let bd = if (hov) hexColor("#9e2a22") else rgba(42, 86, 74, 118);
+                        drawCard(dl, rect(rx, ry, ew, eh), 3.0, withAlpha(bg, 0.99), withAlpha(hexColor("#f2ebdc"), 0.99), bd, 0.9, rgba(28, 22, 16, 24), 3.0, 8.0, false);
+                        drawFillRect(dl, rect(rx + 1.0, ry + 5.0, 2.4, eh - 10.0), 1.0, withAlpha(hexColor("#2a564a"), 0.85));
+                        drawText(dl, exX, exY + efont * 0.35, fontSerif(efont, 600), AlignCenter, hexColor("#1c1915"), ex.reRoomName);
                         let (mx, my) = roadMidpoint(cx, cy, curW, curH, exX, exY, ew, eh);
                         vecPush(badgesVec, MkDirBadge {
                             dbMx: mx, dbMy: my,
                             dbLabel: directionLabel(loc, d),
                             dbDir: d, dbIsCross: false, dbHovered: hov,
                         });
-                        pushClippedMapHit(hitsOut, vx, vy, vw, vh, rx, ry, ew, eh, HitExit(d));
-                        cellSet(exCnt, cellGet(exCnt) + 1);
+                        if (!storyLocked) {
+                            vecPush(hitsOut, canvasHit(rect(rx, ry, ew, eh), exitHitKey(d), "pointer", MsgGoExit(d)))
+                        } else ();
                         cellSet(xcur, rest)
                     },
                     Nil -> (),
                 }
             };
 
-            emitCirc(b, cx, cy, 24.0 * pulse * effZoom, "", "#b89552", 1.0, 0.28);
-            emitCard(b, cx - curW * 0.5, cy - curH * 0.5, curW, curH, 3.0, "#1c1915", "#b89552", 1.1, "0.99", 3.0, 14.0, "1");
-            emitCirc(b, cx - curW * 0.5 + 10.0, cy, 2.5, "#b33529", "", 0.0, 0.95);
-            emitTx(b, "TXS", cx + 3.0, cy + curFont * 0.35, curFont, "700", "center", "#f8f4eb", 1.0, dispRoom);
+            drawCircle(dl, cx, cy, 24.0 * pulse * effZoom, 0, withAlpha(hexColor("#b89552"), 0.28), 1.0);
+            drawCard(dl, rect(cx - curW * 0.5, cy - curH * 0.5, curW, curH), 3.0, hexColor("#1c1915"), hexColor("#26211c"), hexColor("#b89552"), 1.1, rgba(28, 22, 16, 36), 3.0, 14.0, true);
+            drawCircle(dl, cx - curW * 0.5 + 10.0, cy, 2.5, withAlpha(hexColor("#b33529"), 0.95), 0, 0.0);
+            drawText(dl, cx + 3.0, cy + curFont * 0.35, fontSerif(curFont, 700), AlignCenter, hexColor("#f8f4eb"), dispRoom);
 
-            // Pass 3: midpoint direction seal capsules
             let bcur = cellNew(vecToList(badgesVec));
             while (match cellGet(bcur) { Nil -> false, _ -> true }) {
                 match cellGet(bcur) {
                     Cons(db, rest) -> {
-                        emitDirSeal(b, hitsOut, vx, vy, vw, vh, db);
+                        emitDirSeal(dl, hitsOut, storyLocked, db);
                         cellSet(bcur, rest)
                     },
                     Nil -> (),
                 }
-            };
-
-            6 + cellGet(exCnt) * 6
+            }
         },
     };
-    emitUnclip(b);
-    cmdCnt
+
+    // Story transition banner inside stage
+    match m.cmWorld.wvTransitionBanner {
+        None -> (),
+        Some((txt, remMs)) -> {
+            let al = minFloat(1.0, remMs / 350.0);
+            let bw = minFloat(vw - 24.0, maxFloat(200.0, intToFloat(utf8CharCount(txt)) * 18.5 + 52.0));
+            let by = vy + vh * 0.16;
+            drawRect(dl, rect(vx + (vw - bw) * 0.5, by, bw, 42.0), 3.0, withAlpha(hexColor("#f7f1e3"), al * 0.97), withAlpha(hexColor("#a32c22"), al), 1.5);
+            drawText(dl, vx + vw * 0.5, by + 27.0, fontSerif(16.0, 700), AlignCenter, withAlpha(hexColor("#1e1a16"), al), txt)
+        },
+    };
+
+    vecToList(hitsOut)
 }
 
 // ============================================================================
-// Stage 3: Song-Dynasty Ink-Wash Combat Stage
+// 5. Stage 3: Song-Dynasty Ink-Wash Combat Stage
 // ============================================================================
 
-def buildBattleStage(b: StringBuf, m: ClientModel): Int = {
-    let w = m.cmVp.vpWidth;
-    let h = m.cmVp.vpHeight;
-    let isMobile = w <= 768.0;
+pub def renderBattleStage(stageRect: Rect, _ptr: Vec2, dl: DrawList, m: ClientModel): List (CanvasHit ClientMsg) = {
+    let w = stageRect.rw;
+    let h = stageRect.rh;
+    let ox = stageRect.rx;
+    let oy = stageRect.ry;
+    let isMobile = m.cmVp.vpWidth <= 768.0;
     let pStyle = match m.cmBattle.btSnap { Some(bs) -> parseCombatStyle(bs.bsPlayer.cbStyle), None -> StyleFist };
     let eStyle = match m.cmBattle.btSnap { Some(bs) -> parseCombatStyle(bs.bsEnemy.cbStyle), None -> StyleSword };
     let pProf = match m.cmBattle.btSnap {
@@ -852,8 +784,8 @@ def buildBattleStage(b: StringBuf, m: ClientModel): Int = {
     let scene = sampleBattleScene(mTl, elapsed, idleP, idleE, reduced);
 
     let fitScale = minFloat(1.04, (w - 32.0) / 580.0) * scene.scCameraScale;
-    let stageCx = w * 0.5 + scene.scCameraX * fitScale;
-    let groundY = (if (isMobile) h * 0.51 else minFloat(h * 0.58, h - 230.0)) + scene.scShakeY * fitScale;
+    let stageCx = ox + w * 0.5 + scene.scCameraX * fitScale;
+    let groundY = oy + (if (isMobile) h * 0.62 else minFloat(h * 0.58, h - 220.0)) + scene.scShakeY * fitScale;
 
     let pFig = scene.scPlayer;
     let eFig = scene.scEnemy;
@@ -867,45 +799,42 @@ def buildBattleStage(b: StringBuf, m: ClientModel): Int = {
 
     let inv = scene.scInvert > 0.5;
     if (inv) {
-        emitRect(b, 0.0, 0.0, w, h, 0.0, "#1a1612", "", 0.0, 0.82)
+        drawFillRect(dl, stageRect, 0.0, withAlpha(hexColor("#1a1612"), 0.82))
     } else if (scene.scShade > 0.01) {
-        emitRect(b, 0.0, 0.0, w, h, 0.0, "#2b241c", "", 0.0, minFloat(0.24, scene.scShade * 0.45))
+        drawFillRect(dl, stageRect, 0.0, withAlpha(hexColor("#2b241c"), minFloat(0.24, scene.scShade * 0.45)))
     } else ();
 
-    let moonCol = if (inv) "#352e26" else "#dfd4be";
-    let horizonCol = if (inv) "#d6cab2" else "#3a3228";
-    let shadowCol = if (inv) "#000000" else "#1e1a16";
-    let shadowAlpha = if (inv) "0.35" else "0.18";
+    let moonCol = if (inv) hexColor("#352e26") else hexColor("#dfd4be");
+    let horizonCol = if (inv) hexColor("#d6cab2") else hexColor("#3a3228");
+    let shadowCol = if (inv) withAlpha(hexColor("#000000"), 0.35) else withAlpha(hexColor("#1e1a16"), 0.18);
 
-    emitCirc(b, w * 0.5, groundY - 90.0 * fitScale, 138.0 * fitScale, moonCol, "", 0.0, 0.55);
-    emitLine(b, w * 0.08, groundY + 2.0, w * 0.92, groundY + 2.0, 2.0, horizonCol, 0.58, false);
-    emitEll(b, px, groundY + 3.0, 28.0 * fitScale, 5.5 * fitScale, shadowCol, shadowAlpha);
-    emitEll(b, ex, groundY + 3.0, 28.0 * fitScale, 5.5 * fitScale, shadowCol, shadowAlpha);
+    drawCircle(dl, ox + w * 0.5, groundY - 90.0 * fitScale, 138.0 * fitScale, withAlpha(moonCol, 0.55), 0, 0.0);
+    drawLine(dl, ox + w * 0.08, groundY + 2.0, ox + w * 0.92, groundY + 2.0, 2.0, withAlpha(horizonCol, 0.58), false);
+    drawEllipse(dl, px, groundY + 3.0, 28.0 * fitScale, 5.5 * fitScale, shadowCol, 0, 0.0);
+    drawEllipse(dl, ex, groundY + 3.0, 28.0 * fitScale, 5.5 * fitScale, shadowCol, 0, 0.0);
 
     if (scene.scGhost > 0.04) {
         match mTl {
             Some(tl) ->
                 if (sideEq(tl.tlTargetSide, SidePlayer)) {
-                    let _ = encodeActor(b, stageCx + sideHome(SidePlayer) * fitScale, groundY, fitScale, 0.0, "#2b594b", "#f6f0e2", 0.0, scene.scGhost * 0.65, pPose, pFig.fsVisual.avStyle, pProf, m.cmVp.vpLookStyle, (0.0, 0.0), m.cmVp.vpClockMs);
-                    ()
+                    drawInkActor(dl, stageCx + sideHome(SidePlayer) * fitScale, groundY, fitScale, 0.0, hexColor("#2b594b"), hexColor("#f6f0e2"), 0.0, scene.scGhost * 0.65, pPose, pFig.fsVisual.avStyle, pProf, m.cmVp.vpLookStyle, (0.0, 0.0), m.cmVp.vpClockMs)
                 } else {
-                    let _ = encodeActor(b, stageCx + sideHome(SideEnemy) * fitScale, groundY, -fitScale, 0.0, "#6e6354", "#f6f0e2", 0.0, scene.scGhost * 0.65, ePose, eFig.fsVisual.avStyle, eProf, m.cmVp.vpLookStyle, (0.0, 0.0), m.cmVp.vpClockMs);
-                    ()
+                    drawInkActor(dl, stageCx + sideHome(SideEnemy) * fitScale, groundY, 0.0 - fitScale, 0.0, hexColor("#6e6354"), hexColor("#f6f0e2"), 0.0, scene.scGhost * 0.65, ePose, eFig.fsVisual.avStyle, eProf, m.cmVp.vpLookStyle, (0.0, 0.0), m.cmVp.vpClockMs)
                 },
             None -> (),
         }
     } else ();
 
     let (pFill, eFill, outlineCol) =
-        if (inv) ("#f6f0e2", "#e6d8be", "#181410")
-        else ("#1b2521", "#2f221b", "#f6f0e2");
-    let pFlow = if (reduced) (0.0, 0.0) else (-pFig.fsX * 0.09, absFloat(pFig.fsY) * 0.2);
+        if (inv) (hexColor("#f6f0e2"), hexColor("#e6d8be"), hexColor("#181410"))
+        else (hexColor("#1b2521"), hexColor("#2f221b"), hexColor("#f6f0e2"));
+    let pFlow = if (reduced) (0.0, 0.0) else (0.0 - pFig.fsX * 0.09, absFloat(pFig.fsY) * 0.2);
     let eFlow = if (reduced) (0.0, 0.0) else (eFig.fsX * 0.09, absFloat(eFig.fsY) * 0.2);
 
-    let pCnt = encodeActor(b, px, py, fitScale, pFig.fsAngle, pFill, outlineCol, pFig.fsFlash, pFig.fsAlpha, pPose, pFig.fsVisual.avStyle, pProf, m.cmVp.vpLookStyle, pFlow, m.cmVp.vpClockMs);
-    let eCnt = encodeActor(b, ex, ey, -fitScale, eFig.fsAngle, eFill, outlineCol, eFig.fsFlash, eFig.fsAlpha, ePose, eFig.fsVisual.avStyle, eProf, m.cmVp.vpLookStyle, eFlow, m.cmVp.vpClockMs + 360.0);
+    drawInkActor(dl, px, py, fitScale, pFig.fsAngle, pFill, outlineCol, pFig.fsFlash, pFig.fsAlpha, pPose, pFig.fsVisual.avStyle, pProf, m.cmVp.vpLookStyle, pFlow, m.cmVp.vpClockMs);
+    drawInkActor(dl, ex, ey, 0.0 - fitScale, eFig.fsAngle, eFill, outlineCol, eFig.fsFlash, eFig.fsAlpha, ePose, eFig.fsVisual.avStyle, eProf, m.cmVp.vpLookStyle, eFlow, m.cmVp.vpClockMs + 360.0);
 
-    // Slash arc ribbon, parry ring & focus aura
+    // Tapered slash ribbon (`OP_RIBBON`), parry guard ring & focus aura
     match mTl {
         None -> (),
         Some(tl) -> {
@@ -914,7 +843,7 @@ def buildBattleStage(b: StringBuf, m: ClientModel): Int = {
             let aPose = if (actorIsP) pPose else ePose;
             let ax = if (actorIsP) px else ex;
             let ay = if (actorIsP) py else ey;
-            let sgn = if (actorIsP) fitScale else -fitScale;
+            let sgn = if (actorIsP) fitScale else 0.0 - fitScale;
             let (tipLx, tipLy) = if (styleEq(aStyle, StyleSword)) swordTipOf(aPose) else aPose.spHand;
             let tipWx = ax + sgn * tipLx;
             let tipWy = ay + absFloat(fitScale) * tipLy;
@@ -926,79 +855,78 @@ def buildBattleStage(b: StringBuf, m: ClientModel): Int = {
                 let midX = (shWx + tipWx) * 0.5 + (if (actorIsP) 18.0 else -18.0) * fitScale;
                 let midY = minFloat(shWy, tipWy) - 24.0 * fitScale;
                 let col =
-                    if (inv) "#f6f0e2"
-                    else if (tl.tlStaging.spForce >= 0.85) "#a32c22"
-                    else "#2b594b";
-                bufPushStr(b, "SLASH|");
-                bufPushStr(b, col); bufPushByte(b, 124);
-                bufPushF1(b, shWx); bufPushByte(b, 44); bufPushF1(b, shWy); bufPushByte(b, 44); bufPushF2(b, scene.scTrail * 0.28);
-                bufPushByte(b, 59);
-                bufPushF1(b, midX); bufPushByte(b, 44); bufPushF1(b, midY); bufPushByte(b, 44); bufPushF2(b, scene.scTrail * 0.72);
-                bufPushByte(b, 59);
-                bufPushF1(b, tipWx); bufPushByte(b, 44); bufPushF1(b, tipWy); bufPushByte(b, 44); bufPushF2(b, scene.scTrail);
-                bufPushByte(b, 10)
+                    if (inv) hexColor("#f6f0e2")
+                    else if (tl.tlStaging.spForce >= 0.85) hexColor("#a32c22")
+                    else hexColor("#2b594b");
+                drawRibbon(
+                    dl,
+                    [(shWx, shWy, 4.0 * fitScale), (midX, midY, 8.5 * fitScale), (tipWx, tipWy, 12.5 * fitScale)],
+                    col,
+                    scene.scTrail * 0.92
+                )
             } else ();
 
             let (cx0, cy0) = scene.scContact;
             let cWx = stageCx + cx0 * fitScale * 0.65;
             let cWy = groundY + cy0 * fitScale;
             if (scene.scGuard > 0.04) {
-                emitCirc(b, cWx, cWy, (18.0 + (1.0 - scene.scGuard) * 26.0) * fitScale, "", "#946623", 2.6, scene.scGuard)
+                drawCircle(dl, cWx, cWy, (18.0 + (1.0 - scene.scGuard) * 26.0) * fitScale, 0, withAlpha(hexColor("#946623"), scene.scGuard), 2.6)
             } else ();
             if (scene.scAura > 0.04) {
                 let ux = if (actorIsP) px else ex;
-                emitCirc(b, ux, groundY - 58.0 * fitScale, 44.0 * fitScale, "#2b594b", "#386944", 1.6, scene.scAura * 0.28)
+                let aFill = withAlpha(hexColor("#2b594b"), scene.scAura * 0.28);
+                let aStrk = withAlpha(hexColor("#386944"), scene.scAura * 0.55);
+                drawCircle(dl, ux, groundY - 58.0 * fitScale, 44.0 * fitScale, aFill, aStrk, 1.6)
             } else ()
         },
     };
 
-    // Impact shockwave ripple
+    // Shockwave & ink particles
     let fx = m.cmFx;
     if (!reduced && fx.fxShockAge < 0.44 && fx.fxShockPower > 0.05) {
         let age = fx.fxShockAge;
         let pwr = minFloat(1.2, fx.fxShockPower);
         let (su, sv) = fx.fxShockPos;
-        let sx = su * w;
-        let sy = (1.0 - sv) * h;
+        let sx = ox + su * w;
+        let sy = oy + (1.0 - sv) * h;
         let rad1 = (18.0 + age * 260.0) * fitScale;
         let rad2 = (10.0 + age * 180.0) * fitScale;
         let al1 = maxFloat(0.0, 1.0 - age / 0.44) * 0.45 * pwr;
         let al2 = maxFloat(0.0, 1.0 - age / 0.34) * 0.28 * pwr;
-        let col1 = if (inv) "#f6f0e2" else "#a32c22";
-        let col2 = if (inv) "#d6cab2" else "#946623";
-        emitCirc(b, sx, sy, rad1, "", col1, 2.0, al1);
-        emitCirc(b, sx, sy, rad2, "", col2, 1.2, al2)
+        let col1 = if (inv) hexColor("#f6f0e2") else hexColor("#a32c22");
+        let col2 = if (inv) hexColor("#d6cab2") else hexColor("#946623");
+        drawCircle(dl, sx, sy, rad1, 0, withAlpha(col1, al1), 2.0);
+        drawCircle(dl, sx, sy, rad2, 0, withAlpha(col2, al2), 1.2)
     } else ();
 
-    // Ink particles
     let ptCur = cellNew(fx.fxParticles);
     while (match cellGet(ptCur) { Nil -> false, _ -> true }) {
         match cellGet(ptCur) {
             Cons(p, rest) -> {
                 let al = maxFloat(0.0, 1.0 - p.ipLife / maxFloat(0.01, p.ipMaxLife));
                 let rad = p.ipRadius * (0.55 + 0.45 * al);
-                emitCirc(b, p.ipX, p.ipY, rad, p.ipColor, "", 0.0, al);
+                drawCircle(dl, p.ipX, p.ipY, rad, withAlpha(hexColor(p.ipColor), al), 0, 0.0);
                 cellSet(ptCur, rest)
             },
             Nil -> (),
         }
     };
 
-    // Move Stamp Seal + Floating Callout + Cinnabar Settlement Seal
+    // Move Stamp Seal, Floating Damage Callout & Settlement Seal
     match mTl {
         None -> (),
         Some(tl) ->
             if (tl.tlKind == "settlement") {
                 let al = scene.scResultAlpha;
-                emitRect(b, w * 0.5 - 46.0, groundY - 130.0 * fitScale, 92.0, 92.0, 4.0, "#a32c22", "#f6f0e2", 2.5, al * 0.96);
-                emitTx(b, "TX", w * 0.5, groundY - 70.0 * fitScale, 42.0, "700", "center", "#f6f0e2", al, tl.tlLabel)
+                drawRect(dl, rect(ox + w * 0.5 - 46.0, groundY - 130.0 * fitScale, 92.0, 92.0), 4.0, withAlpha(hexColor("#a32c22"), al * 0.96), withAlpha(hexColor("#f6f0e2"), al), 2.5);
+                drawText(dl, ox + w * 0.5, groundY - 70.0 * fitScale, fontSerif(42.0, 700), AlignCenter, withAlpha(hexColor("#f6f0e2"), al), tl.tlLabel)
             } else {
                 if (tl.tlKind != "effect_tick") {
                     let lbl = tl.tlLabel;
                     let bw = maxFloat(118.0, intToFloat(utf8CharCount(lbl)) * 18.5 + 40.0);
-                    let bannerY = if (isMobile) 186.0 else 156.0;
-                    emitRect(b, w * 0.5 - bw * 0.5, bannerY, bw, 34.0, 3.0, "#f7f1e3", "#a32c22", 1.5, 0.94);
-                    emitTx(b, "TX", w * 0.5, bannerY + 23.0, 15.5, "700", "center", "#1e1a16", 0.98, "「" + lbl + "」")
+                    let bannerY = maxFloat(oy + 18.0, 122.0);
+                    drawRect(dl, rect(ox + w * 0.5 - bw * 0.5, bannerY, bw, 34.0), 3.0, withAlpha(hexColor("#f7f1e3"), 0.95), hexColor("#a32c22"), 1.5);
+                    drawText(dl, ox + w * 0.5, bannerY + 23.0, fontSerif(15.5, 700), AlignCenter, hexColor("#1e1a16"), "「" + lbl + "」")
                 } else ();
 
                 let hIdx = scene.scHitIndex;
@@ -1013,137 +941,54 @@ def buildBattleStage(b: StringBuf, m: ClientModel): Int = {
                     let tx = if (sideEq(tl.tlTargetSide, SidePlayer)) px else ex;
                     let ty = groundY - (122.0 + scene.scTextLift) * fitScale;
                     let fCol = match tl.tlResult {
-                        ResParry -> "#946623",
-                        ResDodge -> "#2b594b",
-                        ResEffect -> "#386944",
-                        ResHit -> if (inv) "#ffdf9e" else if (sideEq(tl.tlTargetSide, SideEnemy)) "#a32c22" else "#8f1f16",
+                        ResParry -> hexColor("#946623"),
+                        ResDodge -> hexColor("#2b594b"),
+                        ResEffect -> hexColor("#386944"),
+                        ResHit -> if (inv) hexColor("#ffdf9e") else if (sideEq(tl.tlTargetSide, SideEnemy)) hexColor("#a32c22") else hexColor("#8f1f16"),
                     };
-                    emitTx(b, "TX", tx, ty, 22.0 * scene.scTextScale, "700", "center", fCol, scene.scTextAlpha, curFloat)
+                    drawText(dl, tx, ty, fontSans(22.0 * scene.scTextScale, 700), AlignCenter, withAlpha(fCol, scene.scTextAlpha), curFloat)
                 } else ()
             },
     };
-
-    14 + pCnt + eCnt + listLen(fx.fxParticles)
+    Nil
 }
 
 // ============================================================================
-// Pose Sheet Inspector Grid (`/pose-sheet.html`)
+// 6. Pose Sheet Inspector Grid (`/pose-sheet.html`)
 // ============================================================================
 
-def buildPoseSheetBatch(m: ClientModel): FrameBatch = {
-    let b = bufWithCap(32768);
-    let w = m.cmVp.vpWidth;
-    let h = m.cmVp.vpHeight;
-    let pids = allPoseIds(m.cmPoseLib);
-    let cols = maxInt(2, floorInt((w - 40.0) / 176.0));
-    let cellW = (w - 40.0) / intToFloat(cols);
-    let cellH = 168.0;
-
-    bufPushStr(b, "BG|");
-    bufPushF1(b, w); bufPushByte(b, 124); bufPushF1(b, h); bufPushStr(b, "|0|0\n");
-    emitTx(b, "TX", w * 0.5, 42.0, 18.0, "700", "center", "#1e1a16", 1.0,
-        "听风录 · 宣纸剪影姿势总览（svg-poses.json 共 " + intToStr(listLen(pids)) + " 式）");
-
-    let idxCell = cellNew(0);
-    let cur = cellNew(pids);
-    while (match cellGet(cur) { Nil -> false, _ -> true }) {
-        match cellGet(cur) {
-            Cons(pid, rest) -> {
-                let idx = cellGet(idxCell);
-                let col = idx % cols;
-                let row = idx / cols;
-                if (72.0 + intToFloat(row) * cellH < h + 160.0) {
-                    let cx = 20.0 + intToFloat(col) * cellW + cellW * 0.5;
-                    let cy = 72.0 + intToFloat(row) * cellH + 126.0;
-                    let pose = svgPose(m.cmPoseLib, pid, StyleSword);
-                    emitRect(b, cx - cellW * 0.46, cy - 118.0, cellW * 0.92, 150.0, 3.0, "#f6f0e2", "#c8bca4", 1.1, 0.95);
-                    emitLine(b, cx - cellW * 0.36, cy, cx + cellW * 0.36, cy, 1.2, "#6e6354", 0.55, false);
-                    let _ = encodeActor(b, cx, cy, 0.58, 0.0, "#1e2320", "#f6f0e2", 0.0, 1.0, pose, StyleSword, ProfileFemale, m.cmVp.vpLookStyle, (0.0, 0.0), 0.0);
-                    emitTx(b, "TX", cx, cy + 22.0, 11.5, "600", "center", "#3d352c", 1.0, pid)
-                } else ();
-                cellSet(idxCell, idx + 1);
-                cellSet(cur, rest)
-            },
-            Nil -> (),
-        }
-    };
-
-    MkFrameBatch {
-        fbText: bufToString(b),
-        fbHits: Nil,
-        fbScrollZones: Nil,
-        fbLogMaxScroll: 0.0, fbDrawerMaxScroll: 0.0, fbOnboardMaxScroll: 0.0, fbNpcMaxScroll: 0.0,
-        fbCmdCount: listLen(pids) * 12,
-    }
-}
-
-// ============================================================================
-// Top-Level Frame Batch Builder (`buildFrameBatch`)
-// ============================================================================
-
-pub def buildFrameBatch(m: ClientModel): FrameBatch =
-    if (pageEq(m.cmVp.vpPage, PagePoseSheet)) buildPoseSheetBatch(m)
-    else {
-        let b = bufWithCap(16384);
-        let w = m.cmVp.vpWidth;
-        let h = m.cmVp.vpHeight;
-        let tSec = m.cmVp.vpClockMs / 1000.0;
-        let isBattle = m.cmBattle.btInBattle || pageEq(m.cmVp.vpPage, PageBattleLab);
-        let camShiftX = m.cmCam.camX - m.cmCam.panX;
-        let camShiftY = m.cmCam.camY - m.cmCam.panY;
-
-        bufPushStr(b, "BG|");
-        bufPushF1(b, w); bufPushByte(b, 124);
-        bufPushF1(b, h); bufPushByte(b, 124);
-        bufPushF2(b, tSec); bufPushByte(b, 124);
-        bufPushByte(b, if (isBattle) 49 else 48);
-        bufPushByte(b, 10);
-
-        emitMt(b, h * 0.48, 42.0, "0.05", camShiftX, "#9f9a8e", "0.20");
-        emitMt(b, h * 0.60, 28.0, "0.11", camShiftX + 280.0, "#878377", "0.22");
-        emitMt(b, h * 0.72, 20.0, "0.19", camShiftX + 560.0, "#716c61", "0.24");
-
-        if (!m.cmVp.vpReducedMotion) {
-            let i = cellNew(1);
-            while (cellGet(i) <= 12) {
-                let idx = cellGet(i);
-                let fi = intToFloat(idx);
-                let mx = fmodPos(fi * 211.3 - camShiftX * 0.18 + tSec * (6.5 + intToFloat(idx % 3) * 2.5), w);
-                let my = fmodPos(fi * 137.7 - camShiftY * 0.12 + sin(tSec * 0.55 + fi) * 12.0, h * 0.72);
-                let mr = 1.1 + intToFloat(idx % 3) * 0.65;
-                let ma = 0.08 + 0.04 * sin(tSec * 0.9 + fi);
-                emitCirc(b, mx, my, mr, "#6e6354", "", 0.0, ma);
-                cellSet(i, idx + 1)
+pub def viewPoseSheet(_vp: Rect, m: ClientModel): Element ClientMsg =
+    canvasStage([fillSpace()], (r, _ptr, dl) -> {
+        let w = r.rw;
+        let h = r.rh;
+        let pids = allPoseIds(m.cmPoseLib);
+        let cols = maxInt(2, floorInt((w - 40.0) / 176.0));
+        let cellW = (w - 40.0) / intToFloat(cols);
+        let cellH = 168.0;
+        drawText(dl, r.rx + w * 0.5, r.ry + 42.0, fontSerif(18.0, 700), AlignCenter, hexColor("#1e1a16"),
+            "听风录 · 宣纸剪影姿势总览（svg-poses.json 共 " + intToStr(listLen(pids)) + " 式）");
+        let idxCell = cellNew(0);
+        let cur = cellNew(pids);
+        while (match cellGet(cur) { Nil -> false, _ -> true }) {
+            match cellGet(cur) {
+                Cons(pid, rest) -> {
+                    let idx = cellGet(idxCell);
+                    let colIdx = idx % cols;
+                    let rowIdx = idx / cols;
+                    if (72.0 + intToFloat(rowIdx) * cellH < h + 160.0) {
+                        let cx = r.rx + 20.0 + intToFloat(colIdx) * cellW + cellW * 0.5;
+                        let cy = r.ry + 72.0 + intToFloat(rowIdx) * cellH + 126.0;
+                        let pose = svgPose(m.cmPoseLib, pid, StyleSword);
+                        drawRect(dl, rect(cx - cellW * 0.46, cy - 118.0, cellW * 0.92, 150.0), 3.0, withAlpha(hexColor("#f6f0e2"), 0.96), hexColor("#c8bca4"), 1.1);
+                        drawLine(dl, cx - cellW * 0.36, cy, cx + cellW * 0.36, cy, 1.2, withAlpha(hexColor("#6e6354"), 0.55), false);
+                        drawInkActor(dl, cx, cy, 0.58, 0.0, hexColor("#1e2320"), hexColor("#f6f0e2"), 0.0, 1.0, pose, StyleSword, ProfileFemale, m.cmVp.vpLookStyle, (0.0, 0.0), 0.0);
+                        drawText(dl, cx, cy + 22.0, fontSans(11.5, 600), AlignCenter, hexColor("#3d352c"), pid)
+                    } else ();
+                    cellSet(idxCell, idx + 1);
+                    cellSet(cur, rest)
+                },
+                Nil -> (),
             }
-        } else ();
-
-        let sceneHitsVec: Vec CanvasHitbox = vecNew();
-        let sceneCnt =
-            if (!m.cmAuth.auConnected && pageEq(m.cmVp.vpPage, PageGame)) buildOnboardingBackdrop(b, m)
-            else if (isBattle) buildBattleStage(b, m)
-            else buildMapStage(b, sceneHitsVec, m);
-
-        match m.cmWorld.wvTransitionBanner {
-            None -> (),
-            Some((txt, remMs)) -> {
-                let al = minFloat(1.0, remMs / 350.0);
-                let bw = minFloat(w - 40.0, maxFloat(210.0, intToFloat(utf8CharCount(txt)) * 20.0 + 60.0));
-                emitRect(b, (w - bw) * 0.5, h * 0.22, bw, 44.0, 3.0, "#f7f1e3", "#a32c22", 1.6, al * 0.96);
-                emitTx(b, "TXS", w * 0.5, h * 0.22 + 28.0, 17.0, "700", "center", "#1e1a16", al, txt)
-            },
         };
-
-        let ui = buildUiOverlay(m);
-        bufPushBuf(b, ui.uoBuf);
-
-        MkFrameBatch {
-            fbText: bufToString(b),
-            fbHits: listAppend(vecToList(sceneHitsVec), ui.uoHits),
-            fbScrollZones: ui.uoScrollZones,
-            fbLogMaxScroll: ui.uoLogMaxScroll,
-            fbDrawerMaxScroll: ui.uoDrawerMaxScroll,
-            fbOnboardMaxScroll: ui.uoOnboardMaxScroll,
-            fbNpcMaxScroll: ui.uoNpcMaxScroll,
-            fbCmdCount: 18 + sceneCnt + ui.uoCmdCount,
-        }
-    }
+        Nil
+    })

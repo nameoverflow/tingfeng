@@ -9,27 +9,27 @@ const DIST_DIR = path.join(CLIENT_DIR, "dist");
 const checkOnly = process.argv.includes("--check");
 
 const WASM_EXPORTS = [
-  "tf_init_app",
-  "tf_step_frame",
-  "tf_on_ws_open",
-  "tf_on_ws_message",
-  "tf_on_ws_close",
-  "tf_set_hidden",
-  "tf_pointer_move",
-  "tf_pointer_click",
-  "tf_pan_zoom",
-  "tf_drag_at",
-  "tf_scroll_at",
-  "tf_text_input",
-  "tf_text_submit",
-  "tf_focus_input_id",
-  "tf_blur_input",
-  "tf_key_down",
+  "kagura_init",
+  "kagura_step_frame",
+  "kagura_pointer_move",
+  "kagura_pointer_click",
+  "kagura_pointer_drag",
+  "kagura_scroll_wheel",
+  "kagura_text_input",
+  "kagura_text_submit",
+  "kagura_blur_input",
+  "kagura_key_down",
+  "kagura_on_net_open",
+  "kagura_on_net_message",
+  "kagura_on_net_close",
+  "tf_seed_assets",
   "tf_ui_action",
   "tf_lab_cmd",
+  "tf_set_hidden",
+  "tf_lab_state_json",
 ];
 
-const { geisha, wasmRuntime } = resolveGeishaToolchain();
+const { geisha, wasmRuntime, kaguraLib, kaguraWebHost } = resolveGeishaToolchain();
 const entryFile = path.join(GSA_DIR, "src/mod.gsa");
 const exportFlags = WASM_EXPORTS.flatMap((fn) => ["--export", fn]);
 
@@ -39,11 +39,11 @@ if (checkOnly) {
   const checkLl = path.join(buildDir, "check.ll");
   execFileSync(
     geisha,
-    ["--target", "wasm32", "--src-root", GSA_DIR, ...exportFlags, "-e", "-o", checkLl, entryFile],
+    ["--target", "wasm32", "--src-root", GSA_DIR, "-L", kaguraLib, ...exportFlags, "-e", "-o", checkLl, entryFile],
     { cwd: CLIENT_DIR, stdio: "inherit" }
   );
   fs.rmSync(checkLl, { force: true });
-  console.log("✓ Pure-Geisha Wasm client typecheck & IR verification passed (0 errors).");
+  console.log("✓ Kagura + Geisha Wasm client typecheck & IR verification passed (0 errors).");
   process.exit(0);
 }
 
@@ -51,14 +51,18 @@ if (!wasmRuntime) {
   throw new Error("wasm_rt.o not found. Run 'make wasm-runtime' in geisha.gsa or set GEISHA_WASM_RUNTIME.");
 }
 
+if (kaguraWebHost && path.resolve(kaguraWebHost) !== path.join(PUBLIC_DIR, "kagura.js")) {
+  fs.copyFileSync(kaguraWebHost, path.join(PUBLIC_DIR, "kagura.js"));
+}
+
 const outWasmDir = path.join(PUBLIC_DIR, "wasm");
 fs.mkdirSync(outWasmDir, { recursive: true });
 const finalWasm = path.join(outWasmDir, "tingfeng.wasm");
 
-console.log("[1/2] Compiling pure-Geisha client to wasm32...");
+console.log("[1/2] Compiling Tingfeng client with Kagura (-L kagura) to wasm32...");
 execFileSync(
   geisha,
-  ["--target", "wasm32", "--src-root", GSA_DIR, "--runtime", wasmRuntime, ...exportFlags, "-o", finalWasm, entryFile],
+  ["--target", "wasm32", "--src-root", GSA_DIR, "-L", kaguraLib, "--runtime", wasmRuntime, ...exportFlags, "-o", finalWasm, entryFile],
   { cwd: CLIENT_DIR, stdio: "inherit" }
 );
 
@@ -80,4 +84,4 @@ if (fs.existsSync(portraitSrc)) {
 }
 
 const sz = fs.statSync(path.join(DIST_DIR, "wasm/tingfeng.wasm")).size;
-console.log(`✓ Built dist/wasm/tingfeng.wasm (${(sz / 1024).toFixed(1)} KB raw).`);
+console.log(`✓ Built dist/wasm/tingfeng.wasm (${(sz / 1024).toFixed(1)} KB raw) with Kagura.`);
