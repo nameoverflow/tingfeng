@@ -870,7 +870,7 @@ def drawDesktopHeader(t: Tape, m: ClientModel): Void = {
     let hpPct = intToFloat(presHp) / intToFloat(maxInt(1, presMaxHp));
     let qiPct = intToFloat(presQi) / intToFloat(maxInt(1, presMaxQi));
 
-    cmdRect(t, 0.0, 0.0, w, 52.0, 0.0, "#faf6ee", "", 0.0, 0.94);
+    cmdRect(t, 0.0, 0.0, w, 52.0, 0.0, "#faf6ee", "", 0.0, 0.99);
     cmdLine(t, 0.0, 52.0, w, 52.0, 0.75, "rgba(130,118,98,0.28)", 1.0, false);
     pushHit(t, MkCanvasHitbox { chX: 0.0, chY: 0.0, chW: w, chH: 52.0, chTarget: HitSwallow, chCursor: "default" });
 
@@ -930,7 +930,7 @@ def drawMobileHeader(t: Tape, m: ClientModel): Void = {
             if (zh) "听风录" else "Tingfeng"
         };
 
-    cmdRect(t, 0.0, 0.0, w, 54.0, 0.0, "#faf6ee", "", 0.0, 0.96);
+    cmdRect(t, 0.0, 0.0, w, 54.0, 0.0, "#faf6ee", "", 0.0, 0.99);
     cmdLine(t, 0.0, 54.0, w, 54.0, 0.8, "rgba(130,118,98,0.28)", 1.0, false);
     cmdSerif(t, 14.0, 27.0, 15.5, "700", "left", "#1c1915", 1.0, truncateText(w - 144.0, 15.5, titleTxt));
     pushHit(t, MkCanvasHitbox { chX: 0.0, chY: 0.0, chW: w, chH: 54.0, chTarget: HitSwallow, chCursor: "default" });
@@ -962,7 +962,7 @@ def drawMobileTabbar(t: Tape, m: ClientModel): Void = {
         ("quests", if (zh) "任务" else "Quests", false, activeQ)
     ];
 
-    cmdRect(t, 0.0, y0, w, 54.0, 0.0, "#faf6ee", "", 0.0, 0.97);
+    cmdRect(t, 0.0, y0, w, 54.0, 0.0, "#faf6ee", "", 0.0, 0.99);
     cmdLine(t, 0.0, y0, w, y0, 0.75, "rgba(130,118,98,0.26)", 1.0, false);
     pushHit(t, MkCanvasHitbox { chX: 0.0, chY: y0, chW: w, chH: 54.0, chTarget: HitSwallow, chCursor: "default" });
 
@@ -1017,19 +1017,17 @@ def drawMobileTabbar(t: Tape, m: ClientModel): Void = {
     }
 }
 
-def drawRoomCard(t: Tape, m: ClientModel, isMob: Bool): Void = {
+pub def measureRoomCardBottom(m: ClientModel, isMob: Bool): Float = {
     let w = m.cmVp.vpWidth;
     let x0 = if (isMob) 10.0 else 16.0;
     let y0 = 64.0;
     let cw = if (isMob) w - 20.0 else minFloat(420.0, w - 32.0);
     let pad = if (isMob) 10.0 else 13.0;
-    let mName = currentMapName(m);
     let descLines = listTake(wrapText(cw - pad * 2.0, 12.0, m.cmWorld.wvRoomDesc), if (isMob) 3 else 4);
     let descH = intToFloat(listLen(descLines)) * 17.5;
     let chars = m.cmWorld.wvRoomChars;
     let chipStartY = y0 + 34.0 + descH + (if (listIsEmpty(chars)) 0.0 else 6.0);
 
-    // Measure chip rows first so card background draws behind NPC buttons
     let curX = cellNew(x0 + pad);
     let curY = cellNew(chipStartY);
     let mcur = cellNew(chars);
@@ -1049,9 +1047,43 @@ def drawRoomCard(t: Tape, m: ClientModel, isMob: Bool): Void = {
         }
     };
     let endChipY = cellGet(curY);
-    let cardH = (if (listIsEmpty(chars)) y0 + 32.0 + descH + 10.0 else endChipY + 34.0) - y0;
+    if (listIsEmpty(chars)) y0 + 32.0 + descH + 10.0 else endChipY + 34.0
+}
 
-    cmdCard(t, x0, y0, cw, cardH, 3.0, "#faf6ee", "rgba(130,118,98,0.30)", 0.8, 0.96, 4.0, 14.0, false);
+pub def mapStageViewport(m: ClientModel): (Float, Float, Float, Float) = {
+    let w = m.cmVp.vpWidth;
+    let h = m.cmVp.vpHeight;
+    let isMob = w <= 768.0;
+    if (isMob) {
+        if (m.cmUi.uiMobileTab != "world") {
+            (10.0, 58.0, maxFloat(120.0, w - 20.0), maxFloat(120.0, h - 116.0))
+        } else {
+            let topY = measureRoomCardBottom(m, true) + 6.0;
+            let dockH = if (m.cmBattle.btInBattle) 112.0 else 164.0;
+            let dockY = h - 54.0 - dockH - 6.0;
+            let botY = maxFloat(topY + 110.0, dockY - 6.0);
+            (10.0, topY, maxFloat(120.0, w - 20.0), botY - topY)
+        }
+    } else {
+        let vw = if (strLen(m.cmUi.uiDesktopDrawer) > 0) maxFloat(320.0, w - 380.0) else w;
+        (0.0, 52.0, vw, maxFloat(160.0, h - 52.0))
+    }
+}
+
+def drawRoomCard(t: Tape, m: ClientModel, isMob: Bool): Void = {
+    let w = m.cmVp.vpWidth;
+    let x0 = if (isMob) 10.0 else 16.0;
+    let y0 = 64.0;
+    let cw = if (isMob) w - 20.0 else minFloat(420.0, w - 32.0);
+    let pad = if (isMob) 10.0 else 13.0;
+    let mName = currentMapName(m);
+    let descLines = listTake(wrapText(cw - pad * 2.0, 12.0, m.cmWorld.wvRoomDesc), if (isMob) 3 else 4);
+    let descH = intToFloat(listLen(descLines)) * 17.5;
+    let chars = m.cmWorld.wvRoomChars;
+    let chipStartY = y0 + 34.0 + descH + (if (listIsEmpty(chars)) 0.0 else 6.0);
+    let cardH = measureRoomCardBottom(m, isMob) - y0;
+
+    cmdCard(t, x0, y0, cw, cardH, 3.0, "#faf6ee", "rgba(130,118,98,0.30)", 0.8, 0.99, 4.0, 14.0, false);
     cmdRect(t, x0 + 1.0, y0 + 8.0, 2.5, cardH - 16.0, 1.0, "#9e2a22", "", 0.0, 0.78);
     cmdSerif(t, x0 + pad + 3.0, y0 + 22.0, if (isMob) 15.0 else 16.0, "700", "left", "#1c1915", 1.0, m.cmWorld.wvRoomName);
     pushHit(t, MkCanvasHitbox { chX: x0, chY: y0, chW: cw, chH: cardH, chTarget: HitSwallow, chCursor: "default" });
@@ -1101,12 +1133,14 @@ def drawRoomCard(t: Tape, m: ClientModel, isMob: Bool): Void = {
 def drawMapControls(t: Tape, m: ClientModel, isMob: Bool): Void = {
     let w = m.cmVp.vpWidth;
     let zh = isZh(m.cmVp.vpLocale);
-    let rightEdge = if (!isMob && strLen(m.cmUi.uiDesktopDrawer) > 0) w - 394.0 else w - 14.0;
-    let y0 = if (isMob) 176.0 else 66.0;
+    let (vx, vy, vw, vh) = mapStageViewport(m);
+    let rightEdge = if (isMob) vx + vw - 8.0 else if (strLen(m.cmUi.uiDesktopDrawer) > 0) w - 394.0 else w - 14.0;
+    let y0 = if (isMob) maxFloat(vy + 8.0, vy + vh - 68.0) else 66.0;
     drawBtn(t, m, rightEdge - 30.0, y0, 30.0, 28.0, "+", 15.0, ToneDefault, false, HitUi("zoom_in", "", ""));
-    drawBtn(t, m, rightEdge - 30.0, y0 + 34.0, 30.0, 28.0, "−", 15.0, ToneDefault, false, HitUi("zoom_out", "", ""));
+    drawBtn(t, m, rightEdge - 30.0, y0 + 32.0, 30.0, 28.0, "−", 15.0, ToneDefault, false, HitUi("zoom_out", "", ""));
     if (isCameraPanned(m)) {
-        drawBtn(t, m, rightEdge - 56.0, y0 + 70.0, 56.0, 26.0, if (zh) "归位" else "Center", 11.0, TonePrimary, false, HitUi("reset_cam", "", ""))
+        let resetY = if (isMob) maxFloat(vy + 6.0, y0 - 30.0) else y0 + 68.0;
+        drawBtn(t, m, rightEdge - 56.0, resetY, 56.0, 26.0, if (zh) "归位" else "Center", 11.0, TonePrimary, false, HitUi("reset_cam", "", ""))
     } else ()
 }
 
@@ -1260,7 +1294,7 @@ def drawMessageDock(t: Tape, m: ClientModel, isMob: Bool, dockY: Float, dockH: F
     let maxS = maxFloat(0.0, totalH - logViewH);
     let scrollY = if (m.cmScroll.shLogStickBottom) maxS else clampFloat(0.0, maxS, m.cmScroll.shLogScroll);
 
-    cmdCard(t, dockX, dockY, dockW, dockH, 3.0, "#faf6ee", "rgba(130,118,98,0.28)", 0.8, 0.96, 4.0, 16.0, false);
+    cmdCard(t, dockX, dockY, dockW, dockH, 3.0, "#faf6ee", "rgba(130,118,98,0.28)", 0.8, 0.99, 4.0, 16.0, false);
     pushHit(t, MkCanvasHitbox { chX: dockX, chY: dockY, chW: dockW, chH: dockH, chTarget: HitSwallow, chCursor: "default" });
 
     cmdClip(t, dockX + 4.0, logY, dockW - 12.0, logViewH);

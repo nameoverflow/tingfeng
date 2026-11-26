@@ -549,6 +549,12 @@ def testMovementAndMapOverview(tr: TestRunner, baseGs: GameState): Void = {
         _ -> false,
     });
     assertThat(tr, hasReturnExit, "target room view missing return cross-map exit");
+    let hasCrossMapOverview = listAny(respsEast, (pr) -> match pr {
+        (_, MapOverviewMsg(ov)) ->
+            ov.mapOverviewSummaryMapId == "bianshui_road" && ordEq(ov.mapOverviewSummaryCurrentPosition, (0, 0)),
+        _ -> false,
+    });
+    assertThat(tr, hasCrossMapOverview, "cross-map move missing immediate MapOverviewMsg");
     let (_, returned) = runOk(tr, "return west", inRoad, playerMove("tester", West));
     assertThat(tr, ordEq(requirePlayer(tr, returned).playerPosition, ("weiyuan_road", (3, 3))), "failed cross-map return");
 

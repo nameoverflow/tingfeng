@@ -1119,6 +1119,7 @@ def executeOneStoryAction(pid: String, elapsedMs: Int, act: StoryAction): Game (
         movePlayerToRoom(pid, mid, pos) >>= ((newRoom) ->
             tellGame(pid, MoveMsg(newRoom.roomName))
             *>> playerView(pid)
+            *>> playerMapOverview(pid)
             *>> pure(Nil)
         ),
 }
@@ -1184,6 +1185,7 @@ pub def playerMove(pid: String, dir: Direction): Game Void =
                     movePlayerToRoom(pid, dst.roomRefMapId, dst.roomRefPos) >>= ((newRoom) ->
                         tellGame(pid, MoveMsg(newRoom.roomName))
                         *>> playerView(pid)
+                        *>> whenM(dst.roomRefMapId != curMapId, () -> playerMapOverview(pid))
                         *>> runStoryTrigger(pid, TriggerEnterRoom(dst.roomRefMapId, dst.roomRefPos))
                         *>> pure(())
                     ),

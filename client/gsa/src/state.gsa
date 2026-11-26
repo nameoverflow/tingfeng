@@ -473,8 +473,8 @@ def emitCmds(cmds: List ClientCmd): ClientM Void = tell(cmds)
 
 def apBaselineAgility(): Float = 19.0
 def apGainPerAgilitySecond(): Float = 100.0 / (2.0 * apBaselineAgility())
-def gridScaleX(): Float = 164.0
-def gridScaleY(): Float = 118.0
+def gridScaleX(): Float = 178.0
+def gridScaleY(): Float = 128.0
 
 pub def worldPosFromGrid(pos: (Int, Int)): (Float, Float) = match pos {
     (gx, gy) -> (intToFloat(gx) * gridScaleX(), intToFloat(-gy) * gridScaleY()),
@@ -1035,6 +1035,10 @@ def isStorySequencedMsg(msg: ServerMsg): Bool = match msg {
     SmStoryTransition(_, _) -> true,
     SmStorySequence(_) -> true,
     SmStoryDelay(_) -> true,
+    SmMove(_) -> true,
+    SmView(_, _, _, _) -> true,
+    SmMapOverview(_) -> true,
+    SmReward(_) -> true,
     _ -> false,
 }
 
@@ -1565,9 +1569,6 @@ pub def stepClientFrame(rawDtMs: Float, rawW: Float, rawH: Float, m0: ClientMode
     let nowMs = vp0.vpClockMs + dtMs;
 
     let camAlpha = if (vp0.vpReducedMotion) 1.0 else 1.0 - exp(-14.0 * dtSec);
-    let c0 = m0.cmCam;
-    let cx1 = c0.camX + (c0.targetCamX - c0.camX) * camAlpha;
-    let cy1 = c0.camY + (c0.targetCamY - c0.camY) * camAlpha;
 
     let mInit = withVp(m0, MkViewportState {
         vpPage: vp0.vpPage, vpLocale: vp0.vpLocale, vpReducedMotion: vp0.vpReducedMotion,
@@ -1652,6 +1653,9 @@ pub def stepClientFrame(rawDtMs: Float, rawW: Float, rawH: Float, m0: ClientMode
     let nextSyncTick = if (tickSyncDue) nowMs else vpA.vpLastSyncTickMs;
 
     let cA = mAfterTl.cmCam;
+    let cx1 = cA.camX + (cA.targetCamX - cA.camX) * camAlpha;
+    let cy1 = cA.camY + (cA.targetCamY - cA.camY) * camAlpha;
+    let camMoving = absFloat(cA.targetCamX - cx1) > 0.05 || absFloat(cA.targetCamY - cy1) > 0.05;
     let mOut = withFx(
         withWorld(
             withCam(
@@ -1687,7 +1691,7 @@ pub def stepClientFrame(rawDtMs: Float, rawW: Float, rawH: Float, m0: ClientMode
         }
     );
 
-    let finalM = if (bannerChanged || flashEnded || tickSyncDue) markDirty(mOut) else mOut;
+    let finalM = if (bannerChanged || flashEnded || tickSyncDue || camMoving) markDirty(mOut) else mOut;
     (finalM, cmds)
 }
 
