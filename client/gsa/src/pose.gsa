@@ -1255,10 +1255,10 @@ pub def buildActorParts(
             let sway1 = swingWave(hairPhase, 0.4) * 2.5;
             let sway2 = swingWave(hairPhase, 1.1) * 6.0;
             let onFace = (u: Float, bk: Float) -> (hcx + ux * headR * u + bx * headR * bk, hcy + uy * headR * u + by * headR * bk);
-            let bun = onFace(0.5, 0.98);
-            let bunTop = onFace(0.82, 0.72);
+            let bun = onFace(0.88, 1.08);
+            let bunTop = onFace(1.20, 0.82);
             let pinDir = ptUnit((ux * 0.3 + bx * 0.95, uy * 0.3 + by * 0.95));
-            let looseRoot = onFace(0.05, 0.86);
+            let looseRoot = onFace(0.66, 1.28);
             let (lrx, lry) = looseRoot;
             let hPt = (bk: Float, down: Float, hinge: Float, sw: Float) -> {
                 let (dx, dy) = hairDrop(down, hinge);

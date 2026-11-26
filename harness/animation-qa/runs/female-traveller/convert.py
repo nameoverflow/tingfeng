@@ -13,7 +13,7 @@ edge = cv2.approxPolyDP(max(contours, key=cv2.contourArea), height * 0.003, True
 
 # The rig's positive axes point toward the back of the skull and its crown.
 radius = height / 2.08
-pairs = [f"({(width * 0.34 - x) / radius:.3f}, {(height * 0.54 - y) / radius:.3f})" for x, y in edge]
+pairs = [f"({(width - height * 0.519 - x) / radius:.3f}, {(height * 0.54 - y) / radius:.3f})" for x, y in edge]
 lines = ["// Generated from the female-traveller head mask by convert.py.", "",
          "pub def outline(): List (Float, Float) = ["]
 for i in range(0, len(pairs), 4):
