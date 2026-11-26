@@ -13,7 +13,7 @@ use kagura.gfx.{
     sin, cos, absFloat, minInt, maxInt, minFloat, maxFloat, clampFloat, floorInt,
     DrawList, drawCard, drawRect, drawFillRect, drawCircle, drawEllipse,
     drawLine, drawPolygon, drawRibbon, drawText, drawImage,
-    pushClip, popClip, pushTransform, popTransform
+    pushClip, pushCircleClip, popClip, pushTransform, popTransform
 }
 use kagura.ui.{
     Element, CanvasHit, canvasHit, fillSpace, canvasStage
@@ -103,8 +103,8 @@ def polyToVec2List(pts: List (Float, Float)): List Vec2 =
     listMap(pts, (xy) -> match xy { (px, py) -> vec2(px, py) })
 
 def emitShapeStroke(dl: DrawList, s: ShapePrim, strokeCol: Color): Void = match s {
-    SCircle(cx, cy, r, _, _) -> drawCircle(dl, cx, cy, r, 0, strokeCol, 2.6),
-    SPoly(pts, _, _) -> drawPolygon(dl, polyToVec2List(pts), 0, strokeCol, 2.6),
+    SCircle(cx, cy, r, _, _) -> drawCircle(dl, cx, cy, r, 0, strokeCol, 3.8),
+    SPoly(pts, _, _) -> drawPolygon(dl, polyToVec2List(pts), 0, strokeCol, 3.8),
 }
 
 def emitShapeFill(dl: DrawList, s: ShapePrim, defaultFill: Color, flash: Float, partAlpha: Float): Void = {
@@ -138,9 +138,6 @@ pub def drawInkActor(
     let parts = buildActorParts(pose, weapon, prof, look, hairBend, clockMs);
     pushTransform(dl, wx, wy, scaleSign, absFloat(scaleSign), rotDeg);
     let outCol = withAlpha(outlineCol, alpha);
-    // Outline the complete figure first. Overlapping limbs then read as
-    // one ink shape, while separate fighters keep a fine paper edge.
-    forEach(parts, (part) -> forEach(part.apShapes, (sh) -> emitShapeStroke(dl, sh, outCol)));
     forEach(parts, (part) -> {
         if (part.apKey == "front-arm") {
             match weaponTasselAnchor(pose, weapon) {
@@ -169,7 +166,14 @@ pub def drawInkActor(
                 None -> (),
             }
         } else ();
-        forEach(part.apShapes, (sh) -> emitShapeFill(dl, sh, fillCol, flash, alpha))
+        forEach(part.apShapes, (sh) -> emitShapeStroke(dl, sh, outCol));
+        forEach(part.apShapes, (sh) -> emitShapeFill(dl, sh, fillCol, flash, alpha));
+        forEach(part.apJoins, (join) -> {
+            let (x, y) = join.jpAt;
+            pushCircleClip(dl, x, y, join.jpRadius);
+            forEach(join.jpShapes, (sh) -> emitShapeFill(dl, sh, fillCol, flash, alpha));
+            popClip(dl)
+        })
     });
     popTransform(dl)
 }

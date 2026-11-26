@@ -316,10 +316,19 @@ pub data ShapePrim {
     SPoly(List (Float, Float), Option String, Float),
 }
 
+pub data JoinPatch {
+    MkJoinPatch {
+        jpAt: (Float, Float),
+        jpRadius: Float,
+        jpShapes: List ShapePrim,
+    },
+}
+
 pub data ActorPart {
     MkActorPart {
         apKey: String,
         apShapes: List ShapePrim,
+        apJoins: List JoinPatch,
     },
 }
 
@@ -895,10 +904,10 @@ data LimbProfile {
     MkLimbProfile(List Float, List Float, List Float),
 }
 
-def thighProf(): LimbProfile = MkLimbProfile([0.0, 0.4, 1.0], [10.2, 9.4, 6.8], [10.2, 10.8, 6.8])
-def shinProf(): LimbProfile = MkLimbProfile([0.0, 0.32, 0.78, 1.0], [6.8, 8.1, 5.0, 4.1], [6.8, 6.4, 4.6, 4.1])
-def upperArmProf(): LimbProfile = MkLimbProfile([0.0, 0.35, 1.0], [8.2, 7.2, 5.4], [8.2, 7.4, 5.4])
-def forearmProf(): LimbProfile = MkLimbProfile([0.0, 0.3, 1.0], [5.6, 6.0, 3.7], [5.6, 5.7, 3.7])
+def thighProf(): LimbProfile = MkLimbProfile([0.0, 0.14, 0.4, 0.88, 1.0], [10.2, 10.47, 9.92, 7.38, 6.8], [10.2, 11.09, 10.56, 7.38, 6.8])
+def shinProf(): LimbProfile = MkLimbProfile([0.0, 0.14, 0.32, 0.78, 0.88, 1.0], [6.8, 7.46, 7.7, 4.78, 4.43, 4.1], [6.8, 6.88, 6.14, 4.69, 4.41, 4.1])
+def upperArmProf(): LimbProfile = MkLimbProfile([0.0, 0.14, 0.35, 0.88, 1.0], [8.2, 8.3, 7.11, 5.29, 5.4], [8.2, 7.93, 6.99, 5.89, 5.4])
+def forearmProf(): LimbProfile = MkLimbProfile([0.0, 0.14, 0.3, 0.88, 1.0], [5.4, 5.87, 5.9, 3.92, 3.7], [5.4, 5.49, 5.31, 3.96, 3.7])
 
 def organicLimb(a: (Float, Float), b: (Float, Float), prof: LimbProfile, k: Float): List ShapePrim =
     match (a, b, prof) {
@@ -910,10 +919,9 @@ def organicLimb(a: (Float, Float), b: (Float, Float), prof: LimbProfile, k: Floa
                 (Cons(l0, _), Cons(r0, _)) -> maxFloat(l0, r0),
                 _ -> 6.0,
             };
-            let nL = listLen(lsScaled);
-            let nR = listLen(rsScaled);
-            let rEnd = minFloat(listNthOr(lsScaled, nL - 1, 4.0), listNthOr(rsScaled, nR - 1, 4.0));
-            [sPoly(ribbonPts(pts, lsScaled, rsScaled)), sCircle(a, rStart), sCircle(b, rEnd)]
+            // Each joint cap belongs to the downstream segment (or hand/foot).
+            // It is painted once even when the elbow or knee folds completely.
+            [sPoly(ribbonPts(pts, lsScaled, rsScaled)), sCircle(a, rStart)]
         },
     }
 
@@ -923,7 +931,7 @@ def handShapes(elbow: (Float, Float), wrist: (Float, Float), shape: HandShape, k
     let (_, ryPos) = ptRot(dir, 90.0);
     let upSide = if (ryNeg <= ryPos) -1.0 else 1.0;
     let bend = (deg: Float) -> ptRot(dir, deg * upSide);
-    match shape {
+    let hand = match shape {
         HandFinger -> {
             let c = ptAdd(wrist, dir, 3.4 * k);
             let n = ptRot(dir, 90.0);
@@ -960,14 +968,18 @@ def handShapes(elbow: (Float, Float), wrist: (Float, Float), shape: HandShape, k
             ];
             [sPoly(closedCurvePts(pts))]
         },
-    }
+    };
+    Cons(sCircle(wrist, 3.7 * k), hand)
 }
 
 def footShapes(knee: (Float, Float), ankle: (Float, Float), planted: Bool, k: Float): List ShapePrim = {
     let (fx, fy) = if (planted) (1.0, 0.0) else ptUnit(ptRot(ptUnit(ptSub(ankle, knee)), -18.0));
     let ux = fy;
     let uy = -fx;
-    let (gx, gy) = ptAdd(ankle, (ux, uy), -ankleHeight());
+    // The planted sole stays on its ground line. Tuck the rotated shoe
+    // closer to the ankle when airborne so its heel flows into the shin.
+    let soleOffset = if (planted) ankleHeight() else ankleHeight() * 0.68;
+    let (gx, gy) = ptAdd(ankle, (ux, uy), -soleOffset);
     let mkPt = (x: Float, h: Float) -> (gx + fx * x * k + ux * h, gy + fy * x * k + uy * h);
     let shoe = listMap(ink_marks.shoe(), (pt) -> match pt { (x, h) -> mkPt(x, h) });
     [sCircle(ankle, 4.1 * k), sPoly(shoe)]
@@ -1228,9 +1240,9 @@ pub def buildActorParts(
         )
     );
 
-    let mHairPart =
+    let (mHairPart, extraBodyJoins) =
         if (!isFemale) {
-            None
+            (None, Nil)
         } else if (maiden) {
             let sway1 = swingWave(hairPhase, 0.4) * 2.5;
             let sway2 = swingWave(hairPhase, 1.1) * 6.0;
@@ -1253,7 +1265,14 @@ pub def buildActorParts(
                 sCircle(bun, 6.8),
                 sCircle(bunTop, 4.6)
             ];
-            Some(MkActorPart { apKey: "hair", apShapes: hShapes })
+            let hb = listAppend(hShapes, bodyShapes);
+            (
+                Some(MkActorPart { apKey: "hair", apShapes: hShapes, apJoins: Nil }),
+                [
+                    MkJoinPatch { jpAt: looseRoot, jpRadius: 10.0, jpShapes: hb },
+                    MkJoinPatch { jpAt: bun, jpRadius: 8.0, jpShapes: hb }
+                ]
+            )
         } else {
             let sway1 = swingWave(hairPhase, 0.4) * 2.5;
             let sway2 = swingWave(hairPhase, 1.1) * 6.0;
@@ -1268,15 +1287,45 @@ pub def buildActorParts(
                 sPoly(ribbonPts([onHead(-2.0, -1.0), apex, hanging(21.0, 8.0, 28.0, sway1 * 0.4), hanging(22.0, 34.0, 28.0, sway1), hanging(15.0, 64.0, 28.0, sway2)], [3.6, 5.2, 6.4, 5.0, 0.6], [3.6, 5.2, 6.4, 5.0, 0.6])),
                 sCircle(onHead(1.0, 1.0), 4.6)
             ];
-            Some(MkActorPart { apKey: "hair", apShapes: hShapes })
+            (
+                Some(MkActorPart { apKey: "hair", apShapes: hShapes, apJoins: Nil }),
+                [MkJoinPatch { jpAt: root, jpRadius: 8.0, jpShapes: listAppend(hShapes, bodyShapes) }]
+            )
         };
 
+    let baseBodyJoins = [
+        MkJoinPatch { jpAt: p.spHip, jpRadius: 10.5 * k + 10.0, jpShapes: listAppend(backLegShapes, bodyShapes) },
+        MkJoinPatch { jpAt: p.spShoulder, jpRadius: 8.4 * k + 8.0, jpShapes: listAppend(backArmShapes, bodyShapes) }
+    ];
+    let bodyPart = MkActorPart {
+        apKey: "body",
+        apShapes: bodyShapes,
+        apJoins: listAppend(baseBodyJoins, extraBodyJoins),
+    };
+    let frontLegPart = MkActorPart {
+        apKey: "front-leg",
+        apShapes: frontLegShapes,
+        apJoins: [MkJoinPatch {
+            jpAt: p.spHip,
+            jpRadius: 10.5 * k + 10.0,
+            jpShapes: listAppend(backLegShapes, listAppend(bodyShapes, frontLegShapes)),
+        }],
+    };
+    let frontArmPart = MkActorPart {
+        apKey: "front-arm",
+        apShapes: frontArmShapes,
+        apJoins: [MkJoinPatch {
+            jpAt: p.spShoulder,
+            jpRadius: 8.4 * k + 8.0,
+            jpShapes: listAppend(backArmShapes, listAppend(bodyShapes, frontArmShapes)),
+        }],
+    };
     let coreParts = [
-        MkActorPart { apKey: "back-leg", apShapes: backLegShapes },
-        MkActorPart { apKey: "back-arm", apShapes: backArmShapes },
-        MkActorPart { apKey: "body", apShapes: bodyShapes },
-        MkActorPart { apKey: "front-leg", apShapes: frontLegShapes },
-        MkActorPart { apKey: "front-arm", apShapes: frontArmShapes }
+        MkActorPart { apKey: "back-leg", apShapes: backLegShapes, apJoins: Nil },
+        MkActorPart { apKey: "back-arm", apShapes: backArmShapes, apJoins: Nil },
+        bodyPart,
+        frontLegPart,
+        frontArmPart
     ];
     match mHairPart {
         Some(hp) -> Cons(hp, coreParts),
