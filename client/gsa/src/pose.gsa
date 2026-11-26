@@ -1001,29 +1001,12 @@ def footShapes(knee: (Float, Float), ankle: (Float, Float), planted: Bool, k: Fl
     [sCircle(ankle, 4.1 * k), sPoly(closedCurvePts(shoe))]
 }
 
-// The collar and head use their bone axes. Only the cloth below the sash
-// can swing away from the torso during a leap or a low stance.
-def fitCutout(
-    points: List (Float, Float), origin: (Float, Float), up: (Float, Float),
-    hemShift: (Float, Float)
-): ShapePrim = {
-    let (ox, oy) = origin;
-    let (ux, uy) = up;
-    let (dx, dy) = hemShift;
-    sPoly(listMap(points, (pt) -> match pt {
-        (x, y) -> {
-            let free = maxFloat(0.0, y - 32.0);
-            (ox - uy * x - ux * y + dx * free, oy + ux * x - uy * y + dy * free)
-        },
-    }))
-}
-
-def headShape(center: (Float, Float), up: (Float, Float), r: Float): ShapePrim =
+def headShape(center: (Float, Float), up: (Float, Float), r: Float, female: Bool): ShapePrim =
     match (center, up) {
         ((cx, cy), (ux, uy)) -> {
             let fx = uy;
             let fy = -ux;
-            let rawPts = [
+            let rawPts = if (female) female_head.outline() else [
                 (0.08, 1.0),
                 (-0.62, 0.84),
                 (-0.98, 0.3),
@@ -1038,7 +1021,7 @@ def headShape(center: (Float, Float), up: (Float, Float), r: Float): ShapePrim =
             let pts = listMap(rawPts, (p) -> match p {
                 (x, y) -> (cx + fx * x * r + ux * y * r, cy + fy * x * r + uy * y * r),
             });
-            sPoly(closedCurvePts(pts))
+            sPoly(if (female) pts else closedCurvePts(pts))
         },
     }
 
@@ -1195,7 +1178,7 @@ pub def buildActorParts(
     };
     let isFemale = profileEq(profile, ProfileFemale);
     let maiden = isFemale && lookEq(look, LookMaiden);
-    let k = if (isFemale) 0.86 else 1.0;
+    let k = if (maiden) 0.86 else 1.0;
     let b = p.spBones;
     let headR = b.bHeadRadius - (if (maiden) 1.2 else 0.0);
     let torsoAxis = ptUnit(ptSub(p.spNeck, p.spHip));
@@ -1206,9 +1189,9 @@ pub def buildActorParts(
     let bx = uy;
     let by = -ux;
     let headBack = (bx, by);
-    let headC = if (isFemale) ptAdd(p.spHead, headUp, 3.2) else p.spHead;
+    let headC = if (maiden) ptAdd(p.spHead, headUp, -1.2) else p.spHead;
     let (hcx, hcy) = headC;
-    let root = ptAdd(ptAdd(headC, headUp, headR * 0.5), headBack, headR * 0.62);
+    let root = ptAdd(ptAdd(p.spHead, headUp, headR * 0.5), headBack, headR * 0.62);
     let (rx, ry) = root;
     let (handF, handB) = p.spHands;
 
@@ -1230,21 +1213,16 @@ pub def buildActorParts(
         )
     ), -4.0);
 
-    let bodyShapes =
-        if (isFemale) {
-            let (tx, ty) = torsoAxis;
-            let clothTilt = backAngle * 0.45 + degToRad(clampFloat(-18.0, 35.0, upperDeg * 0.55));
-            [
-                fitCutout(female_cutouts.jacket(), p.spNeck, torsoAxis, (tx - sin(clothTilt), ty + cos(clothTilt))),
-                fitCutout(female_cutouts.head(), headC, headUp, (0.0, 0.0))
-            ]
-        } else [
-            sPoly(ribbonPts([chest, waist, p.spHip], [13.5, 10.6, 11.5], [13.5, 10.6, 11.5])),
-            sCircle(chest, 13.5),
-            sCircle(p.spHip, 11.5),
-            sPoly(taperPts(p.spNeck, headC, 8.0, 8.0)),
-            headShape(headC, headUp, headR)
-        ];
+    let chestR = if (maiden) 11.4 else 13.5;
+    let waistR = if (maiden) 8.6 else 10.6;
+    let pelvisR = if (maiden) 11.0 else 11.5;
+    let bodyShapes = [
+        sPoly(ribbonPts([chest, waist, p.spHip], [chestR, waistR, pelvisR], [chestR, waistR, pelvisR])),
+        sCircle(chest, chestR),
+        sCircle(p.spHip, pelvisR),
+        sPoly(taperPts(p.spNeck, headC, 8.0 * k, 8.0 * k)),
+        headShape(headC, headUp, headR, isFemale)
+    ];
 
     let frontLegShapes = listAppend(
         organicLimb(p.spHip, p.spKnee, thighProf(), k),
@@ -1323,10 +1301,8 @@ pub def buildActorParts(
             )
         };
 
-    // Blend the whole short hem into the thighs, including the back corner.
-    let hipJoinRadius = if (isFemale) 34.0 else 10.5 * k + 10.0;
     let baseBodyJoins = [
-        MkJoinPatch { jpAt: p.spHip, jpRadius: hipJoinRadius, jpShapes: listAppend(backLegShapes, bodyShapes) },
+        MkJoinPatch { jpAt: p.spHip, jpRadius: 10.5 * k + 10.0, jpShapes: listAppend(backLegShapes, bodyShapes) },
         MkJoinPatch { jpAt: p.spShoulder, jpRadius: 8.4 * k + 8.0, jpShapes: listAppend(backArmShapes, bodyShapes) }
     ];
     let bodyPart = MkActorPart {
@@ -1339,7 +1315,7 @@ pub def buildActorParts(
         apShapes: frontLegShapes,
         apJoins: [MkJoinPatch {
             jpAt: p.spHip,
-            jpRadius: hipJoinRadius,
+            jpRadius: 10.5 * k + 10.0,
             jpShapes: listAppend(backLegShapes, listAppend(bodyShapes, frontLegShapes)),
         }],
     };
