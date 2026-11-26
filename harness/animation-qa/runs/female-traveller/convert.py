@@ -13,7 +13,7 @@ output = root / f"client/gsa/src/{profile}_head.gsa"
 alpha = cv2.imread(str(source), cv2.IMREAD_UNCHANGED)[:, :, 3]
 contours, _ = cv2.findContours((alpha >= 128).astype("uint8"), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 # Retain the registration and simplification of the original profile cutout.
-anchor_x, anchor_y = (169, 177) if profile == "female" else (163, 187)
+anchor_x, anchor_y = (169, 177) if profile == "female" else (196, 187)
 scale = 0.078
 edge = cv2.approxPolyDP(max(contours, key=cv2.contourArea), 0.14 / scale, True)[:, 0]
 pairs = [f"({(x - anchor_x) * scale:.2f}, {(y - anchor_y) * scale:.2f})" for x, y in edge]
