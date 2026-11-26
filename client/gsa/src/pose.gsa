@@ -1001,11 +1001,35 @@ def footShapes(knee: (Float, Float), ankle: (Float, Float), planted: Bool, k: Fl
     [sCircle(ankle, 4.1 * k), sPoly(closedCurvePts(shoe))]
 }
 
-def headShape(outline: List (Float, Float), center: (Float, Float), up: (Float, Float), scale: Float): ShapePrim = {
+def headShape(center: (Float, Float), up: (Float, Float), r: Float): ShapePrim =
+    match (center, up) {
+        ((cx, cy), (ux, uy)) -> {
+            let fx = uy;
+            let fy = -ux;
+            let rawPts = [
+                (0.08, 1.0),
+                (-0.62, 0.84),
+                (-0.98, 0.3),
+                (-0.92, -0.32),
+                (-0.52, -0.78),
+                (0.12, -0.98),
+                (0.58, -0.8),
+                (0.84, -0.36),
+                (0.9, 0.2),
+                (0.66, 0.74)
+            ];
+            let pts = listMap(rawPts, (p) -> match p {
+                (x, y) -> (cx + fx * x * r + ux * y * r, cy + fy * x * r + uy * y * r),
+            });
+            sPoly(closedCurvePts(pts))
+        },
+    }
+
+def femaleHeadShape(center: (Float, Float), up: (Float, Float)): ShapePrim = {
     let (cx, cy) = center;
     let (ux, uy) = up;
-    sPoly(listMap(outline, (pt) -> match pt {
-        (x, y) -> (cx - (uy * x + ux * y) * scale, cy + (ux * x - uy * y) * scale),
+    sPoly(listMap(female_head.outline(), (pt) -> match pt {
+        (x, y) -> (cx - uy * x - ux * y, cy + ux * x - uy * y),
     }))
 }
 
@@ -1173,8 +1197,7 @@ pub def buildActorParts(
     let bx = uy;
     let by = -ux;
     let headBack = (bx, by);
-    let headScale = if (isFemale) 1.0 else headR / 15.0;
-    let headC = ptAdd(p.spHead, headUp, 3.2 * headScale);
+    let headC = if (isFemale) ptAdd(p.spHead, headUp, 3.2) else p.spHead;
     let (hcx, hcy) = headC;
     let root = ptAdd(ptAdd(headC, headUp, headR * 0.5), headBack, headR * 0.62);
     let (rx, ry) = root;
@@ -1201,33 +1224,14 @@ pub def buildActorParts(
     let chestR = if (maiden) 11.4 else 13.5;
     let waistR = if (maiden) 8.6 else 10.6;
     let pelvisR = if (maiden) 11.0 else 11.5;
-    let outline = if (isFemale) female_head.outline() else {
-        // Bend only the free length below the tie. Express gravity and motion
-        // in head-local space before the complete contour is put on the rig.
-        let headAngle = atan2(ux, -uy);
-        // The tie lifts the upper length off the shoulder; the ends hang lower.
-        let a = upper - headAngle + degToRad(20.0);
-        let bTip = tip - headAngle + degToRad(8.0);
-        let upperDx = -sin(a);
-        let upperDy = cos(a) - 1.0;
-        let tipDx = -sin(bTip);
-        let tipDy = cos(bTip) - 1.0;
-        let tail = listMap(male_head.looseHair(), (pt) -> match pt {
-            (x, y) -> {
-                let drop = maxFloat(0.0, y - male_head.tieY());
-                let first = minFloat(9.0, drop);
-                let last = drop - first;
-                (x + upperDx * first + tipDx * last, y + upperDy * first + tipDy * last)
-            },
-        });
-        listAppend(male_head.outline(), tail)
-    };
-    let bodyShapes = [
+    let bodyShapes = listAppend([
         sPoly(ribbonPts([chest, waist, p.spHip], [chestR, waistR, pelvisR], [chestR, waistR, pelvisR])),
         sCircle(chest, chestR),
-        sCircle(p.spHip, pelvisR),
-        headShape(outline, headC, headUp, headScale)
-    ];
+        sCircle(p.spHip, pelvisR)
+    ], if (isFemale) [femaleHeadShape(headC, headUp)] else [
+        sPoly(taperPts(p.spNeck, headC, 8.0 * k, 8.0 * k)),
+        headShape(headC, headUp, headR)
+    ]);
 
     let frontLegShapes = listAppend(
         organicLimb(p.spHip, p.spKnee, thighProf(), k),

@@ -29,7 +29,7 @@ use protocol.{
 use pose.{
     CombatStyle, StyleFist, StyleSword, styleEq, parseCombatStyle,
     WeaponVisual, WeaponJian, parseWeaponVisual, weaponRigStyle, weaponTipOf, weaponTasselAnchor, weaponTasselKind,
-    VisualProfile, ProfileMale, ProfileFemale, parseVisualProfile,
+    VisualProfile, ProfileMale, ProfileFemale, parseVisualProfile, profileEq,
     LookStyle, SvgPose, ShapePrim, SCircle, SPoly,
     allPoseIds, svgPose, blendPose, swordTipOf, swordPommelOf, buildActorParts
 }
@@ -873,9 +873,10 @@ pub def renderBattleStage(stageRect: Rect, _ptr: Vec2, dl: DrawList, m: ClientMo
     let near = historyAt(52.0);
     let mid = historyAt(115.0);
     let far = historyAt(200.0);
-    let attachmentAngles = (side: BattleSide, pose: SvgPose, fig: battle.FigureSample) -> {
+    let attachmentAngles = (side: BattleSide, pose: SvgPose, fig: battle.FigureSample, prof: VisualProfile) -> {
+        let hair = profileEq(prof, ProfileFemale);
         let hasTassel = optIsSome(weaponTasselAnchor(pose, fig.fsVisual.avWeapon));
-        if (reduced || !optIsSome(mTl)) ((0.0, 0.0), (0.0, 0.0))
+        if (reduced || !optIsSome(mTl) || (!hair && !hasTassel)) ((0.0, 0.0), (0.0, 0.0))
         else {
             let sign = if (sideEq(side, SidePlayer)) 1.0 else -1.0;
             let anchors = (p: SvgPose, f: battle.FigureSample) -> {
@@ -901,7 +902,7 @@ pub def renderBattleStage(stageRect: Rect, _ptr: Vec2, dl: DrawList, m: ClientMo
             let (h0, p0) = anchors(pose, fig);
             let (h1, p1) = priorAnchors(near);
             let (h2, p2) = priorAnchors(mid);
-            let hairAngles = {
+            let hairAngles = if (hair) {
                 let (h3, _) = priorAnchors(far);
                 let v1 = h0 - h1;
                 let v2 = h1 - h2;
@@ -912,7 +913,7 @@ pub def renderBattleStage(stageRect: Rect, _ptr: Vec2, dl: DrawList, m: ClientMo
                 let bend = (drive: Float) -> atan2(drive, 39.0) * (if (drive >= 0.0) 48.0 else 24.0) - tilt;
                 (bend(1.25 * v1 + 0.22 * v2 - 0.23 * v3),
                  bend(0.24 * v1 + 1.05 * v2 - 0.18 * v3))
-            };
+            } else (0.0, 0.0);
             let tassel = if (hasTassel) {
                 let d1 = p0 - p1;
                 let d2 = p0 - p2;
@@ -921,8 +922,8 @@ pub def renderBattleStage(stageRect: Rect, _ptr: Vec2, dl: DrawList, m: ClientMo
             (hairAngles, tassel)
         }
     };
-    let (eHair, eTassel) = attachmentAngles(SideEnemy, ePose, eFig);
-    let (pHair, pTassel) = attachmentAngles(SidePlayer, pPose, pFig);
+    let (eHair, eTassel) = attachmentAngles(SideEnemy, ePose, eFig, eProf);
+    let (pHair, pTassel) = attachmentAngles(SidePlayer, pPose, pFig, pProf);
     let hairClock = if (reduced) 0.0 else if (optIsSome(mTl)) elapsed else m.cmVp.vpClockMs;
     drawInkActor(dl, ex, ey, 0.0 - fitScale, eFig.fsAngle, eFill, outlineCol, eFig.fsFlash, eFig.fsAlpha, ePose, eFig.fsVisual.avWeapon, eProf, m.cmVp.vpLookStyle, eHair, eTassel, hairClock + 360.0);
     drawInkActor(dl, px, py, fitScale, pFig.fsAngle, pFill, outlineCol, pFig.fsFlash, pFig.fsAlpha, pPose, pFig.fsVisual.avWeapon, pProf, m.cmVp.vpLookStyle, pHair, pTassel, hairClock);
