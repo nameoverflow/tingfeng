@@ -146,6 +146,8 @@ export async function mountKaguraApp(options = {}) {
   let lastGcLive = 0;
   let activeImeId = "";
   let lastImeKey = "none";
+  let lastCaretActivityMs = 0;
+  let lastDrawSnap = null;
   let frameCount = 0;
   let presentCount = 0;
 
@@ -195,13 +197,16 @@ export async function mountKaguraApp(options = {}) {
       }
       return;
     }
-    const key = `${info.id}:${Math.round(info.x)},${Math.round(info.y)},${Math.round(info.w)},${Math.round(info.h)}`;
+    const padPx = Math.max(0, Math.round(info.padX || 0));
+    const key = `${info.id}:${Math.round(info.x)},${Math.round(info.y)},${Math.round(info.w)},${Math.round(info.h)},${padPx}`;
     if (key !== lastImeKey) {
       lastImeKey = key;
       imeInput.style.left = `${info.x}px`;
       imeInput.style.top = `${info.y}px`;
       imeInput.style.width = `${info.w}px`;
       imeInput.style.height = `${info.h}px`;
+      imeInput.style.paddingLeft = `${padPx}px`;
+      imeInput.style.paddingRight = `${padPx}px`;
       imeInput.style.pointerEvents = "auto";
     }
     if (document.activeElement !== imeInput && imeInput.value !== info.val) {
@@ -209,16 +214,7 @@ export async function mountKaguraApp(options = {}) {
     }
   }
 
-  function executeBinaryDrawList(wordsPtr, wordCount, strsPtr, strCount) {
-    presentCount++;
-    const buf = wasmExports.memory.buffer;
-    const wBase = (wordsPtr >>> 0) + 8;
-    const sBase = (strsPtr >>> 0) + 8;
-    const i32 = new Int32Array(buf, wBase, wordCount * 2);
-    const f64 = new Float64Array(buf, wBase, wordCount);
-    const strPtrs = strCount > 0 ? new Uint32Array(buf, sBase, strCount) : null;
-    const getStr = (idx) => (strPtrs && idx >= 0 && idx < strCount ? readStr(strPtrs[idx]) : "");
-
+  function renderDrawListArrays(i32, f64, wordCount, getStr) {
     let frameIme = null;
     ctx.save();
     ctx.scale(dpr, dpr);
@@ -487,16 +483,66 @@ export async function mountKaguraApp(options = {}) {
           w += 1;
           break;
         }
-        case 14: { // OP_IME_INPUT (6 words)
-          frameIme = {
-            id: getStr(aux),
-            val: getStr(i32[(w + 1) * 2]),
-            x: f64[w + 2],
-            y: f64[w + 3],
-            w: f64[w + 4],
-            h: f64[w + 5],
-          };
-          w += 6;
+        case 14: { // OP_IME_INPUT (10 words): host-measured text + sub-pixel selectionStart caret
+          const id = getStr(aux);
+          const val = getStr(i32[(w + 1) * 2]);
+          const ph = getStr(i32[(w + 1) * 2 + 1]);
+          const bx = f64[w + 2], by = f64[w + 3], bw = f64[w + 4], bh = f64[w + 5];
+          const padX = f64[w + 6], sz = f64[w + 7];
+          const styleBits = i32[(w + 8) * 2], textCol = i32[(w + 8) * 2 + 1];
+          const phCol = i32[(w + 9) * 2], caretCol = i32[(w + 9) * 2 + 1];
+          const famCode = (styleBits >>> 16) & 255;
+          const weight = Math.max(100, Math.min(900, (styleBits & 255) * 100));
+          const fam = famCode === 1 ? SERIF_FONT : famCode === 2 ? MONO_FONT : SANS_FONT;
+
+          const liveVal = (imeInput && document.activeElement === imeInput && activeImeId === id && imeInput.value !== undefined)
+            ? imeInput.value
+            : val;
+          let caretIdx = liveVal.length;
+          if (imeInput && document.activeElement === imeInput && activeImeId === id && typeof imeInput.selectionStart === "number") {
+            caretIdx = Math.max(0, Math.min(liveVal.length, imeInput.selectionStart));
+          }
+
+          const ix = bx + padX;
+          const iw = Math.max(4, bw - padX * 2);
+          const ty = by + bh * 0.5 + sz * 0.36;
+
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(ix - 1, by + 2, iw + 2, Math.max(0, bh - 4));
+          ctx.clip();
+          ctx.font = `${weight} ${sz}px ${fam}`;
+          ctx.textAlign = "left";
+
+          const prefixW = caretIdx > 0 ? ctx.measureText(liveVal.slice(0, caretIdx)).width : 0;
+          const scrollX = prefixW > iw - 4 ? prefixW - (iw - 4) : 0;
+
+          if (liveVal.length === 0) {
+            if (ph) {
+              ctx.fillStyle = unpackCssColor(phCol);
+              ctx.fillText(ph, ix, ty);
+            }
+          } else {
+            ctx.fillStyle = unpackCssColor(textCol);
+            ctx.fillText(liveVal, ix - scrollX, ty);
+          }
+
+          const now = performance.now();
+          const blinkOn = (now - lastCaretActivityMs < 480) || (Math.floor(now / 530) % 2 === 0);
+          if (blinkOn && caretCol !== 0) {
+            const padAfter = caretIdx >= liveVal.length && liveVal.length > 0 ? 1.0 : 0.0;
+            const cx = ix + prefixW - scrollX + padAfter;
+            const ch = sz * 1.18;
+            const cy = by + (bh - ch) * 0.5;
+            ctx.fillStyle = unpackCssColor(caretCol);
+            ctx.beginPath();
+            ctx.roundRect(cx, cy, 1.6, ch, 0.8);
+            ctx.fill();
+          }
+          ctx.restore();
+
+          frameIme = { id, val: liveVal, x: bx, y: by, w: bw, h: bh, padX };
+          w += 10;
           break;
         }
         case 15: { // OP_IME_CLEAR (1 word)
@@ -521,6 +567,38 @@ export async function mountKaguraApp(options = {}) {
 
     ctx.restore();
     syncImeBox(frameIme);
+  }
+
+  function executeBinaryDrawList(wordsPtr, wordCount, strsPtr, strCount) {
+    presentCount++;
+    const buf = wasmExports.memory.buffer;
+    const wBase = (wordsPtr >>> 0) + 8;
+    const sBase = (strsPtr >>> 0) + 8;
+    const i32View = new Int32Array(buf, wBase, wordCount * 2);
+    const f64View = new Float64Array(buf, wBase, wordCount);
+    const strPtrs = strCount > 0 ? new Uint32Array(buf, sBase, strCount) : null;
+    const strs = new Array(strCount);
+    for (let i = 0; i < strCount; i++) strs[i] = readStr(strPtrs[i]);
+
+    const wordBytes = new ArrayBuffer(wordCount * 8);
+    new Float64Array(wordBytes).set(f64View);
+    lastDrawSnap = {
+      i32: new Int32Array(wordBytes),
+      f64: new Float64Array(wordBytes),
+      wordCount,
+      strs,
+    };
+    renderDrawListArrays(i32View, f64View, wordCount, (idx) => (idx >= 0 && idx < strCount ? strs[idx] : ""));
+  }
+
+  function repaintCachedFrame() {
+    if (!lastDrawSnap) return;
+    renderDrawListArrays(
+      lastDrawSnap.i32,
+      lastDrawSnap.f64,
+      lastDrawSnap.wordCount,
+      (idx) => (idx >= 0 && idx < lastDrawSnap.strs.length ? lastDrawSnap.strs[idx] : "")
+    );
   }
 
   // Dual WebSocket + Optional HTTP Long-Poll Bridge (`options.httpBridgePrefix`, e.g. "/api/bridge")
@@ -672,10 +750,12 @@ export async function mountKaguraApp(options = {}) {
         const id = readStr(idPtr);
         const val = readStr(valPtr);
         activeImeId = id;
-        syncImeBox({ id, val, x, y, w, h });
+        lastCaretActivityMs = performance.now();
+        syncImeBox({ id, val, x, y, w, h, padX: 10 });
         if (imeInput) {
           imeInput.value = val;
           imeInput.focus({ preventScroll: true });
+          try { imeInput.setSelectionRange(val.length, val.length); } catch (_) {}
         }
       },
       kagura_host_blur_ime: () => {
@@ -769,13 +849,25 @@ export async function mountKaguraApp(options = {}) {
 
   if (imeInput) {
     const syncText = () => {
+      lastCaretActivityMs = performance.now();
       if (activeImeId && wasmExports.kagura_text_input) {
         invokeWasm(() => wasmExports.kagura_text_input(writeStr(activeImeId), writeStr(imeInput.value)));
+      }
+      repaintCachedFrame();
+    };
+    const syncSelectionOnly = () => {
+      if (activeImeId && document.activeElement === imeInput) {
+        lastCaretActivityMs = performance.now();
+        repaintCachedFrame();
       }
     };
     imeInput.addEventListener("input", syncText);
     imeInput.addEventListener("compositionupdate", syncText);
     imeInput.addEventListener("compositionend", syncText);
+    imeInput.addEventListener("keyup", syncSelectionOnly);
+    imeInput.addEventListener("mouseup", syncSelectionOnly);
+    imeInput.addEventListener("touchend", syncSelectionOnly);
+    document.addEventListener("selectionchange", syncSelectionOnly);
     imeInput.addEventListener("keydown", (ev) => {
       if (ev.key === "Enter" && !ev.isComposing && activeImeId && wasmExports.kagura_text_submit) {
         ev.preventDefault();

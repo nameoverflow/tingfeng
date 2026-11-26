@@ -73,13 +73,17 @@ def isLogPinned(): Bool = match cellGet(runtimeRef) {
 
 def translateClientCmd(c: ClientCmd): Cmd ClientMsg = match c {
     CmdSendWs(payload) -> CmdSendNet(payload),
-    CmdOpenConfigWs -> CmdConnectNet("config_only", "", ""),
+    CmdOpenConfigWs -> {
+        cellSet(activeWsModeRef, "config_only");
+        CmdConnectNet("config_only", "", "")
+    },
     CmdConnectWs(u, p, mChoice) -> {
         cellSet(pendingCreationRef, mChoice);
         let modeStr = match mChoice {
             None -> "login",
             Some(_) -> "create",
         };
+        cellSet(activeWsModeRef, modeStr);
         CmdConnectNet(modeStr, u, p)
     },
     CmdSetCursor(_) -> CmdNone,
