@@ -1,24 +1,9 @@
-// Tingfeng (《听风录》) Pure-Geisha Wasm Client Entry Point (`client/gsa/src/mod.gsa`),
+// Tingfeng (《听风录》) Pure-Geisha Wasm Client Entry Point (`client/gsa/src/main.gsa`),
 // powered by `geisha-lang/kagura` (`kagura.gfx`, `kagura.ui`, `kagura.stage`, `kagura.app`, `kagura.host`).
-
-mod prelude
-mod ordmap
-mod i18n
-mod protocol
-mod pose
-mod catalog
-mod battle
-mod state
-mod theme
-mod stage_view
-mod ui_view
-mod spec
 
 use std.option.{Option, Some, None}
 use std.result.{Ok, Err}
 use std.list.{listAppend, listMap}
-use sys.env.argCount
-use spec.runClientCli
 use kagura.gfx.{Rect, maxFloat}
 use kagura.app.{
     Cmd, CmdNone, CmdSendNet, CmdConnectNet,
@@ -376,6 +361,4 @@ pub def tf_lab_state_json(): String =
         None -> "{}",
     }
 
-def main(): Void =
-    if (argCount() > 1) runClientCli()
-    else ()
+def main(): Void = ()

@@ -24,100 +24,57 @@ function whichCmd(cmd) {
   }
 }
 
-export function resolveGeishaToolchain() {
+export function resolveGeishaBin() {
   const home = process.env.HOME || "";
-  const buildDirs = [
-    path.resolve(REPO_ROOT, "../geisha.gsa/build"),
-    path.join(home, "code/geisha.gsa/build"),
-  ];
-
   const geisha =
     firstExisting([process.env.GEISHA]) ||
     whichCmd("geisha") ||
-    whichCmd("geisha3") ||
-    whichCmd("geisha2") ||
-    firstExisting(buildDirs.flatMap((d) => [
-      path.join(d, "geisha"),
-      path.join(d, "geisha3"),
-      path.join(d, "geisha2"),
-    ]));
+    firstExisting([
+      path.join(home, ".geisha/bin/geisha"),
+      path.join(home, ".local/bin/geisha"),
+      path.resolve(REPO_ROOT, "../geisha.gsa/build/geisha3"),
+      path.join(home, "code/geisha.gsa/build/geisha3"),
+    ]);
 
   if (!geisha) {
-    throw new Error("Geisha compiler not found. Set GEISHA=/path/to/geisha3 or build ../geisha.gsa.");
+    throw new Error("Geisha compiler not found. Install geisha into ~/.geisha/bin or set GEISHA=/path/to/geisha.");
   }
-
-  const geishaDir = path.dirname(geisha);
-  const nativeRuntime = firstExisting([
-    process.env.GEISHA_RUNTIME,
-    path.join(geishaDir, "libgeisha_runtime.a"),
-    ...buildDirs.map((d) => path.join(d, "libgeisha_runtime.a")),
-  ]);
-
-  const wasmRuntime = firstExisting([
-    process.env.GEISHA_WASM_RUNTIME,
-    path.join(geishaDir, "wasm_rt.o"),
-    ...buildDirs.map((d) => path.join(d, "wasm_rt.o")),
-  ]);
-
-  const kaguraLib = firstExisting([
-    process.env.KAGURA_LIB,
-    path.resolve(REPO_ROOT, "../kagura/lib"),
-    path.join(home, "code/kagura/lib"),
-  ]);
-  if (!kaguraLib) {
-    throw new Error("Kagura library not found. Set KAGURA_LIB=/path/to/kagura/lib or clone ../kagura.");
-  }
-
-  const kaguraWebHost = firstExisting([
-    path.resolve(kaguraLib, "../host/web/kagura.js"),
-    path.join(CLIENT_DIR, "public/kagura.js"),
-  ]);
-
-  return { geisha, nativeRuntime, wasmRuntime, kaguraLib, kaguraWebHost };
+  return geisha;
 }
 
 export function buildNativeClientSpec() {
-  const { geisha, nativeRuntime, kaguraLib } = resolveGeishaToolchain();
-  const buildDir = path.join(GSA_DIR, "build");
-  fs.mkdirSync(buildDir, { recursive: true });
-  const bin = path.join(buildDir, "client-spec");
-  const srcDir = path.join(GSA_DIR, "src");
-  const entry = path.join(srcDir, "mod.gsa");
-  const stubC = path.join(GSA_DIR, "kagura_host_stub.c");
+  const geisha = resolveGeishaBin();
+  const bin = path.join(GSA_DIR, "build/tests/test_spec");
+  const watchFiles = [
+    path.join(GSA_DIR, "geisha.toml"),
+    path.join(GSA_DIR, "geisha.lock"),
+  ];
+  for (const sub of ["src", "tests"]) {
+    const dir = path.join(GSA_DIR, sub);
+    if (fs.existsSync(dir)) {
+      for (const f of fs.readdirSync(dir)) {
+        if (f.endsWith(".gsa")) watchFiles.push(path.join(dir, f));
+      }
+    }
+  }
 
   let needsBuild = !fs.existsSync(bin);
   if (!needsBuild) {
     const binMtime = fs.statSync(bin).mtimeMs;
-    for (const f of fs.readdirSync(srcDir)) {
-      if (f.endsWith(".gsa")) {
-        if (fs.statSync(path.join(srcDir, f)).mtimeMs > binMtime) {
-          needsBuild = true;
-          break;
-        }
+    for (const f of watchFiles) {
+      if (fs.existsSync(f) && fs.statSync(f).mtimeMs > binMtime) {
+        needsBuild = true;
+        break;
       }
     }
   }
 
   if (needsBuild) {
-    const tmpLl = path.join(buildDir, "client-spec.ll");
-    execFileSync(geisha, ["--src-root", GSA_DIR, "-L", kaguraLib, "-e", "-o", tmpLl, entry], {
-      cwd: CLIENT_DIR,
-      stdio: "inherit",
-    });
-    const ccArgs = [
-      "-target", "arm64-apple-macosx14.0",
-      "-O2", "-Wno-override-module",
-      "-x", "ir", tmpLl,
-      "-x", "none", stubC,
-    ];
-    if (nativeRuntime) ccArgs.push(nativeRuntime);
-    ccArgs.push("-lm", "-lpthread", "-o", bin);
-    execFileSync("cc", ccArgs, {
-      cwd: CLIENT_DIR,
+    execFileSync(geisha, ["test"], {
+      cwd: GSA_DIR,
       env: { ...process.env, MACOSX_DEPLOYMENT_TARGET: "14.0" },
       stdio: "inherit",
     });
-    fs.rmSync(tmpLl, { force: true });
   }
   return bin;
 }

@@ -1,0 +1,16 @@
+name = "tingfeng_client"
+version = "0.3.0"
+entry = "src/main.gsa"
+tests = ["tests/spec.gsa"]
+
+[deps]
+kagura = { git = "github.com/geisha-lang/kagura", version = "0.1.0" }
+
+[target.wasm32]
+exports = [
+  "tf_seed_assets",
+  "tf_ui_action",
+  "tf_lab_cmd",
+  "tf_set_hidden",
+  "tf_lab_state_json",
+]

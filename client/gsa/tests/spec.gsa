@@ -338,3 +338,19 @@ pub def runClientCli(): Void = {
         },
     }
 }
+
+def main(): Void =
+    if (argCount() > 1) runClientCli()
+    else match runPortraitSpec("../..") {
+        Err(msg) -> {
+            eprintLn("✗ FAILED: " + msg);
+            exit(1)
+        },
+        Ok(_) -> match runBattleSpec("../..") {
+            Err(msg) -> {
+                eprintLn("✗ FAILED: " + msg);
+                exit(1)
+            },
+            Ok(_) -> (),
+        },
+    }

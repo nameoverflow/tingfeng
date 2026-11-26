@@ -1,8 +1,8 @@
 // Tingfeng (《听风录》) Thin Kagura Bootstrapper (`client/public/app.js`).
 // All layout, rendering, binary DrawList execution, WebAudio, IME, and WS/HTTP bridging
-// are handled by `geisha-lang/kagura` (`/kagura.js` + `/wasm/tingfeng.wasm`).
+// are handled by `geisha-lang/kagura` (`/wasm/kagura.js` + `/wasm/tingfeng.wasm`).
 
-import { mountKaguraApp } from "/kagura.js";
+import { mountKaguraApp } from "/wasm/kagura.js";
 
 const pageKind = document.body.dataset.page || "game";
 const canvas = document.getElementById("c2d-stage");

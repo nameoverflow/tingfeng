@@ -9,13 +9,13 @@
 - `i18n.gsa`：中英双语文案词典、武学境界称号与系统/错误消息模板。
 - `pose.gsa`、`catalog.gsa`、`battle.gsa`：41 组水墨剪影姿态继承与混合、双骨骼解析逆运动学（2-Bone IK）、`combat_actions/*.json` + `staging.json` 多段伤害拆分、定帧（Hit-Stop）与受击延迟扣血时间轴。
 - `state.gsa`：纯函数客户端状态机 `ClientM`（登录与六步创角、区域方向图弹簧相机、NPC 交谈/学艺/行商、角色与行囊、武学修习与自研、任务日志、实时战斗及 `/battle-lab.html` 动作回放台）。
-- `uicanvas.gsa` & `render.gsa`：单遍流式 `StringBuf` 全画布渲染指令带构建器（含视口裁剪与 `/pose-sheet.html` 姿态图谱）。
-- `mod.gsa` & `spec.gsa`：18 个 `tf_*` WebAssembly 同步导出入口，以及原生肖像/战斗 IK 单元测试套件。
-- `public/`：静态宿主页面（`index.html`、`battle-lab.html`、`pose-sheet.html`）、Canvas2D 指令带执行器与低延迟 WebSocket / HTTP 长轮询双通道桥接。
+- `theme.gsa`、`stage_view.gsa` & `ui_view.gsa`：基于 `geisha-lang/kagura`（`geisha.toml` 声明依赖）的声明式 UI 布局与水墨舞台视图。
+- `main.gsa` & `tests/spec.gsa`：WebAssembly 同步导出入口（`kagura_*` 导出与 `kagura.js` 宿主脚本由 `kagura` 包自动汇总），以及原生肖像/战斗 IK 单元测试套件（`geisha test`）。
+- `public/`：静态宿主页面（`index.html`、`battle-lab.html`、`pose-sheet.html`）、薄引导层 `app.js` 与 `wasm/` 产物目录。
 
 ## 构建与运行
 
-确保已安装 Node.js 与自举 Geisha 编译器（自动探测 `$GEISHA`、`../geisha.gsa/build/` 或 `~/code/geisha.gsa/build/`）：
+确保已安装 Node.js 与 Geisha 工具链（`geisha` 在 `PATH` 或 `~/.geisha/bin/geisha`，依赖通过 `client/gsa/geisha.toml` + `geisha.lock` 自动拉取并缓存于 `~/.geisha/cache`）：
 
 ```bash
 # 启动后端服务器（仓库根目录）
