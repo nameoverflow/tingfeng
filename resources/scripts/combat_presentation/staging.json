@@ -29,7 +29,7 @@
           "leadMs": 110,
           "onsetMs": 120,
           "ghost": 0.32,
-          "hop": 0
+          "hop": 22
         },
         "parry": {
           "push": 4,

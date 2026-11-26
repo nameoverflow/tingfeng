@@ -833,14 +833,8 @@ def commitHitsUpToM(elapsed: Float): ClientM Void =
                         if (sideEq(tl.tlTargetSide, SideEnemy) && combatResEq(lastHit.rhResult, ResHit)) 220.0
                         else fx0.fxEnemyHitFlashMs;
 
-                    let w = m0.cmVp.vpWidth;
-                    let hgt = m0.cmVp.vpHeight;
-                    let stageCx = w * 0.5;
-                    let groundY = minFloat(hgt * 0.58, hgt - 210.0);
                     let sc = sampleBattleScene(Some(tl), elapsed, tl.tlActor.raVisual, tl.tlTarget.rtVisual, m0.cmVp.vpReducedMotion);
-                    let (cx, cy) = sc.scContact;
-                    let wx = stageCx + cx * 0.65;
-                    let wy = groundY + cy;
+                    let (wx, wy) = sc.scContact;
                     let newParts =
                         if (m0.cmVp.vpReducedMotion) Nil
                         else spawnHitParticles((wx, wy), tl.tlActorSide, lastHit.rhResult, lastHit.rhStaging.spForce, roundInt(m0.cmVp.vpClockMs) + lastIdx * 31);
@@ -860,7 +854,7 @@ def commitHitsUpToM(elapsed: Float): ClientM Void =
                             fxPlayerApAnim: fx0.fxPlayerApAnim, fxEnemyApAnim: fx0.fxEnemyApAnim,
                             fxPlayerHitFlashMs: hitFlashP, fxEnemyHitFlashMs: hitFlashE,
                             fxParticles: listAppend(fx0.fxParticles, newParts),
-                            fxShockPos: (wx / maxFloat(1.0, w), 1.0 - wy / maxFloat(1.0, hgt)),
+                            fxShockPos: (wx, wy),
                             fxShockAge: 0.0,
                             fxShockPower: if (m0.cmVp.vpReducedMotion) 0.0 else lastHit.rhStaging.spForce,
                         }

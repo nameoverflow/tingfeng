@@ -21,7 +21,7 @@ use pose.{
     CombatStyle, StyleFist, StyleSword,
     VisualProfile,
     SvgPose, MkSvgPose, PoseLibrary,
-    svgSwordLength, svgPose, shiftPose, reachWith
+    svgSwordLength, svgPose, blendPose, shiftPose, reachWith
 }
 use catalog.{
     PinPoint, PinHand, PinFoot, PinBlade,
@@ -53,8 +53,8 @@ pub def parseBattleSide(raw: String): BattleSide =
     if (raw == "enemy") SideEnemy else SidePlayer
 
 pub def sideHome(s: BattleSide): Float = match s {
-    SidePlayer -> -230.0,
-    SideEnemy -> 230.0,
+    SidePlayer -> -248.0,
+    SideEnemy -> 248.0,
 }
 
 pub data ActorVisual {
@@ -693,7 +693,7 @@ pub def sampleSvgPose(
                 if (!sideEq(side, tl.tlActor.raSide)) {
                     match activeReactionAt(tl, t) {
                         None -> idleP,
-                        Some((hit, _, _)) ->
+                        Some((hit, _, startAt)) ->
                             if (reactEq(hit.rhReaction, ReactNone) || reactEq(hit.rhReaction, ReactEffect) || t >= c.chRestAtMs) idleP
                             else {
                                 let look = match hit.rhReaction {
@@ -705,7 +705,12 @@ pub def sampleSvgPose(
                                     Cons(f, _) -> f.fhFrameId,
                                     Nil -> "hurt",
                                 };
-                                svgPose(lib, optOr(look.rlPose, fallbackFrame), style)
+                                let reactionPose = optOr(look.rlPose, fallbackFrame);
+                                if (reactEq(hit.rhReaction, ReactDodge)) {
+                                    let enter = prog(t, startAt, startAt + look.rlOnsetMs * 0.70);
+                                    let leave = prog(t, c.chRecoverAtMs, c.chRestAtMs);
+                                    blendPose(lib, "idle", reactionPose, smooth01(enter) * (1.0 - smooth01(leave)), style)
+                                } else svgPose(lib, reactionPose, style)
                             },
                     }
                 } else if (tl.tlActor.raMotion == "focus") {
@@ -725,10 +730,27 @@ pub def sampleSvgPose(
                             Some(ap) -> ap.apPose,
                             None -> "approach",
                         };
-                        svgPose(lib, apPose, style)
+                        let d = prog(t, 0.0, arrival);
+                        if (d < 0.24) blendPose(lib, "idle", apPose, smooth01(d / 0.24), style)
+                        else if (d > 0.78) {
+                            let prep = match listHead(keys) { Some(k) -> k.pkPose, None -> apPose };
+                            blendPose(lib, apPose, prep, smooth01((d - 0.78) / 0.22), style)
+                        } else svgPose(lib, apPose, style)
                     } else {
                         let defaultKey = optOr(listHead(keys), MkPoseKey { pkAtMs: 0.0, pkPose: frameId, pkPin: None, pkReach: None, pkContactY: None });
-                        keyedPose(lib, optOr(poseKeyAt(keys, t), defaultKey), tl, style, t)
+                        let key = optOr(poseKeyAt(keys, t), defaultKey);
+                        // Keep the accent pose legible, then sweep into the next
+                        // key. Contact IK still takes over at its exact marker.
+                        match listFind(keys, (k) -> k.pkAtMs > t) {
+                            Some(next) if (!optIsSome(key.pkPin)) -> {
+                                let span = next.pkAtMs - key.pkAtMs;
+                                let window = minFloat(90.0, span * 0.60);
+                                let u = prog(t, next.pkAtMs - window, next.pkAtMs);
+                                if (u > 0.0) blendPose(lib, key.pkPose, next.pkPose, u * u, style)
+                                else svgPose(lib, key.pkPose, style)
+                            },
+                            _ -> keyedPose(lib, key, tl, style, t),
+                        }
                     }
                 }
             },
@@ -746,7 +768,7 @@ def smooth01(v: Float): Float = v * v * (3.0 - 2.0 * v)
 
 def dashIn(p: Float): Float = {
     let u = clamp01(p);
-    1.0 - (1.0 - u) * (1.0 - u)
+    smooth01(clamp01((u - 0.19) / 0.81))
 }
 
 def dashOut(p: Float): Float = smooth01(clamp01(p))
@@ -872,17 +894,26 @@ pub def sampleBattleScene(
                         _ -> clipFrameAt(actorVis.avFrames, maxFloat(0.0, vTime - arrival), tl.tlDurationMs - arrival),
                     };
 
-                let (dashX, dashY) =
+                let (dashX, dashY, dashTilt) =
                     if (attack) {
                         let travel = maxFloat(8.0, sideHome(SideEnemy) - sideHome(SidePlayer) - c.chReach);
                         let d = prog(vTime, 0.0, arrival);
                         let liftH = match tl.tlActor.raApproach { Some(ap) -> ap.apLift, None -> 0.0 };
                         let arc = (p: Float) -> if (p <= 0.0 || p >= 1.0) 0.0 else sin(pi() * p);
+                        // Gather backwards before take-off, then burst forward. Every
+                        // accent resolves to zero before the authored contact key.
+                        let gather = arc(clamp01(d / 0.34));
+                        let flight = arc(dashIn(d));
+                        let leap = liftH * 2.1;
+                        let landing = arc(clamp01((d - 0.82) / 0.18));
+                        let chamber = if (vTime > arrival && vTime < c.chLaunchAtMs)
+                            arc(prog(vTime, arrival, c.chLaunchAtMs)) else 0.0;
                         (
-                            dir * travel * dashIn(d) * (1.0 - dashOut(retreat)),
-                            -liftH * arc(d) - liftH * 0.6 * arc(retreat)
+                            dir * (travel * dashIn(d) * (1.0 - dashOut(retreat)) - 21.0 * gather - 16.0 * chamber),
+                            7.0 * gather - leap * flight + 5.0 * landing + 4.0 * chamber - liftH * 0.80 * arc(retreat),
+                            dir * (13.0 * flight - 8.0 * gather - 6.0 * chamber - 5.0 * arc(retreat))
                         )
-                    } else (0.0, 0.0);
+                    } else (0.0, 0.0, 0.0);
 
                 let (offX, offY, offAng) =
                     if (!quiet && !listIsEmpty(tl.tlActor.raOffsetKeys)) actorOffsetAt(tl, vTime)
@@ -893,7 +924,7 @@ pub def sampleBattleScene(
                     fsFrameId: actorFrame,
                     fsX: dashX + dir * offX,
                     fsY: dashY + offY,
-                    fsAngle: dir * offAng,
+                    fsAngle: dir * offAng + dashTilt,
                     fsAlpha: actorInit.fsAlpha,
                     fsFlash: actorInit.fsFlash,
                 };

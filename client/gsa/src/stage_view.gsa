@@ -8,17 +8,17 @@ use std.vec.{Vec, vecNew, vecPush, vecToList}
 use std.str.intToStr
 use kagura.gfx.{
     Vec2, vec2, Rect, rect,
-    Color, rgba, hexColor, withAlpha,
+    Color, rgba, hexColor, withAlpha, lerpColor,
     AlignCenter, fontSans, fontSerif,
     sin, cos, absFloat, minInt, maxInt, minFloat, maxFloat, clampFloat, floorInt,
     DrawList, drawCard, drawRect, drawFillRect, drawCircle, drawEllipse,
-    drawLine, drawPolygon, drawRibbon, drawText,
+    drawLine, drawPolygon, drawRibbon, drawText, drawImage,
     pushClip, pushCircleClip, popClip, pushTransform, popTransform
 }
 use kagura.ui.{
     Element, CanvasHit, canvasHit, fillSpace, canvasStage
 }
-use prelude.{fmodPos, optOr, optIsSome, listFind, utf8CharCount}
+use prelude.{degToRad, fmodPos, optOr, optIsSome, listFind, utf8CharCount}
 use ordmap.{mapLookup, mapFromList}
 use i18n.tr
 use protocol.{
@@ -30,11 +30,11 @@ use pose.{
     CombatStyle, StyleFist, StyleSword, styleEq, parseCombatStyle,
     VisualProfile, ProfileMale, ProfileFemale, parseVisualProfile,
     LookStyle, SvgPose, ShapePrim, SCircle, SPoly,
-    allPoseIds, svgPose, blendPose, swordTipOf, buildActorParts
+    allPoseIds, svgPose, blendPose, swordTipOf, swordPommelOf, buildActorParts
 }
 use catalog.{MkFrameHold, idleActionIdForStyle}
 use battle.{
-    SidePlayer, SideEnemy, sideEq, sideHome,
+    BattleSide, SidePlayer, SideEnemy, sideEq, sideHome,
     ActorVisual, MkActorVisual, sampleSvgPose, sampleBattleScene
 }
 use state.{ClientModel, worldPosFromGrid}
@@ -127,7 +127,7 @@ pub def drawInkActor(
     fillCol: Color, outlineCol: Color,
     flash: Float, alpha: Float,
     pose: SvgPose, style: CombatStyle, prof: VisualProfile, look: LookStyle,
-    hairFlow: (Float, Float), clockMs: Float
+    hairFlow: (Float, Float), tasselAngles: (Float, Float), clockMs: Float
 ): Void = {
     let parts = buildActorParts(pose, style, prof, look, hairFlow, clockMs);
     pushTransform(dl, wx, wy, scaleSign, absFloat(scaleSign), rotDeg);
@@ -136,6 +136,24 @@ pub def drawInkActor(
     while (match cellGet(pcur) { Nil -> false, _ -> true }) {
         match cellGet(pcur) {
             Cons(part, prest) -> {
+                // Project the far limbs back into the ground plane. Their roots
+                // stay inside the torso and the far foot lands slightly higher.
+                let farLeg = part.apKey == "back-leg";
+                let farArm = part.apKey == "back-arm";
+                let far = farLeg || farArm;
+                if (far) pushTransform(dl, 4.0, if (farLeg) -7.0 else -4.0, 0.96, 0.96, 0.0) else ();
+                let ink = if (far) lerpColor(fillCol, outlineCol, 0.23) else fillCol;
+                if (part.apKey == "front-arm" && styleEq(style, StyleSword)) {
+                    let (hx, hy) = swordPommelOf(pose);
+                    let (cordAngle, silkAngle) = tasselAngles;
+                    let localTilt = if (scaleSign < 0.0) -rotDeg else rotDeg;
+                    pushTransform(dl, hx, hy, 1.0, 1.0, cordAngle - localTilt);
+                    drawImage(dl, "/battle/tassel-cord.png", rect(-4.0, -0.3, 8.0, 12.0), 0.0, alpha);
+                    pushTransform(dl, 0.0, 11.55, 1.0, 1.0, silkAngle - cordAngle);
+                    drawImage(dl, "/battle/tassel-silk.png", rect(-4.0, -0.2, 8.0, 20.0), 0.0, alpha);
+                    popTransform(dl);
+                    popTransform(dl)
+                } else ();
                 // Pass A: outer halo stroke across all shapes of the body part
                 let s1 = cellNew(part.apShapes);
                 while (match cellGet(s1) { Nil -> false, _ -> true }) {
@@ -152,7 +170,7 @@ pub def drawInkActor(
                 while (match cellGet(s2) { Nil -> false, _ -> true }) {
                     match cellGet(s2) {
                         Cons(sh, srest) -> {
-                            emitShapeFill(dl, sh, fillCol, flash, alpha);
+                            emitShapeFill(dl, sh, ink, flash, alpha);
                             cellSet(s2, srest)
                         },
                         Nil -> (),
@@ -169,7 +187,7 @@ pub def drawInkActor(
                             while (match cellGet(js) { Nil -> false, _ -> true }) {
                                 match cellGet(js) {
                                     Cons(sh, jsrest) -> {
-                                        emitShapeFill(dl, sh, fillCol, flash, alpha);
+                                        emitShapeFill(dl, sh, ink, flash, alpha);
                                         cellSet(js, jsrest)
                                     },
                                     Nil -> (),
@@ -181,6 +199,7 @@ pub def drawInkActor(
                         Nil -> (),
                     }
                 };
+                if (far) popTransform(dl) else ();
                 cellSet(pcur, prest)
             },
             Nil -> (),
@@ -209,7 +228,7 @@ pub def renderOnboardingStage(stageRect: Rect, _ptr: Vec2, dl: DrawList, m: Clie
         dl, ax, ay, sc, 0.0,
         hexColor("#cfc4af"), hexColor("#ece4d2"),
         0.0, 0.96, pose, StyleSword, prof, m.cmVp.vpLookStyle,
-        (0.0, 0.0), m.cmVp.vpClockMs
+        (0.0, 0.0), (0.0, 0.0), m.cmVp.vpClockMs
     );
     Nil
 }
@@ -783,19 +802,27 @@ pub def renderBattleStage(stageRect: Rect, _ptr: Vec2, dl: DrawList, m: ClientMo
     let reduced = m.cmVp.vpReducedMotion;
     let scene = sampleBattleScene(mTl, elapsed, idleP, idleE, reduced);
 
-    let fitScale = minFloat(1.04, (w - 32.0) / 580.0) * scene.scCameraScale;
-    let stageCx = ox + w * 0.5 + scene.scCameraX * fitScale;
-    let groundY = oy + (if (isMobile) h * 0.62 else minFloat(h * 0.58, h - 220.0)) + scene.scShakeY * fitScale;
+    // Frame the full retreat on both sides, including the rear foot, weapon,
+    // camera kick and zoom. Also fit low landscape viewports by height.
+    let fitScale = minFloat(0.88, minFloat(w / 860.0, h / 372.0)) * scene.scCameraScale;
+    let groundY = oy + (if (isMobile) h * 0.62 else h * 0.61) + scene.scShakeY * fitScale;
 
     let pFig = scene.scPlayer;
     let eFig = scene.scEnemy;
     let pPose = sampleSvgPose(m.cmPoseLib, mTl, SidePlayer, elapsed, pFig.fsVisual.avStyle, pFig.fsFrameId, reduced);
     let ePose = sampleSvgPose(m.cmPoseLib, mTl, SideEnemy, elapsed, eFig.fsVisual.avStyle, eFig.fsFrameId, reduced);
 
-    let px = stageCx + (sideHome(SidePlayer) + pFig.fsX) * fitScale;
-    let py = groundY + pFig.fsY * fitScale;
-    let ex = stageCx + (sideHome(SideEnemy) + eFig.fsX) * fitScale;
-    let ey = groundY + eFig.fsY * fitScale;
+    let pWorldX = sideHome(SidePlayer) + pFig.fsX;
+    let eWorldX = sideHome(SideEnemy) + eFig.fsX;
+    // Pan a fraction of the way towards the exchange to keep space beyond
+    // the defender, even when an action overrides the standard dodge distance.
+    let follow = if (reduced) 0.0 else (pWorldX + eWorldX) * 0.15;
+    let stageCx = ox + w * 0.5 + (scene.scCameraX - follow) * fitScale;
+    let floorAt = (worldX: Float) -> groundY - worldX * 0.026 * fitScale;
+    let px = stageCx + pWorldX * fitScale;
+    let ex = stageCx + eWorldX * fitScale;
+    let py = floorAt(pWorldX) + pFig.fsY * fitScale;
+    let ey = floorAt(eWorldX) + eFig.fsY * fitScale;
 
     let inv = scene.scInvert > 0.5;
     if (inv) {
@@ -805,21 +832,19 @@ pub def renderBattleStage(stageRect: Rect, _ptr: Vec2, dl: DrawList, m: ClientMo
     } else ();
 
     let moonCol = if (inv) hexColor("#352e26") else hexColor("#dfd4be");
-    let horizonCol = if (inv) hexColor("#d6cab2") else hexColor("#3a3228");
     let shadowCol = if (inv) withAlpha(hexColor("#000000"), 0.35) else withAlpha(hexColor("#1e1a16"), 0.18);
 
-    drawCircle(dl, ox + w * 0.5, groundY - 90.0 * fitScale, 138.0 * fitScale, withAlpha(moonCol, 0.55), 0, 0.0);
-    drawLine(dl, ox + w * 0.08, groundY + 2.0, ox + w * 0.92, groundY + 2.0, 2.0, withAlpha(horizonCol, 0.58), false);
-    drawEllipse(dl, px, groundY + 3.0, 28.0 * fitScale, 5.5 * fitScale, shadowCol, 0, 0.0);
-    drawEllipse(dl, ex, groundY + 3.0, 28.0 * fitScale, 5.5 * fitScale, shadowCol, 0, 0.0);
+    drawCircle(dl, ox + w * 0.5 - follow * fitScale * 0.15, groundY - 90.0 * fitScale, 138.0 * fitScale, withAlpha(moonCol, 0.55), 0, 0.0);
+    drawEllipse(dl, px, floorAt(pWorldX) + 1.0, 28.0 * fitScale, 5.5 * fitScale, shadowCol, 0, 0.0);
+    drawEllipse(dl, ex, floorAt(eWorldX) + 1.0, 28.0 * fitScale, 5.5 * fitScale, shadowCol, 0, 0.0);
 
     if (scene.scGhost > 0.04) {
         match mTl {
             Some(tl) ->
                 if (sideEq(tl.tlTargetSide, SidePlayer)) {
-                    drawInkActor(dl, stageCx + sideHome(SidePlayer) * fitScale, groundY, fitScale, 0.0, hexColor("#2b594b"), hexColor("#f6f0e2"), 0.0, scene.scGhost * 0.65, pPose, pFig.fsVisual.avStyle, pProf, m.cmVp.vpLookStyle, (0.0, 0.0), m.cmVp.vpClockMs)
+                    drawInkActor(dl, stageCx + sideHome(SidePlayer) * fitScale, floorAt(sideHome(SidePlayer)), fitScale, 0.0, hexColor("#2b594b"), hexColor("#f6f0e2"), 0.0, scene.scGhost * 0.65, pPose, pFig.fsVisual.avStyle, pProf, m.cmVp.vpLookStyle, (0.0, 0.0), (0.0, 0.0), m.cmVp.vpClockMs)
                 } else {
-                    drawInkActor(dl, stageCx + sideHome(SideEnemy) * fitScale, groundY, 0.0 - fitScale, 0.0, hexColor("#6e6354"), hexColor("#f6f0e2"), 0.0, scene.scGhost * 0.65, ePose, eFig.fsVisual.avStyle, eProf, m.cmVp.vpLookStyle, (0.0, 0.0), m.cmVp.vpClockMs)
+                    drawInkActor(dl, stageCx + sideHome(SideEnemy) * fitScale, floorAt(sideHome(SideEnemy)), 0.0 - fitScale, 0.0, hexColor("#6e6354"), hexColor("#f6f0e2"), 0.0, scene.scGhost * 0.65, ePose, eFig.fsVisual.avStyle, eProf, m.cmVp.vpLookStyle, (0.0, 0.0), (0.0, 0.0), m.cmVp.vpClockMs)
                 },
             None -> (),
         }
@@ -831,8 +856,32 @@ pub def renderBattleStage(stageRect: Rect, _ptr: Vec2, dl: DrawList, m: ClientMo
     let pFlow = if (reduced) (0.0, 0.0) else (0.0 - pFig.fsX * 0.09, absFloat(pFig.fsY) * 0.2);
     let eFlow = if (reduced) (0.0, 0.0) else (eFig.fsX * 0.09, absFloat(eFig.fsY) * 0.2);
 
-    drawInkActor(dl, px, py, fitScale, pFig.fsAngle, pFill, outlineCol, pFig.fsFlash, pFig.fsAlpha, pPose, pFig.fsVisual.avStyle, pProf, m.cmVp.vpLookStyle, pFlow, m.cmVp.vpClockMs);
-    drawInkActor(dl, ex, ey, 0.0 - fitScale, eFig.fsAngle, eFill, outlineCol, eFig.fsFlash, eFig.fsAlpha, ePose, eFig.fsVisual.avStyle, eProf, m.cmVp.vpLookStyle, eFlow, m.cmVp.vpClockMs + 360.0);
+    // Sample earlier pommel positions on the same clock as the action. The cord
+    // responds first and the silk follows, including on replay, seek and mirror.
+    let swingAt = (side: BattleSide, pose: SvgPose, fig: battle.FigureSample) -> {
+        if (reduced || !styleEq(fig.fsVisual.avStyle, StyleSword) || !optIsSome(mTl)) (0.0, 0.0)
+        else {
+            let sign = if (sideEq(side, SidePlayer)) 1.0 else -1.0;
+            let pommelX = (p: SvgPose, f: battle.FigureSample) -> {
+                let (x, y) = swordPommelOf(p);
+                let a = degToRad(sign * f.fsAngle);
+                sign * f.fsX + x * cos(a) - y * sin(a)
+            };
+            let current = pommelX(pose, fig);
+            let lag = (ms: Float) -> {
+                let t = maxFloat(0.0, elapsed - ms);
+                let prior = sampleBattleScene(mTl, t, idleP, idleE, false);
+                let f = if (sideEq(side, SidePlayer)) prior.scPlayer else prior.scEnemy;
+                let p = sampleSvgPose(m.cmPoseLib, mTl, side, t, f.fsVisual.avStyle, f.fsFrameId, false);
+                current - pommelX(p, f)
+            };
+            let near = lag(52.0);
+            let far = lag(115.0);
+            (clampFloat(-66.0, 66.0, near * 1.4), clampFloat(-82.0, 82.0, near * 0.36 + far * 0.86))
+        }
+    };
+    drawInkActor(dl, ex, ey, 0.0 - fitScale, eFig.fsAngle, eFill, outlineCol, eFig.fsFlash, eFig.fsAlpha, ePose, eFig.fsVisual.avStyle, eProf, m.cmVp.vpLookStyle, eFlow, swingAt(SideEnemy, ePose, eFig), m.cmVp.vpClockMs + 360.0);
+    drawInkActor(dl, px, py, fitScale, pFig.fsAngle, pFill, outlineCol, pFig.fsFlash, pFig.fsAlpha, pPose, pFig.fsVisual.avStyle, pProf, m.cmVp.vpLookStyle, pFlow, swingAt(SidePlayer, pPose, pFig), m.cmVp.vpClockMs);
 
     // Tapered slash ribbon (`OP_RIBBON`), parry guard ring & focus aura
     match mTl {
@@ -867,8 +916,8 @@ pub def renderBattleStage(stageRect: Rect, _ptr: Vec2, dl: DrawList, m: ClientMo
             } else ();
 
             let (cx0, cy0) = scene.scContact;
-            let cWx = stageCx + cx0 * fitScale * 0.65;
-            let cWy = groundY + cy0 * fitScale;
+            let cWx = stageCx + cx0 * fitScale;
+            let cWy = floorAt(cx0) + cy0 * fitScale;
             if (scene.scGuard > 0.04) {
                 drawCircle(dl, cWx, cWy, (18.0 + (1.0 - scene.scGuard) * 26.0) * fitScale, 0, withAlpha(hexColor("#946623"), scene.scGuard), 2.6)
             } else ();
@@ -887,8 +936,8 @@ pub def renderBattleStage(stageRect: Rect, _ptr: Vec2, dl: DrawList, m: ClientMo
         let age = fx.fxShockAge;
         let pwr = minFloat(1.2, fx.fxShockPower);
         let (su, sv) = fx.fxShockPos;
-        let sx = ox + su * w;
-        let sy = oy + (1.0 - sv) * h;
+        let sx = stageCx + su * fitScale;
+        let sy = floorAt(su) + sv * fitScale;
         let rad1 = (18.0 + age * 260.0) * fitScale;
         let rad2 = (10.0 + age * 180.0) * fitScale;
         let al1 = maxFloat(0.0, 1.0 - age / 0.44) * 0.45 * pwr;
@@ -905,7 +954,7 @@ pub def renderBattleStage(stageRect: Rect, _ptr: Vec2, dl: DrawList, m: ClientMo
             Cons(p, rest) -> {
                 let al = maxFloat(0.0, 1.0 - p.ipLife / maxFloat(0.01, p.ipMaxLife));
                 let rad = p.ipRadius * (0.55 + 0.45 * al);
-                drawCircle(dl, p.ipX, p.ipY, rad, withAlpha(hexColor(p.ipColor), al), 0, 0.0);
+                drawCircle(dl, stageCx + p.ipX * fitScale, floorAt(p.ipX) + p.ipY * fitScale, rad * fitScale, withAlpha(hexColor(p.ipColor), al), 0, 0.0);
                 cellSet(ptCur, rest)
             },
             Nil -> (),
@@ -981,7 +1030,7 @@ pub def viewPoseSheet(_vp: Rect, m: ClientModel): Element ClientMsg =
                         let pose = svgPose(m.cmPoseLib, pid, StyleSword);
                         drawRect(dl, rect(cx - cellW * 0.46, cy - 118.0, cellW * 0.92, 150.0), 3.0, withAlpha(hexColor("#f6f0e2"), 0.96), hexColor("#c8bca4"), 1.1);
                         drawLine(dl, cx - cellW * 0.36, cy, cx + cellW * 0.36, cy, 1.2, withAlpha(hexColor("#6e6354"), 0.55), false);
-                        drawInkActor(dl, cx, cy, 0.58, 0.0, hexColor("#1e2320"), hexColor("#f6f0e2"), 0.0, 1.0, pose, StyleSword, ProfileFemale, m.cmVp.vpLookStyle, (0.0, 0.0), 0.0);
+                        drawInkActor(dl, cx, cy, 0.58, 0.0, hexColor("#1e2320"), hexColor("#f6f0e2"), 0.0, 1.0, pose, StyleSword, ProfileFemale, m.cmVp.vpLookStyle, (0.0, 0.0), (0.0, 0.0), 0.0);
                         drawText(dl, cx, cy + 22.0, fontSans(11.5, 600), AlignCenter, hexColor("#3d352c"), pid)
                     } else ();
                     cellSet(idxCell, idx + 1);

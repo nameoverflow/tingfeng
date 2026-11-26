@@ -619,6 +619,9 @@ pub def reachWith(pose: SvgPose, isHand: Bool, target: (Float, Float)): SvgPose 
 pub def swordTipOf(p: SvgPose): (Float, Float) =
     ptAdd(p.spHand, dirVec(p.spBlade), svgSwordLength())
 
+pub def swordPommelOf(p: SvgPose): (Float, Float) =
+    ptAdd(p.spHand, dirVec(p.spBlade), -9.0)
+
 // ============================================================================
 // Organic Ink-Wash Silhouette Geometry (`buildActorParts`)
 // ============================================================================
@@ -915,10 +918,6 @@ pub def buildActorParts(
     let torsoAxis = ptUnit(ptSub(p.spNeck, p.spHip));
     let chest = ptAdd(p.spNeck, torsoAxis, -10.0);
     let waist = ptAdd(p.spHip, torsoAxis, 14.0);
-    let bladeDir = dirVec(p.spBlade);
-    let pommel = ptAdd(p.spHand, bladeDir, -9.0);
-    let tasselVec = ptSub(p.spTassel, pommel);
-    let tasselEnd = ptAdd(pommel, ptUnit(tasselVec), minFloat(ptLen(tasselVec), 20.0));
     let headUp = ptUnit(ptSub(p.spHead, p.spNeck));
     let (ux, uy) = headUp;
     let bx = uy;
@@ -968,7 +967,6 @@ pub def buildActorParts(
         if (styleEq(style, StyleSword)) {
             let l = svgSwordLength();
             [
-                SPoly(taperPts(pommel, tasselEnd, 1.6, 1.2), None, 0.85),
                 sPoly(rotatedPoly(p.spHand, p.spBlade, [(-9.0, -2.0), (5.0, -2.0), (5.0, 2.0), (-9.0, 2.0)])),
                 sPoly(rotatedPoly(p.spHand, p.spBlade, [(4.0, -7.0), (7.0, -7.0), (7.0, 7.0), (4.0, 7.0)])),
                 SPoly(rotatedPoly(p.spHand, p.spBlade, [(7.0, -2.0), (l - 8.0, -2.0), (l, 0.0), (l - 8.0, 2.0), (7.0, 2.0)]), Some("#4a575b"), 1.0)
