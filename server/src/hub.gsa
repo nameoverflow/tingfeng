@@ -15,7 +15,7 @@ use std.rand.{Rng, fromEntropy}
 use sys.env.getEnv
 use sys.time.monotonicMs
 use sys.net.{TcpListener, TcpStream, tcpListen, tcpAccept, tcpClose}
-use std.ws.{
+use net.ws.{
     WsConn, WsMessage, WsText, WsPing, WsPong, WsClose,
     wsAccept, wsRecv, wsSendText, wsSendPing, wsSendPong, wsSendClose, wsClose
 }
@@ -68,7 +68,7 @@ pub def spawnDaemon(run: () -> Void): Actor Void = {
 pub data ClientHandle {
     MkClientHandle {
         uid: String,
-        writer: Actor WsConn,
+        writer: Actor (WsConn TcpStream),
         connected: AtomicInt,
     },
 }
@@ -86,12 +86,12 @@ pub def isDevModeEnabled(): Bool =
         None -> false,
     }
 
-def sendImmediateResp(conn: WsConn, resp: ActionResp): Void = {
+def sendImmediateResp(conn: WsConn TcpStream, resp: ActionResp): Void = {
     let _ = wsSendText(conn, formatResp(resp));
     ()
 }
 
-def newClientHandle(uid: String, conn: WsConn): ClientHandle =
+def newClientHandle(uid: String, conn: WsConn TcpStream): ClientHandle =
     MkClientHandle {
         uid: uid,
         writer: actorSpawn(() -> conn),
@@ -312,7 +312,7 @@ pub def hubTryLogin(
     user: String,
     password: String,
     creationChoice: Option CharacterCreationChoice,
-    conn: WsConn
+    conn: WsConn TcpStream
 ): Result ClientHandle ErrorSummary =
     actorAsk(hub, (st) -> {
         if (strMapContains(st.sessions, user)) {
@@ -426,7 +426,7 @@ pub def hubPingOnlineClients(hub: Actor HubState): Void =
 // WebSocket Connection Loop & Monotonic Dual Tickers
 // ============================================================================
 
-def sendCreationConfig(conn: WsConn, scriptsDir: String): Void = {
+def sendCreationConfig(conn: WsConn TcpStream, scriptsDir: String): Void = {
     let cfgPath = std.path.pathJoin(scriptsDir, "character_creation.yaml");
     match loadCharacterCreationConfig(cfgPath) {
         Ok(cfg) -> sendImmediateResp(conn, CharacterCreationConfigMsg(cfg)),
@@ -447,7 +447,7 @@ def sendPongOnWriter(handle: ClientHandle, payload: String): Void =
         })
     } else ()
 
-def runAuthenticatedLoop(hub: Actor HubState, user: String, conn: WsConn, handle: ClientHandle): Void = {
+def runAuthenticatedLoop(hub: Actor HubState, user: String, conn: WsConn TcpStream, handle: ClientHandle): Void = {
     let active = cellNew(true);
     while (cellGet(active) && atomicLoad(handle.connected) != 0) {
         match wsRecv(conn) {

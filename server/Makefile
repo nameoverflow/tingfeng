@@ -14,13 +14,15 @@ all: build
 
 build: $(BIN)
 
+NET_PKG_SRC ?= $(HOME)/code/net.gsa/src
+
 $(BIN): $(SRCS)
 	@if [ -z "$(GEISHA)" ] || [ ! -x "$(GEISHA)" ]; then \
 		echo "Error: Geisha compiler not found. Set GEISHA=/path/to/geisha3" >&2; \
 		exit 1; \
 	fi
 	@mkdir -p "$(BUILD_DIR)"
-	"$(GEISHA)" --src-root "$(ROOT_DIR)/server" $(if $(GEISHA_RUNTIME),--runtime "$(GEISHA_RUNTIME)",) -o "$(BIN)" "$(ROOT_DIR)/server/src/mod.gsa"
+	"$(GEISHA)" --src-root "$(ROOT_DIR)/server" --pkg net="$(NET_PKG_SRC)" --dep net=net $(if $(GEISHA_RUNTIME),--runtime "$(GEISHA_RUNTIME)",) -o "$(BIN)" "$(ROOT_DIR)/server/src/mod.gsa"
 
 test: build
 	cd "$(ROOT_DIR)" && "$(BIN)" --test

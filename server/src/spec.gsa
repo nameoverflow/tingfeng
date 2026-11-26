@@ -9,8 +9,8 @@ use std.codec.{(|>)}
 use std.rand.fromIntSeed
 use std.sync.{atomicNew, atomicStore}
 use std.task.{spawn, sleepMs}
-use sys.net.{tcpListen, tcpLocalPort, tcpCloseListener}
-use std.ws.{WsText, wsConnect, wsSendText, wsRecv, wsClose}
+use sys.net.{TcpStream, tcpListen, tcpLocalPort, tcpCloseListener}
+use net.ws.{WsConn, WsText, wsConnect, wsSendText, wsRecv, wsClose}
 use fp.{
     Ord, ordEq,
     Functor, fmap, Applicative, pure, Monad, (>>=), (*>>),
@@ -1196,7 +1196,7 @@ def testKaifengRegionalAndEconomy(tr: TestRunner, baseGs: GameState): Void = {
 // Live End-to-End WebSocket + `Actor` Hub Loopback Integration Test
 // ============================================================================
 
-def recvWsTextContaining(conn: std.ws.WsConn, maxMsgs: Int, needle: String): Option String = {
+def recvWsTextContaining(conn: WsConn TcpStream, maxMsgs: Int, needle: String): Option String = {
     let i = cellNew(0);
     let found: Cell (Option String) = cellNew(None);
     while (cellGet(i) < maxMsgs && match cellGet(found) { None -> true, _ -> false }) {
