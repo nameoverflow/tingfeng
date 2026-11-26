@@ -8,7 +8,7 @@ use std.vec.{Vec, vecNew, vecPush, vecToList}
 use std.str.intToStr
 use kagura.gfx.{
     Vec2, vec2, Rect, rect,
-    Color, rgba, hexColor, withAlpha, lerpColor,
+    Color, rgba, hexColor, withAlpha,
     AlignCenter, fontSans, fontSerif,
     sin, cos, absFloat, minInt, maxInt, minFloat, maxFloat, clampFloat, floorInt,
     DrawList, drawCard, drawRect, drawFillRect, drawCircle, drawEllipse,
@@ -142,7 +142,6 @@ pub def drawInkActor(
                 let farArm = part.apKey == "back-arm";
                 let far = farLeg || farArm;
                 if (far) pushTransform(dl, 4.0, if (farLeg) -7.0 else -4.0, 0.96, 0.96, 0.0) else ();
-                let ink = if (far) lerpColor(fillCol, outlineCol, 0.23) else fillCol;
                 if (part.apKey == "front-arm" && styleEq(style, StyleSword)) {
                     let (hx, hy) = swordPommelOf(pose);
                     let (cordAngle, silkAngle) = tasselAngles;
@@ -170,7 +169,7 @@ pub def drawInkActor(
                 while (match cellGet(s2) { Nil -> false, _ -> true }) {
                     match cellGet(s2) {
                         Cons(sh, srest) -> {
-                            emitShapeFill(dl, sh, ink, flash, alpha);
+                            emitShapeFill(dl, sh, fillCol, flash, alpha);
                             cellSet(s2, srest)
                         },
                         Nil -> (),
@@ -187,7 +186,7 @@ pub def drawInkActor(
                             while (match cellGet(js) { Nil -> false, _ -> true }) {
                                 match cellGet(js) {
                                     Cons(sh, jsrest) -> {
-                                        emitShapeFill(dl, sh, ink, flash, alpha);
+                                        emitShapeFill(dl, sh, fillCol, flash, alpha);
                                         cellSet(js, jsrest)
                                     },
                                     Nil -> (),
