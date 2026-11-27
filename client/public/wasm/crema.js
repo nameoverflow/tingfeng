@@ -1,11 +1,13 @@
 // Crema Web Host (`host/web/crema.js`)
 // Zero-dependency ES Module executing Crema's 8-byte word-aligned binary `DrawList`
-// directly out of WebAssembly linear memory onto HiDPI HTML5 Canvas2D, with WebAudio SFX,
-// transparent `<input>` CJK IME proxy, and frame-boundary Mark-Sweep GC.
+// directly out of WebAssembly linear memory onto HiDPI HTML5 Canvas2D, with
+// transparent `<input>` CJK IME proxy and frame-boundary Mark-Sweep GC.
 
-const SANS_FONT = '"PingFang SC", "Hiragino Sans GB", "Noto Sans SC", -apple-system, sans-serif';
-const SERIF_FONT = '"Songti SC", "STSong", "Noto Serif CJK SC", "Source Han Serif SC", Georgia, serif';
-const MONO_FONT = '"SF Mono", "JetBrains Mono", Menlo, Consolas, monospace';
+const DEFAULT_FONTS = {
+  sans: 'system-ui, -apple-system, "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", sans-serif',
+  serif: 'Georgia, "Songti SC", "Noto Serif CJK SC", "Source Han Serif SC", serif',
+  mono: 'ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace',
+};
 
 function unpackCssColor(col) {
   const u = col >>> 0;
@@ -18,38 +20,21 @@ function unpackCssColor(col) {
   return `rgba(${r},${g},${b},${(a / 255).toFixed(3)})`;
 }
 
-function createPaperPattern(ctx) {
-  const tile = document.createElement("canvas");
-  tile.width = 192;
-  tile.height = 192;
-  const tctx = tile.getContext("2d");
-  if (!tctx) return null;
-  let seed = 1337;
-  const rand = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
-  for (let i = 0; i < 600; i++) {
-    const x = rand() * 192, y = rand() * 192;
-    tctx.fillStyle = rand() > 0.45 ? "rgba(62,50,36,0.026)" : "rgba(255,252,244,0.048)";
-    tctx.fillRect(x, y, 1 + rand() * 2, 1);
-  }
-  tctx.strokeStyle = "rgba(88,72,52,0.02)";
-  tctx.lineWidth = 0.7;
-  for (let i = 0; i < 38; i++) {
-    const x = rand() * 192, y = rand() * 192, len = 10 + rand() * 22;
-    tctx.beginPath();
-    tctx.moveTo(x, y);
-    tctx.lineTo(x + len, y + (rand() - 0.5) * 3);
-    tctx.stroke();
-  }
-  return ctx.createPattern(tile, "repeat");
-}
-
 export async function mountCremaApp(options = {}) {
   const canvas = options.canvas || document.getElementById("crema-canvas");
   const imeInput = options.imeInput || document.getElementById("crema-ime");
   const wasmUrl = options.wasmUrl || "./app.wasm";
   const assetsPrefix = options.assetsPrefix || "";
+  const fitVisualViewport = options.fitVisualViewport !== false;
+  const captureWheel = options.captureWheel !== false;
+  const onClearBg = typeof options.onClearBg === "function" ? options.onClearBg : null;
+  const fonts = {
+    sans: options.fonts?.sans || DEFAULT_FONTS.sans,
+    serif: options.fonts?.serif || DEFAULT_FONTS.serif,
+    mono: options.fonts?.mono || DEFAULT_FONTS.mono,
+  };
+
   const ctx = canvas.getContext("2d", { alpha: false });
-  const paperPattern = createPaperPattern(ctx);
   const utf8Dec = new TextDecoder("utf-8");
   const utf8Enc = new TextEncoder();
 
@@ -60,13 +45,11 @@ export async function mountCremaApp(options = {}) {
 
   function syncCanvasSize() {
     cssW = Math.max(320, canvas.clientWidth || window.innerWidth);
-    cssH = options.minHeight
-      ? Math.max(options.minHeight, canvas.clientHeight || window.innerHeight)
-      : Math.max(220, canvas.clientHeight || window.innerHeight);
+    cssH = Math.max(220, canvas.clientHeight || window.innerHeight);
     const vv = window.visualViewport;
-    layoutH = options.minHeight
-      ? cssH
-      : Math.max(220, Math.min(cssH, Math.round(vv ? vv.height : cssH)));
+    layoutH = fitVisualViewport && vv
+      ? Math.max(220, Math.min(cssH, Math.round(vv.height)))
+      : cssH;
     dpr = Math.min(2.0, window.devicePixelRatio || 1);
     const pw = Math.round(cssW * dpr);
     const ph = Math.round(cssH * dpr);
@@ -77,7 +60,7 @@ export async function mountCremaApp(options = {}) {
   }
   function syncVisualViewport() {
     const vv = window.visualViewport;
-    if (!vv || options.minHeight) return;
+    if (!vv || !fitVisualViewport) return;
     layoutH = Math.max(220, Math.min(cssH, Math.round(vv.height)));
     if (window.scrollY !== 0) window.scrollTo(0, 0);
   }
@@ -101,44 +84,6 @@ export async function mountCremaApp(options = {}) {
       imageCache.set(key, img);
     }
     return img;
-  }
-
-  // Synthesized WebAudio SFX
-  let audioCtx = null;
-  function playSfx(kind) {
-    try {
-      const Ctor = window.AudioContext || window.webkitAudioContext;
-      if (!Ctor) return;
-      if (!audioCtx) audioCtx = new Ctor();
-      if (audioCtx.state === "suspended") audioCtx.resume();
-      const now = audioCtx.currentTime;
-      const osc = audioCtx.createOscillator();
-      const gain = audioCtx.createGain();
-      osc.connect(gain);
-      gain.connect(audioCtx.destination);
-      if (kind === "parry") {
-        osc.type = "triangle";
-        osc.frequency.setValueAtTime(960, now);
-        osc.frequency.exponentialRampToValueAtTime(420, now + 0.14);
-        gain.gain.setValueAtTime(0.15, now);
-        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
-        osc.start(now); osc.stop(now + 0.15);
-      } else if (kind === "impact") {
-        osc.type = "sine";
-        osc.frequency.setValueAtTime(175, now);
-        osc.frequency.exponentialRampToValueAtTime(46, now + 0.13);
-        gain.gain.setValueAtTime(0.20, now);
-        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
-        osc.start(now); osc.stop(now + 0.14);
-      } else {
-        osc.type = "sine";
-        osc.frequency.setValueAtTime(420, now);
-        osc.frequency.exponentialRampToValueAtTime(220, now + 0.06);
-        gain.gain.setValueAtTime(0.06, now);
-        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.06);
-        osc.start(now); osc.stop(now + 0.06);
-      }
-    } catch (_) {}
   }
 
   let wasmExports = null;
@@ -229,21 +174,15 @@ export async function mountCremaApp(options = {}) {
           const midCol = unpackCssColor(i32[(w + 1) * 2 + 1]);
           const botCol = unpackCssColor(i32[(w + 2) * 2]);
           const grad = ctx.createLinearGradient(0, 0, 0, cssH);
-          grad.addColorStop(0, topCol || "#f7f3e9");
-          grad.addColorStop(0.55, midCol || topCol || "#efe8d9");
-          grad.addColorStop(1, botCol || midCol || "#e6dcc8");
+          grad.addColorStop(0, topCol || "#f8fafc");
+          grad.addColorStop(0.55, midCol || topCol || "#f1f5f9");
+          grad.addColorStop(1, botCol || midCol || "#e2e8f0");
           ctx.fillStyle = grad;
           ctx.fillRect(0, 0, cssW, cssH);
-          if ((aux & 2) !== 0 && paperPattern) {
-            ctx.fillStyle = paperPattern;
-            ctx.fillRect(0, 0, cssW, cssH);
-          }
-          if ((aux & 1) !== 0) {
-            const vig = ctx.createRadialGradient(cssW * 0.5, cssH * 0.45, Math.min(cssW, cssH) * 0.25, cssW * 0.5, cssH * 0.5, Math.max(cssW, cssH) * 0.78);
-            vig.addColorStop(0, "rgba(255,252,244,0.08)");
-            vig.addColorStop(1, "rgba(20,16,12,0.08)");
-            ctx.fillStyle = vig;
-            ctx.fillRect(0, 0, cssW, cssH);
+          if (onClearBg) {
+            ctx.save();
+            onClearBg(ctx, cssW, cssH);
+            ctx.restore();
           }
           w += 3;
           break;
@@ -280,14 +219,6 @@ export async function mountCremaApp(options = {}) {
             if (bdCol !== 0 && lw > 0) {
               ctx.strokeStyle = unpackCssColor(bdCol);
               ctx.lineWidth = lw;
-              ctx.stroke();
-            }
-            if ((aux & 1) !== 0 && rw > 10 && rh > 10) {
-              const topLum = ((fillTop >>> 24) & 255);
-              ctx.strokeStyle = (fillTop !== 0 && topLum < 80) ? "rgba(196,163,99,0.40)" : "rgba(156,114,44,0.28)";
-              ctx.lineWidth = 0.75;
-              ctx.beginPath();
-              ctx.roundRect(x + 3.5, y + 3.5, rw - 7, rh - 7, Math.max(1, rad - 1));
               ctx.stroke();
             }
             ctx.restore();
@@ -381,7 +312,7 @@ export async function mountCremaApp(options = {}) {
           w += 3 + nPts * 2;
           break;
         }
-        case 7: { // OP_RIBBON (3 + 3*N words) — single smooth tapered calligraphy/slash polygon
+        case 7: { // OP_RIBBON (3 + 3*N words) — smooth tapered gradient ribbon polygon
           const nPts = aux;
           const rawCol = i32[(w + 1) * 2] >>> 0;
           const baseAlpha = f64[w + 2];
@@ -428,7 +359,7 @@ export async function mountCremaApp(options = {}) {
           const famCode = (styleBits >>> 16) & 255;
           const alignCode = (styleBits >>> 8) & 255;
           const weight = Math.max(100, Math.min(900, (styleBits & 255) * 100));
-          const fam = famCode === 1 ? SERIF_FONT : famCode === 2 ? MONO_FONT : SANS_FONT;
+          const fam = famCode === 1 ? fonts.serif : famCode === 2 ? fonts.mono : fonts.sans;
           ctx.save();
           ctx.fillStyle = unpackCssColor(col);
           ctx.font = `${weight} ${sz}px ${fam}`;
@@ -450,7 +381,7 @@ export async function mountCremaApp(options = {}) {
           if (img.complete && img.naturalWidth > 0) {
             ctx.drawImage(img, x, y, rw, rh);
           } else {
-            ctx.fillStyle = "#dfd5be";
+            ctx.fillStyle = "rgba(128,128,128,0.14)";
             ctx.fillRect(x, y, rw, rh);
           }
           ctx.restore();
@@ -493,7 +424,7 @@ export async function mountCremaApp(options = {}) {
           const phCol = i32[(w + 9) * 2], caretCol = i32[(w + 9) * 2 + 1];
           const famCode = (styleBits >>> 16) & 255;
           const weight = Math.max(100, Math.min(900, (styleBits & 255) * 100));
-          const fam = famCode === 1 ? SERIF_FONT : famCode === 2 ? MONO_FONT : SANS_FONT;
+          const fam = famCode === 1 ? fonts.serif : famCode === 2 ? fonts.mono : fonts.sans;
 
           const liveVal = (imeInput && document.activeElement === imeInput && activeImeId === id && imeInput.value !== undefined)
             ? imeInput.value
@@ -601,135 +532,6 @@ export async function mountCremaApp(options = {}) {
     );
   }
 
-  // Dual WebSocket + Optional HTTP Long-Poll Bridge (`options.httpBridgePrefix`, e.g. "/api/bridge")
-  let ws = null;
-  let bridgeSession = null;
-  let bridgeAborter = null;
-  const bridgePrefix = options.httpBridgePrefix || "";
-
-  async function startHttpBridgeLoop(sessionId) {
-    while (bridgeSession === sessionId) {
-      try {
-        bridgeAborter = new AbortController();
-        const res = await fetch(`${bridgePrefix}/poll`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ sessionId }),
-          signal: bridgeAborter.signal,
-        });
-        if (!res.ok) break;
-        const { messages, closed } = await res.json();
-        for (const m of messages || []) {
-          if (wasmExports.crema_on_net_message) {
-            invokeWasm(() => wasmExports.crema_on_net_message(writeStr(m)));
-          }
-        }
-        if (closed) {
-          bridgeSession = null;
-          if (wasmExports.crema_on_net_close) invokeWasm(() => wasmExports.crema_on_net_close());
-          break;
-        }
-      } catch (e) {
-        if (e.name === "AbortError") break;
-        await new Promise((r) => setTimeout(r, 250));
-      }
-    }
-  }
-
-  async function openHttpBridge(mode, user, token) {
-    try {
-      const res = await fetch(`${bridgePrefix}/open`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: "{}",
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const { sessionId } = await res.json();
-      bridgeSession = sessionId;
-      if (wasmExports.crema_on_net_open) {
-        invokeWasm(() => wasmExports.crema_on_net_open(writeStr(mode), writeStr(user), writeStr(token)));
-      }
-      startHttpBridgeLoop(sessionId);
-    } catch (_) {
-      if (wasmExports.crema_on_net_close) invokeWasm(() => wasmExports.crema_on_net_close());
-    }
-  }
-
-  function connectNet(mode, user, token) {
-    if (ws) { try { ws.close(); } catch (_) {} ws = null; }
-    if (bridgeAborter) { try { bridgeAborter.abort(); } catch (_) {} }
-    bridgeSession = null;
-
-    const targetUrl = options.wsUrl || `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`;
-    let settled = false;
-    const fallbackTimer = bridgePrefix
-      ? setTimeout(() => {
-          if (!settled) {
-            settled = true;
-            if (ws) { try { ws.close(); } catch (_) {} ws = null; }
-            openHttpBridge(mode, user, token);
-          }
-        }, 950)
-      : null;
-
-    try {
-      const sock = new WebSocket(targetUrl);
-      ws = sock;
-      sock.addEventListener("open", () => {
-        if (settled) return;
-        settled = true;
-        if (fallbackTimer) clearTimeout(fallbackTimer);
-        if (wasmExports.crema_on_net_open) {
-          invokeWasm(() => wasmExports.crema_on_net_open(writeStr(mode), writeStr(user), writeStr(token)));
-        }
-      });
-      sock.addEventListener("message", (ev) => {
-        if (typeof ev.data === "string" && wasmExports.crema_on_net_message) {
-          invokeWasm(() => wasmExports.crema_on_net_message(writeStr(ev.data)));
-        }
-      });
-      sock.addEventListener("error", () => {
-        if (!settled && bridgePrefix) {
-          settled = true;
-          if (fallbackTimer) clearTimeout(fallbackTimer);
-          ws = null;
-          openHttpBridge(mode, user, token);
-        }
-      });
-      sock.addEventListener("close", () => {
-        if (settled && ws === sock && wasmExports.crema_on_net_close) {
-          ws = null;
-          invokeWasm(() => wasmExports.crema_on_net_close());
-        }
-      });
-    } catch (_) {
-      if (fallbackTimer) clearTimeout(fallbackTimer);
-      if (bridgePrefix) openHttpBridge(mode, user, token);
-    }
-  }
-
-  function sendNet(payload) {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(payload);
-    } else if (bridgeSession && bridgePrefix) {
-      const sid = bridgeSession;
-      fetch(`${bridgePrefix}/send`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId: sid, payload }),
-      })
-        .then((r) => (r.ok ? r.json() : null))
-        .then((data) => {
-          if (data?.messages?.length && wasmExports.crema_on_net_message) {
-            for (const m of data.messages) {
-              invokeWasm(() => wasmExports.crema_on_net_message(writeStr(m)));
-            }
-          }
-        })
-        .catch(() => {});
-    }
-  }
-
   const wasmBytes = await (await fetch(wasmUrl)).arrayBuffer();
   const { instance } = await WebAssembly.instantiate(wasmBytes, {
     env: {
@@ -762,13 +564,7 @@ export async function mountCremaApp(options = {}) {
         activeImeId = "";
         if (imeInput && document.activeElement === imeInput) imeInput.blur();
       },
-      crema_host_play_sfx: (sfxPtr) => playSfx(readStr(sfxPtr)),
-      crema_host_save_local: (kPtr, vPtr) => {
-        try { localStorage.setItem(readStr(kPtr), readStr(vPtr)); } catch (_) {}
-      },
-      crema_host_send_net: (payloadPtr) => sendNet(readStr(payloadPtr)),
-      crema_host_connect_net: (mPtr, uPtr, tPtr) => connectNet(readStr(mPtr), readStr(uPtr), readStr(tPtr)),
-      ...(options.extraImports ? options.extraImports({ readStr, writeStr, invokeWasm }) : {}),
+      ...(options.extraImports ? options.extraImports({ readStr, writeStr, invokeWasm, getExports: () => wasmExports }) : {}),
     },
   });
 
@@ -835,7 +631,7 @@ export async function mountCremaApp(options = {}) {
   window.addEventListener("pointercancel", () => { dragging = false; dragMoved = false; });
 
   canvas.addEventListener("wheel", (e) => {
-    if (options.allowPageScroll) return;
+    if (!captureWheel) return;
     e.preventDefault();
     const { x, y } = rectOffset(e);
     if (wasmExports.crema_scroll_wheel) invokeWasm(() => wasmExports.crema_scroll_wheel(x, y, e.deltaY));
@@ -907,6 +703,7 @@ export async function mountCremaApp(options = {}) {
     readStr,
     writeStr,
     invokeWasm,
+    syncSize: syncCanvasSize,
     stats: () => ({
       frameCount,
       presentCount,

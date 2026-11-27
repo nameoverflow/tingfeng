@@ -10,7 +10,7 @@
 - `pose.gsa`、`catalog.gsa`、`battle.gsa`：41 组水墨剪影姿态继承与混合、双骨骼解析逆运动学（2-Bone IK）、`combat_actions/*.json` + `staging.json` 多段伤害拆分、定帧（Hit-Stop）与受击延迟扣血时间轴。
 - `state.gsa`：纯函数客户端状态机 `ClientM`（登录与六步创角、区域方向图弹簧相机、NPC 交谈/学艺/行商、角色与行囊、武学修习与自研、任务日志、实时战斗及 `/battle-lab.html` 动作回放台）。
 - `theme.gsa`、`stage_view.gsa` & `ui_view.gsa`：基于 `geisha-lang/crema`（`geisha.toml` 声明依赖）的声明式 UI 布局与水墨舞台视图。
-- `main.gsa` & `tests/spec.gsa`：WebAssembly 同步导出入口（`crema_*` 导出与 `crema.js` 宿主脚本由 `crema` 包自动汇总），以及原生肖像/战斗 IK 单元测试套件（`geisha test`）。
+- `main.gsa` & `tests/spec.gsa`：WebAssembly 同步导出入口（`crema_*` 通用 UI/输入导出与 `crema.js` 宿主由 `crema` 包自动汇总，`tf_*` 网络/音效/资产桥接由 `app.js` 通过 `extraImports` 注入），以及原生肖像/战斗 IK 单元测试套件（`geisha test`）。
 - `public/`：静态宿主页面（`index.html`、`battle-lab.html`、`pose-sheet.html`）、薄引导层 `app.js` 与 `wasm/` 产物目录。
 
 ## 构建与运行

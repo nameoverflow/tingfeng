@@ -4,7 +4,7 @@ entry = "src/main.gsa"
 tests = ["tests/spec.gsa"]
 
 [deps]
-crema = { git = "github.com/geisha-lang/crema", version = "0.1.1" }
+crema = { git = "github.com/geisha-lang/crema", version = "0.2.0" }
 
 [target.wasm32]
 exports = [
@@ -13,4 +13,7 @@ exports = [
   "tf_lab_cmd",
   "tf_set_hidden",
   "tf_lab_state_json",
+  "tf_on_net_open",
+  "tf_on_net_message",
+  "tf_on_net_close",
 ]

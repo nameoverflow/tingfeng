@@ -5,8 +5,8 @@ use std.list.listAppend
 use crema.gfx.{Color, rgba, hexColor, withAlpha, fontSans}
 use crema.ui.{
     Theme, MkTheme, StyleMod, Element,
-    hFixed, wGrow, padXY, bg, border, rounded,
-    styledButton, progressBar, badge
+    hFixed, wGrow, pad, padXY, gap, bg, bgGrad, border, rounded, shadow,
+    box, col, styledButton, progressBar, badge
 }
 use protocol.Direction
 
@@ -48,10 +48,39 @@ pub def tingfengTheme(inBattle: Bool): Theme = MkTheme {
     thBorder: rgba(130, 118, 98, 78),
     thPrimary: hexColor("#275247"),
     thPrimaryHover: hexColor("#21473c"),
+    thPrimaryText: hexColor("#faf6ee"),
     thAccent: hexColor("#a87d38"),
     thDanger: hexColor("#9e2a22"),
     thShadow: rgba(28, 22, 16, 28),
+    thScrollTrack: rgba(130, 118, 98, 45),
+    thScrollThumb: rgba(110, 98, 80, 155),
 }
+
+pub def plaqueCard(
+    theme: Theme,
+    outerMods: List StyleMod,
+    innerMods: List StyleMod,
+    children: List (Element msg)
+): Element msg =
+    box(
+        listAppend(
+            [
+                bgGrad(theme.thSurfaceTop, theme.thSurfaceBot),
+                border(1.0, theme.thBorder),
+                rounded(4.0),
+                shadow(4.0, 14.0, theme.thShadow),
+                pad(3.5)
+            ],
+            outerMods
+        ),
+        col(
+            listAppend(
+                [wGrow(1.0), border(0.75, rgba(156, 114, 44, 72)), rounded(3.0), pad(14.5), gap(8.0)],
+                innerMods
+            ),
+            children
+        )
+    )
 
 pub def woodBtn(
     btnKey: String,

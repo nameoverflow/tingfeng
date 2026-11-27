@@ -1,13 +1,12 @@
 // Tingfeng (《听风录》) Pure-Geisha Wasm Client Entry Point (`client/gsa/src/main.gsa`),
-// powered by `geisha-lang/crema` (`crema.gfx`, `crema.ui`, `crema.stage`, `crema.app`, `crema.host`).
+// powered by `geisha-lang/crema` (`crema.gfx`, `crema.ui`, `crema.app`, `crema.host`).
 
 use std.option.{Option, Some, None}
 use std.result.{Ok, Err}
 use std.list.{listAppend, listMap}
 use crema.gfx.{Rect, maxFloat}
 use crema.app.{
-    Cmd, CmdNone, CmdSendNet, CmdConnectNet,
-    CmdScrollTo, CmdScrollToBottom, CmdBlurIme, cmdBatch,
+    Cmd, CmdNone, CmdScrollTo, CmdScrollToBottom, CmdBlurIme, cmdBatch, cmdPerform,
     AppConfig, MkAppConfig, Runtime,
     runtimeCreate, rtModel, rtDispatch, rtStepFrame,
     rtPointerMove, rtPointerClick, rtPointerDrag, rtScrollWheel,
@@ -41,6 +40,15 @@ use theme.{
 use ui_view.viewRoot
 
 // ============================================================================
+// Tingfeng-Specific Web Host FFI (Injected via `app.js` `extraImports`)
+// ============================================================================
+
+extern "tf_host_play_sfx" def tfHostPlaySfx(sfxId: String): Void
+extern "tf_host_save_local" def tfHostSaveLocal(key: String, val: String): Void
+extern "tf_host_send_net" def tfHostSendNet(payload: String): Void
+extern "tf_host_connect_net" def tfHostConnectNet(mode: String, user: String, pass: String): Void
+
+// ============================================================================
 // Persistent Global Crema Runtime & Seeded Assets
 // ============================================================================
 
@@ -57,10 +65,10 @@ def isLogPinned(): Bool = match cellGet(runtimeRef) {
 }
 
 def translateClientCmd(c: ClientCmd): Cmd ClientMsg = match c {
-    CmdSendWs(payload) -> CmdSendNet(payload),
+    CmdSendWs(payload) -> cmdPerform(() -> tfHostSendNet(payload)),
     CmdOpenConfigWs -> {
         cellSet(activeWsModeRef, "config_only");
-        CmdConnectNet("config_only", "", "")
+        cmdPerform(() -> tfHostConnectNet("config_only", "", ""))
     },
     CmdConnectWs(u, p, mChoice) -> {
         cellSet(pendingCreationRef, mChoice);
@@ -69,11 +77,11 @@ def translateClientCmd(c: ClientCmd): Cmd ClientMsg = match c {
             Some(_) -> "create",
         };
         cellSet(activeWsModeRef, modeStr);
-        CmdConnectNet(modeStr, u, p)
+        cmdPerform(() -> tfHostConnectNet(modeStr, u, p))
     },
     CmdSetCursor(_) -> CmdNone,
-    CmdPlaySfx(sfx) -> crema.app.CmdPlaySfx(sfx),
-    CmdSaveLocal(k, v) -> crema.app.CmdSaveLocal(k, v),
+    CmdPlaySfx(sfx) -> cmdPerform(() -> tfHostPlaySfx(sfx)),
+    CmdSaveLocal(k, v) -> cmdPerform(() -> tfHostSaveLocal(k, v)),
     CmdFocusInput(_, _, _, _, _, _) -> CmdNone,
     CmdBlurInput -> CmdBlurIme,
 }
@@ -96,7 +104,7 @@ def updateTingfeng(msg: ClientMsg, m0: ClientModel): (ClientModel, Cmd ClientMsg
     },
     MsgGoExit(dir) ->
         if (m0.cmAuth.auConnected && !m0.cmWorld.wvStoryActive)
-            (m0, CmdSendNet(encodePlayerAction(ActGo(dir))))
+            (m0, cmdPerform(() -> tfHostSendNet(encodePlayerAction(ActGo(dir)))))
         else
             (m0, CmdNone),
     MsgPanMap(dx, dy) -> (panCameraBy(dx, dy, m0), CmdNone),
@@ -129,7 +137,7 @@ def updateTingfeng(msg: ClientMsg, m0: ClientModel): (ClientModel, Cmd ClientMsg
         let u = utf8Trim(userRaw);
         cellSet(activeWsModeRef, mode);
         if (mode == "config_only") {
-            (m0, CmdSendNet(encodeRequestCreationConfig()))
+            (m0, cmdPerform(() -> tfHostSendNet(encodeRequestCreationConfig())))
         } else {
             let mChoice = cellGet(pendingCreationRef);
             cellSet(pendingCreationRef, None);
@@ -161,7 +169,7 @@ def updateTingfeng(msg: ClientMsg, m0: ClientModel): (ClientModel, Cmd ClientMsg
                     wvTransitionBanner: wv0.wvTransitionBanner,
                 }
             ));
-            (m1, CmdSendNet(encodeLogin(u, pass, mChoice)))
+            (m1, cmdPerform(() -> tfHostSendNet(encodeLogin(u, pass, mChoice))))
         }
     },
     MsgNetMessage(raw) -> match decodeServerMsg(raw) {
@@ -204,7 +212,6 @@ def tickTingfeng(dtMs: Float, vp: Rect, m0: ClientModel): (ClientModel, Cmd Clie
 def buildAppConfig(poseLib: PoseLibrary, cat: ActionCatalog): AppConfig ClientModel ClientMsg = MkAppConfig {
     appTheme: tingfengTheme(false),
     appDynamicTheme: Some((m) -> tingfengTheme(m.cmBattle.btInBattle || pageEq(m.cmVp.vpPage, PageBattleLab))),
-    appPaperGrain: true,
     appInit: (vp) -> {
         let page = cellGet(seededPageRef);
         let red = cellGet(seededReducedRef);
@@ -218,13 +225,10 @@ def buildAppConfig(poseLib: PoseLibrary, cat: ActionCatalog): AppConfig ClientMo
     appView: (vp, m) -> viewRoot(vp, isLogPinned(), m),
     appTick: Some(tickTingfeng),
     appOnKey: Some((k) -> Some(MsgKeyDown(k))),
-    appOnNetOpen: None,
-    appOnNetMessage: Some((raw) -> Some(MsgNetMessage(raw))),
-    appOnNetClose: Some(MsgNetClose),
 }
 
 // ============================================================================
-// Exported Crema Host Entry Points (`crema_*`) + Asset/Lab Hooks (`tf_*`)
+// Exported Crema UI Entry Points (`crema_*`) + Tingfeng Hooks (`tf_*`)
 // ============================================================================
 
 pub def tf_seed_assets(
@@ -320,19 +324,19 @@ pub def crema_key_down(keyStr: String): Void =
         None -> (),
     }
 
-pub def crema_on_net_open(mode: String, user: String, pass: String): Void =
+pub def tf_on_net_open(mode: String, user: String, pass: String): Void =
     match cellGet(runtimeRef) {
         Some(rt) -> rtDispatch(rt, MsgNetOpen(mode, user, pass)),
         None -> (),
     }
 
-pub def crema_on_net_message(raw: String): Void =
+pub def tf_on_net_message(raw: String): Void =
     match cellGet(runtimeRef) {
         Some(rt) -> rtDispatch(rt, MsgNetMessage(raw)),
         None -> (),
     }
 
-pub def crema_on_net_close(): Void =
+pub def tf_on_net_close(): Void =
     match cellGet(runtimeRef) {
         Some(rt) -> rtDispatch(rt, MsgNetClose),
         None -> (),

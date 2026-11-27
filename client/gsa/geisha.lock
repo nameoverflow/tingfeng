@@ -4,6 +4,6 @@ version = 1
 [[pkg]]
 name = "crema"
 url = "github.com/geisha-lang/crema"
-version = "0.1.1"
-rev = "e1b4dff49302755931005eb132d8db97c840bd0c"
-sha256 = "12b7977462788edc528efee8a969ac2ca3caf8218d226ad582d527d3fea75d60"
+version = "0.2.0"
+rev = "1ef711693fe5a9e1186a44caf6831acb96d27355"
+sha256 = "36b48d9976672e4247536ab4219475db3551d9bc8da130dba729b6a91f3936e7"

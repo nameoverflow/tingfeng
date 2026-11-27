@@ -18,7 +18,7 @@ use crema.ui.{
     pad, padXY, padTRBL, gap, alignX, alignY, centerContent,
     bg, bgGrad, border, rounded, shadow, clipped,
     Element, CanvasHit, canvasHit,
-    emptyEl, spacer, growSpacer, box, card, plaqueCard,
+    emptyEl, spacer, growSpacer, box, card,
     row, wrapRow, col, zstack, scrollView, scrollViewSticky,
     label, textAligned, heading, paragraph,
     imageBox, interactive, textInput, canvasStage, canvasInteractive
@@ -43,7 +43,7 @@ use theme.{
     MsgInputLogin, MsgSubmitLogin, MsgInputSay, MsgSubmitSay,
     MsgLab, MsgLabScrub,
     BtnTone, ToneDefault, TonePrimary, ToneDanger, ToneJade, ToneGhost, ToneActive,
-    woodBtn, vitalBar, sealPill
+    plaqueCard, woodBtn, vitalBar, sealPill
 }
 use stage_view.{
     drawAtmosphere, renderOnboardingStage, renderMapStage, renderBattleStage, viewPoseSheet
@@ -581,7 +581,7 @@ def viewOnboarding(th: Theme, vp: Rect, m: ClientModel): Element ClientMsg = {
         woodBtn("btn-onboard-loc", [wFixed(42.0)], 28.0, 11.5, ToneGhost, false, if (zh) "EN" else "中", MsgUi("toggle_locale", "", ""))
     ]);
 
-    let onboardCard = plaqueCard(th, [wGrow(1.0), maxW(500.0), pad(18.0), gap(12.0)], [
+    let onboardCard = plaqueCard(th, [wGrow(1.0), maxW(500.0)], [pad(14.5), gap(12.0)], [
         box([wGrow(1.0), hFixed(2.5), bg(hexColor("#9e2a22")), rounded(1.0)], emptyEl()),
         row([wGrow(1.0), gap(8.0)], [
             woodBtn("tab-login", [wGrow(1.0)], 32.0, 13.0, if (!isCreate) ToneActive else ToneGhost, false, if (zh) "登录江湖" else "Sign In", MsgUi("login_mode", "login", "")),
