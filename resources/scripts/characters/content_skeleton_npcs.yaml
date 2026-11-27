@@ -272,6 +272,12 @@
   teaches:
     basic_fist: 8
     yamen_grappling_hand: 18
+  teach_requires:
+    flag: kaifeng.has_room
+    refusal: "先在开封站稳脚跟，再来捕房谈学艺。"
+    forbid_flags:
+      - sect.active.saltgang
+    forbid_refusal: "你既已入了盐帮芦苇分坛，开封府捕房的锁拿手绝不会传给私盐贼子。"
   dialogue:
     - "北郊递道最近不安生。你若真想见江湖，先从能回来的一趟开始。"
   respawn: 0
@@ -698,17 +704,36 @@
   martial_arts:
     foundation:
       - id: basic_internal
+        level: 28
+      - id: basic_sword
         level: 26
       - id: basic_lightness
         level: 16
     internal:
       - id: taihu_breath
         level: 18
+      - id: bibo_mending_art
+        level: 28
+    sword:
+      - id: taihu_tide_sword
+        level: 26
   prepared:
     internal:
-      id: taihu_breath
-      level: 18
-  teaches: {}
+      id: bibo_mending_art
+      level: 28
+  teach_bonus: 5
+  teaches:
+    basic_internal: 28
+    basic_sword: 26
+    taihu_tide_sword: 30
+    bibo_mending_art: 32
+  teach_requires:
+    flag: sect.active.taihu
+    refusal: "水榭真传医武不传外客。寻常调息请去静息室找苏姑娘便是。"
+    forbid_flags:
+      - sect.graduated.taihu
+      - sect.betrayed.taihu
+    forbid_refusal: "你既已离开水榭门墙，往后行医用剑全凭本心，老夫不再另传。"
   dialogue:
     - "来水榭求医的人，十有八九只说自己哪儿疼，不肯说这伤是怎么惹上的。大夫可以不问来历，可看诊的眼睛不能糊涂。"
   respawn: 0

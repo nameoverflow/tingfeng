@@ -1,0 +1,1424 @@
+# 四方名门：少林外门、武当清修、五岳嵩阳、太湖真传
+# 包含：机缘入派 -> 二阶升级拜师中阶剧情 -> 三阶体面出师 -> 门派专属日常差事
+
+# ============================================================================
+# 1. 少林外门（洛阳白马寺·扫碑老人澄尘）
+# ============================================================================
+
+- id: sect_join_shaolin
+  name: "机缘·碑阴借伞"
+  objectives:
+    - stage: stele_stance
+      text: "赴白马寺山门茶寮向知客僧明心取旧木棍，再回古碑亭听扫碑老人点拨。"
+    - stage: completed
+      text: "你已凭机缘拜入少林俗家外门，获赠旧木念珠并习得《罗汉伏魔棍》。"
+  reward:
+    money: 0
+    combat_exp: 60
+    potential: 45
+    items: []
+  events:
+    - id: shaolin_join_already_in_sect
+      trigger:
+        type: talk
+        npc: baima_stone_sweeper
+      conditions:
+        - type: flag
+          flag: luoyang.wensheng_trusted
+        - type: flag
+          flag: sect.has_active
+        - type: not_flag
+          flag: sect.active.shaolin
+        - type: not_flag
+          flag: sect.shaolin_declined_noted
+      actions:
+        - type: set_flag
+          flag: sect.shaolin_declined_noted
+        - type: message
+          speaker: "扫碑老人"
+          text: "老朽看你下盘稳当，原动过收徒的念头。可惜你身上已带着别家师门的印子，各为其主，便不夺人弟子了。"
+
+    - id: shaolin_join_start
+      trigger:
+        type: talk
+        npc: baima_stone_sweeper
+      conditions:
+        - type: flag
+          flag: luoyang.wensheng_trusted
+        - type: art_level_at_least
+          art: basic_internal
+          level: 10
+        - type: not_flag
+          flag: sect.has_active
+        - type: not_flag
+          flag: sect.betrayed.any
+        - type: not_flag
+          flag: sect.betrayed.shaolin
+        - type: not_flag
+          flag: sect.graduated.shaolin
+        - type: quest_not_started
+          quest: sect_join_shaolin
+      actions:
+        - type: set_stage
+          quest: sect_join_shaolin
+          stage: stele_stance
+        - type: message
+          speaker: "扫碑老人"
+          text: "你把古碑拓片老实交还闻声，没拿去旧剑市换银子，心性倒是难得。方才看你踏过湿阶，内息也算沉稳。"
+        - type: message
+          speaker: "扫碑老人"
+          text: "去外山门找明心取一根旧木棍，再回碑亭照着碑阴折锋走三步给老朽看看。"
+
+    - id: shaolin_join_monk_hands_staff
+      trigger:
+        type: talk
+        npc: baima_guest_monk
+      conditions:
+        - type: quest_stage
+          quest: sect_join_shaolin
+          stage: stele_stance
+        - type: not_flag
+          flag: sect.shaolin.got_trial_staff
+      actions:
+        - type: set_flag
+          flag: sect.shaolin.got_trial_staff
+        - type: message
+          speaker: "知客僧明心"
+          text: "阿弥陀佛，澄尘师叔居然让你来取木棍！师叔早年在少室山罗汉堂退隐，四十年未收过俗家弟子，施主快回古碑亭吧。"
+
+    - id: shaolin_join_complete
+      trigger:
+        type: talk
+        npc: baima_stone_sweeper
+      conditions:
+        - type: quest_stage
+          quest: sect_join_shaolin
+          stage: stele_stance
+        - type: flag
+          flag: sect.shaolin.got_trial_staff
+      actions:
+        - type: set_flag
+          flag: sect.active.shaolin
+        - type: set_flag
+          flag: sect.has_active
+        - type: give_item
+          item: shaolin_wooden_beads
+          amount: 1
+        - type: complete_quest
+          quest: sect_join_shaolin
+        - type: message
+          speaker: "扫碑老人"
+          text: "好，步子不浮、棍势不躁。老朽法号澄尘，原是少林罗汉堂宿老。你既是俗家身份，不必剃度出家，但须记着佛门不嗜杀、不沾黑道私活的戒律。"
+        - type: message
+          speaker: "扫碑老人"
+          text: "这串旧木念珠你收着，从今日起你便是少林俗家外门弟子。先随我把《罗汉伏魔棍》练到十四级，再来领门内差事晋升罗汉堂内传。"
+
+- id: sect_inner_shaolin
+  name: "师门·经卷蒙尘"
+  objectives:
+    - stage: track_thief
+      text: "前往洛水旧堰亭查访偷走白马寺罗汉堂注疏残卷的偷卷游侠。"
+    - stage: return_scroll
+      text: "将追回的《罗汉堂注疏残卷》交还白马寺古碑亭的扫碑老人澄尘。"
+    - stage: completed
+      text: "你已追回经卷，获澄尘行入室授珠礼，晋升少林罗汉堂内传俗家弟子并习得《少林金刚护体》。"
+  reward:
+    money: 50
+    combat_exp: 85
+    potential: 65
+    items: []
+  events:
+    - id: shaolin_inner_start
+      trigger:
+        type: talk
+        npc: baima_stone_sweeper
+      conditions:
+        - type: flag
+          flag: sect.active.shaolin
+        - type: art_level_at_least
+          art: luohan_subduing_staff
+          level: 14
+        - type: quest_not_started
+          quest: sect_inner_shaolin
+      actions:
+        - type: set_stage
+          quest: sect_inner_shaolin
+          stage: track_thief
+        - type: show_npc
+          npc: shaolin_scroll_thief
+        - type: message
+          speaker: "扫碑老人"
+          text: "你的伏魔棍已有根基。昨夜经阁少了一卷罗汉堂护体注疏，明心打听到偷卷游侠躲在洛水旧堰亭。去把残卷请回来，切记留手，莫伤他性命。"
+
+    - id: shaolin_inner_fight
+      trigger:
+        type: talk
+        npc: shaolin_scroll_thief
+      conditions:
+        - type: quest_stage
+          quest: sect_inner_shaolin
+          stage: track_thief
+      actions:
+        - type: message
+          speaker: "偷卷游侠"
+          text: "白马寺的俗家弟子追到旧堰亭来了？想拿经卷，先赢过我手里的剑！"
+        - type: start_battle
+          target: shaolin_scroll_thief
+
+    - id: shaolin_inner_defeat
+      trigger:
+        type: kill
+        npc: shaolin_scroll_thief
+      conditions:
+        - type: quest_stage
+          quest: sect_inner_shaolin
+          stage: track_thief
+      actions:
+        - type: hide_npc
+          npc: shaolin_scroll_thief
+        - type: give_item
+          item: shaolin_lost_scroll
+          amount: 1
+        - type: set_stage
+          quest: sect_inner_shaolin
+          stage: return_scroll
+        - type: message
+          speaker: "旁白"
+          text: "你收势点开游侠手腕，并未下重手。他羞愧交出怀中的《罗汉堂注疏残卷》，拱手离去。"
+
+    - id: shaolin_inner_complete
+      trigger:
+        type: talk
+        npc: baima_stone_sweeper
+      conditions:
+        - type: quest_stage
+          quest: sect_inner_shaolin
+          stage: return_scroll
+        - type: has_item
+          item: shaolin_lost_scroll
+      actions:
+        - type: take_item
+          item: shaolin_lost_scroll
+          amount: 1
+        - type: set_flag
+          flag: sect.rank.inner.shaolin
+        - type: complete_quest
+          quest: sect_inner_shaolin
+        - type: message
+          speaker: "扫碑老人"
+          text: "制敌而不伤人，才算懂了少林棍法。从今日起你晋升罗汉堂内传俗家弟子，这门《少林金刚护体》一并传你。待伏魔棍修至二十六级，便可接罗汉出师印证。"
+
+- id: sect_grad_shaolin
+  name: "出师·罗汉印证"
+  objectives:
+    - stage: trial_fight
+      text: "前往白马寺外山门，与罗汉堂执事僧慧石印证棍法。"
+    - stage: report_master
+      text: "回古碑亭向扫碑老人澄尘辞行出师。"
+    - stage: completed
+      text: "你已通过罗汉堂印证体面出师，保留全部少林武学并可自由另拜高师。"
+  reward:
+    money: 120
+    combat_exp: 120
+    potential: 90
+    items: []
+  events:
+    - id: shaolin_grad_start
+      trigger:
+        type: talk
+        npc: baima_stone_sweeper
+      conditions:
+        - type: flag
+          flag: sect.active.shaolin
+        - type: flag
+          flag: sect.rank.inner.shaolin
+        - type: art_level_at_least
+          art: luohan_subduing_staff
+          level: 26
+        - type: quest_not_started
+          quest: sect_grad_shaolin
+      actions:
+        - type: set_stage
+          quest: sect_grad_shaolin
+          stage: trial_fight
+        - type: show_npc
+          npc: shaolin_trial_monk
+        - type: message
+          speaker: "扫碑老人"
+          text: "徒儿，你的伏魔棍已臻二十六级，老朽能教你的都教得差不多了。少室山来的执事僧慧石正在外山门候你，胜过他便算体面出师。"
+
+    - id: shaolin_grad_fight
+      trigger:
+        type: talk
+        npc: shaolin_trial_monk
+      conditions:
+        - type: quest_stage
+          quest: sect_grad_shaolin
+          stage: trial_fight
+      actions:
+        - type: message
+          speaker: "罗汉堂执事僧慧石"
+          text: "阿弥陀佛，请师弟出棍印证！"
+        - type: start_battle
+          target: shaolin_trial_monk
+
+    - id: shaolin_grad_defeat
+      trigger:
+        type: kill
+        npc: shaolin_trial_monk
+      conditions:
+        - type: quest_stage
+          quest: sect_grad_shaolin
+          stage: trial_fight
+      actions:
+        - type: hide_npc
+          npc: shaolin_trial_monk
+        - type: set_stage
+          quest: sect_grad_shaolin
+          stage: report_master
+        - type: message
+          speaker: "旁白"
+          text: "慧石收棍合十，赞你棍势沉浑有度。你可以回古碑亭向澄尘师父辞行出师了。"
+
+    - id: shaolin_grad_complete
+      trigger:
+        type: talk
+        npc: baima_stone_sweeper
+      conditions:
+        - type: quest_stage
+          quest: sect_grad_shaolin
+          stage: report_master
+      actions:
+        - type: clear_flag
+          flag: sect.active.shaolin
+        - type: clear_flag
+          flag: sect.has_active
+        - type: set_flag
+          flag: sect.graduated.shaolin
+        - type: complete_quest
+          quest: sect_grad_shaolin
+        - type: message
+          speaker: "扫碑老人"
+          text: "善哉。今日你已体面出师，所学棍法与禅功尽数留身，往后即便另拜他门高师亦无妨。白马寺的钟声随时迎你回来听。"
+
+- id: sect_job_shaolin_scripture
+  name: "门派差事·白马护经"
+  objectives:
+    - stage: patrol_road
+      text: "沿白马寺官道巡看香客，再回白马寺古碑亭清扫落叶。"
+    - stage: report_monk
+      text: "回白马寺外山门向知客僧明心复命。"
+  reward:
+    money: 45
+    combat_exp: 75
+    potential: 55
+    items: []
+  events:
+    - id: sect_job_shaolin_start
+      trigger:
+        type: talk
+        npc: baima_guest_monk
+      conditions:
+        - type: flag
+          flag: sect.active.shaolin
+        - type: quest_not_started
+          quest: sect_job_shaolin_scripture
+      actions:
+        - type: set_stage
+          quest: sect_job_shaolin_scripture
+          stage: patrol_road
+        - type: message
+          speaker: "知客僧明心"
+          text: "师弟得空？劳烦沿白马寺官道巡看一圈香客，再顺道去古碑亭替澄尘师叔扫扫石阶落叶，回来记一份门内功课。"
+
+    - id: sect_job_shaolin_sweep
+      trigger:
+        type: enter_room
+        map: luoyang_city
+        position: [-1, 7]
+      conditions:
+        - type: quest_stage
+          quest: sect_job_shaolin_scripture
+          stage: patrol_road
+      actions:
+        - type: set_stage
+          quest: sect_job_shaolin_scripture
+          stage: report_monk
+        - type: message
+          speaker: "旁白"
+          text: "官道清静，古碑亭的枯叶也已扫作一堆，你挥帚间暗合棍法步点，颇有心得。"
+
+    - id: sect_job_shaolin_finish
+      trigger:
+        type: talk
+        npc: baima_guest_monk
+      conditions:
+        - type: quest_stage
+          quest: sect_job_shaolin_scripture
+          stage: report_monk
+      actions:
+        - type: message
+          speaker: "知客僧明心"
+          text: "辛苦师弟，这份香火盘缠与门内功课请收下。"
+        - type: complete_job
+          quest: sect_job_shaolin_scripture
+
+# ============================================================================
+# 2. 武当清修（开封武庙前街·清虚道长）
+# ============================================================================
+
+- id: sect_join_wudang
+  name: "机缘·武庙扶道"
+  objectives:
+    - stage: fend_ruffian
+      text: "在武庙前街击退欺负清虚道长的武庙泼皮头子。"
+    - stage: meditate_verse
+      text: "带着碗底调息口诀，去南门演武场或樊楼客舍静思片刻，再回武庙前街见清虚道长。"
+    - stage: return_taoist
+      text: "回武庙前街向清虚道长印证口诀。"
+    - stage: completed
+      text: "你已拜入武当外门清修一脉，获赠青竹道牌并习得《纯阳吐纳功》。"
+  reward:
+    money: 0
+    combat_exp: 60
+    potential: 45
+    items: []
+  events:
+    - id: wudang_join_start
+      trigger:
+        type: talk
+        npc: wudang_wandering_taoist
+      conditions:
+        - type: quest_completed
+          quest: first_steps_kaifeng
+        - type: art_level_at_least
+          art: basic_internal
+          level: 10
+        - type: not_flag
+          flag: sect.has_active
+        - type: not_flag
+          flag: sect.betrayed.any
+        - type: not_flag
+          flag: sect.betrayed.wudang
+        - type: not_flag
+          flag: sect.graduated.wudang
+        - type: quest_not_started
+          quest: sect_join_wudang
+      actions:
+        - type: set_stage
+          quest: sect_join_wudang
+          stage: fend_ruffian
+        - type: show_npc
+          npc: shrine_street_ruffian
+        - type: message
+          speaker: "旁白"
+          text: "话音刚落，一个敞胸泼皮晃过来伸手推搡清虚道长。老道脚下轻滑，竟借力让泼皮扑了个空。"
+        - type: message
+          speaker: "清虚道长"
+          text: "这位小友内息颇静，不如替贫道把这位施主请出武庙前街？记住，莫伤人筋骨。"
+
+    - id: wudang_join_fight
+      trigger:
+        type: talk
+        npc: shrine_street_ruffian
+      conditions:
+        - type: quest_stage
+          quest: sect_join_wudang
+          stage: fend_ruffian
+      actions:
+        - type: message
+          speaker: "武庙泼皮头子"
+          text: "臭小子敢替老道出头？先吃爷爷一拳！"
+        - type: start_battle
+          target: shrine_street_ruffian
+
+    - id: wudang_join_defeat
+      trigger:
+        type: kill
+        npc: shrine_street_ruffian
+      conditions:
+        - type: quest_stage
+          quest: sect_join_wudang
+          stage: fend_ruffian
+      actions:
+        - type: hide_npc
+          npc: shrine_street_ruffian
+        - type: set_stage
+          quest: sect_join_wudang
+          stage: meditate_verse
+        - type: message
+          speaker: "清虚道长"
+          text: "善。老道在茶碗底给你留了半句纯阳吐纳口诀，你且去樊楼客舍或南门演武场静心体悟一番，再来武庙前街找我。"
+
+    - id: wudang_join_insight_inn
+      trigger:
+        type: enter_room
+        map: kaifeng_city
+        position: [-1, 1]
+      conditions:
+        - type: quest_stage
+          quest: sect_join_wudang
+          stage: meditate_verse
+      actions:
+        - type: set_stage
+          quest: sect_join_wudang
+          stage: return_taoist
+        - type: message
+          speaker: "旁白"
+          text: "你在客舍静坐片刻，默念碗底口诀，只觉丹田气息如暖泉流转，顿时明悟了几分“以静制动”的妙处。"
+
+    - id: wudang_join_insight_yard
+      trigger:
+        type: enter_room
+        map: kaifeng_city
+        position: [-1, -1]
+      conditions:
+        - type: quest_stage
+          quest: sect_join_wudang
+          stage: meditate_verse
+      actions:
+        - type: set_stage
+          quest: sect_join_wudang
+          stage: return_taoist
+        - type: message
+          speaker: "旁白"
+          text: "你在演武场边静立吐纳，照着老道留下的口诀缓吐浊气，呼吸绵长竟丝毫不乱。"
+
+    - id: wudang_join_complete
+      trigger:
+        type: talk
+        npc: wudang_wandering_taoist
+      conditions:
+        - type: quest_stage
+          quest: sect_join_wudang
+          stage: return_taoist
+      actions:
+        - type: set_flag
+          flag: sect.active.wudang
+        - type: set_flag
+          flag: sect.has_active
+        - type: give_item
+          item: wudang_jade_talisman
+          amount: 1
+        - type: complete_quest
+          quest: sect_join_wudang
+        - type: message
+          speaker: "清虚道长"
+          text: "哈哈，孺子可教！贫道乃武当山清虚，下山采药偶遇小友，正是道缘。这枚青竹道牌收好，今日便收你为武当外门清修弟子，先传你《纯阳吐纳功》。待修至十四级，再来领紫霄入室考校。"
+
+- id: sect_inner_wudang
+  name: "师门·假道惑众"
+  objectives:
+    - stage: confront_fake
+      text: "前往西市老井拆穿假冒武当兜售金丹的骗局，并制住其护院。"
+    - stage: return_pills
+      text: "将收缴的伪造金丹木匣带回武庙前街交给清虚道长。"
+    - stage: completed
+      text: "你已清查假道，获清虚授武当紫霄外传道箓，晋升入室弟子并习得《武当太极剑》。"
+  reward:
+    money: 50
+    combat_exp: 85
+    potential: 65
+    items:
+      - id: clear_spirit_san
+        amount: 2
+  events:
+    - id: wudang_inner_start
+      trigger:
+        type: talk
+        npc: wudang_wandering_taoist
+      conditions:
+        - type: flag
+          flag: sect.active.wudang
+        - type: art_level_at_least
+          art: chunyang_breath
+          level: 14
+        - type: quest_not_started
+          quest: sect_inner_wudang
+      actions:
+        - type: set_stage
+          quest: sect_inner_wudang
+          stage: confront_fake
+        - type: show_npc
+          npc: fake_taoist_guard
+        - type: message
+          speaker: "清虚道长"
+          text: "近来西市老井一带有人假托武当名号卖劣质金丹害人。你纯阳功已至十四级，去把那木匣假丹收回来，莫让江湖人笑话武当。"
+
+    - id: wudang_inner_fight
+      trigger:
+        type: talk
+        npc: fake_taoist_guard
+      conditions:
+        - type: quest_stage
+          quest: sect_inner_wudang
+          stage: confront_fake
+      actions:
+        - type: message
+          speaker: "假道护院"
+          text: "真武当找上门了？休想砸了老子的财路！"
+        - type: start_battle
+          target: fake_taoist_guard
+
+    - id: wudang_inner_defeat
+      trigger:
+        type: kill
+        npc: fake_taoist_guard
+      conditions:
+        - type: quest_stage
+          quest: sect_inner_wudang
+          stage: confront_fake
+      actions:
+        - type: hide_npc
+          npc: fake_taoist_guard
+        - type: give_item
+          item: fake_taoist_pills
+          amount: 1
+        - type: set_stage
+          quest: sect_inner_wudang
+          stage: return_pills
+        - type: message
+          speaker: "旁白"
+          text: "护院被你震退，假道士见势不妙丢下伪造金丹木匣溜之大吉。"
+
+    - id: wudang_inner_complete
+      trigger:
+        type: talk
+        npc: wudang_wandering_taoist
+      conditions:
+        - type: quest_stage
+          quest: sect_inner_wudang
+          stage: return_pills
+        - type: has_item
+          item: fake_taoist_pills
+      actions:
+        - type: take_item
+          item: fake_taoist_pills
+          amount: 1
+        - type: set_flag
+          flag: sect.rank.inner.wudang
+        - type: complete_quest
+          quest: sect_inner_wudang
+        - type: message
+          speaker: "清虚道长"
+          text: "好徒儿，处事清净利落。今日正式授你武当紫霄外传道箓，将《武当太极剑》亲传于你。待太极剑修至二十六级，再来与为师拆招出师。"
+
+- id: sect_grad_wudang
+  name: "出师·太极拆招"
+  objectives:
+    - stage: spar_master
+      text: "在武庙前街与清虚道长以剑拆招，印证武当太极剑意。"
+    - stage: completed
+      text: "你已通过清虚道长出师考校，体面离开武当门墙。"
+  reward:
+    money: 120
+    combat_exp: 120
+    potential: 90
+    items: []
+  events:
+    - id: wudang_grad_start
+      trigger:
+        type: talk
+        npc: wudang_wandering_taoist
+      conditions:
+        - type: flag
+          flag: sect.active.wudang
+        - type: flag
+          flag: sect.rank.inner.wudang
+        - type: art_level_at_least
+          art: wudang_taiji_sword
+          level: 26
+        - type: quest_not_started
+          quest: sect_grad_wudang
+      actions:
+        - type: set_stage
+          quest: sect_grad_wudang
+          stage: spar_master
+        - type: message
+          speaker: "清虚道长"
+          text: "徒儿太极剑已至二十六级，羽翼已丰。来，与为师拆上一场，胜了便准你体面出师，去闯更宽的江湖。"
+        - type: start_battle
+          target: wudang_wandering_taoist
+
+    - id: wudang_grad_complete
+      trigger:
+        type: kill
+        npc: wudang_wandering_taoist
+      conditions:
+        - type: quest_stage
+          quest: sect_grad_wudang
+          stage: spar_master
+      actions:
+        - type: clear_flag
+          flag: sect.active.wudang
+        - type: clear_flag
+          flag: sect.has_active
+        - type: set_flag
+          flag: sect.graduated.wudang
+        - type: complete_quest
+          quest: sect_grad_wudang
+        - type: message
+          speaker: "清虚道长"
+          text: "好一个借力回剑！今日你已体面出师，武当剑意与纯阳心法俱归你身，山高水长，好自为之。"
+
+- id: sect_job_wudang_herbs
+  name: "门派差事·武庙采药"
+  objectives:
+    - stage: gather_herbs
+      text: "出开封北门赴北郊药草坡采摘药草。"
+    - stage: beacon_breath
+      text: "登上旧烽火台墩调息印证纯阳气机。"
+    - stage: report_taoist
+      text: "回开封武庙前街向清虚道长复命。"
+  reward:
+    money: 42
+    combat_exp: 70
+    potential: 55
+    items: []
+  events:
+    - id: sect_job_wudang_start
+      trigger:
+        type: talk
+        npc: wudang_wandering_taoist
+      conditions:
+        - type: flag
+          flag: sect.active.wudang
+        - type: quest_not_started
+          quest: sect_job_wudang_herbs
+      actions:
+        - type: set_stage
+          quest: sect_job_wudang_herbs
+          stage: gather_herbs
+        - type: message
+          speaker: "清虚道长"
+          text: "替为师去北郊药草坡采一束清露草，再登旧烽火台墩吐纳片刻，回来算你一趟道门功课。"
+
+    - id: sect_job_wudang_slope
+      trigger:
+        type: enter_room
+        map: north_post_road
+        position: [1, 3]
+      conditions:
+        - type: quest_stage
+          quest: sect_job_wudang_herbs
+          stage: gather_herbs
+      actions:
+        - type: set_stage
+          quest: sect_job_wudang_herbs
+          stage: beacon_breath
+        - type: message
+          speaker: "旁白"
+          text: "清露草采齐，顺路往北登一趟旧烽火台墩印证呼吸吧。"
+
+    - id: sect_job_wudang_beacon
+      trigger:
+        type: enter_room
+        map: north_post_road
+        position: [1, 5]
+      conditions:
+        - type: quest_stage
+          quest: sect_job_wudang_herbs
+          stage: beacon_breath
+      actions:
+        - type: set_stage
+          quest: sect_job_wudang_herbs
+          stage: report_taoist
+        - type: message
+          speaker: "旁白"
+          text: "黄河大风迎面吹来，你气沉丹田巍然不动，纯阳气息愈发澄明。"
+
+    - id: sect_job_wudang_finish
+      trigger:
+        type: talk
+        npc: wudang_wandering_taoist
+      conditions:
+        - type: quest_stage
+          quest: sect_job_wudang_herbs
+          stage: report_taoist
+      actions:
+        - type: message
+          speaker: "清虚道长"
+          text: "气息不浮不躁，这趟功课做得好。拿去买些茶水盘缠。"
+        - type: complete_job
+          quest: sect_job_wudang_herbs
+
+# ============================================================================
+# 3. 五岳·嵩阳一脉（洛阳洛水冷泉·陆寒松）
+# ============================================================================
+
+- id: sect_join_songyang
+  name: "机缘·冷泉试剑"
+  objectives:
+    - stage: ten_moves_trial
+      text: "在洛水冷泉与嵩阳剑痴陆寒松点到为止试剑一战。"
+    - stage: completed
+      text: "你已破格拜入五岳嵩阳外山一脉，获赠青丝剑穗并习得《嵩阳叠云剑》。"
+  reward:
+    money: 0
+    combat_exp: 65
+    potential: 50
+    items: []
+  events:
+    - id: songyang_join_start
+      trigger:
+        type: talk
+        npc: songyang_elder
+      conditions:
+        - type: flag
+          flag: luoyang.peony_duel_won
+        - type: art_level_at_least
+          art: basic_sword
+          level: 14
+        - type: not_flag
+          flag: sect.has_active
+        - type: not_flag
+          flag: sect.betrayed.any
+        - type: not_flag
+          flag: sect.betrayed.songyang
+        - type: not_flag
+          flag: sect.graduated.songyang
+        - type: quest_not_started
+          quest: sect_join_songyang
+      actions:
+        - type: set_stage
+          quest: sect_join_songyang
+          stage: ten_moves_trial
+        - type: message
+          speaker: "嵩阳剑痴陆寒松"
+          text: "你在牡丹台胜了我侄儿宋秋河那一剑，我在台下看了。剑里杂着威远镖局的护身架子和洛阳步法，倒没被一家死规矩教僵。"
+        - type: message
+          speaker: "嵩阳剑痴陆寒松"
+          text: "拔剑！能撑过老夫这一场试剑，我便破格收你入我嵩阳一脉！"
+        - type: start_battle
+          target: songyang_elder
+
+    - id: songyang_join_complete
+      trigger:
+        type: kill
+        npc: songyang_elder
+      conditions:
+        - type: quest_stage
+          quest: sect_join_songyang
+          stage: ten_moves_trial
+      actions:
+        - type: set_flag
+          flag: sect.active.songyang
+        - type: set_flag
+          flag: sect.has_active
+        - type: give_item
+          item: songyang_sword_tassel
+          amount: 1
+        - type: complete_quest
+          quest: sect_join_songyang
+        - type: message
+          speaker: "嵩阳剑痴陆寒松"
+          text: "痛快！好久没见过出剑这么干脆的年轻人了。这枚嵩阳青丝剑穗系在剑柄上，今日起你算我嵩阳外山弟子，先传你《嵩阳叠云剑》，练到十四级再跟我去清一桩洛阳旧事。"
+
+- id: sect_inner_songyang
+  name: "师门·旧剑归鞘"
+  objectives:
+    - stage: fight_bridge
+      text: "前往天津桥头，击败借嵩阳旧断剑挑衅名声的挑衅剑客。"
+    - stage: return_sword
+      text: "将取回的《嵩阳旧断剑》带回洛水冷泉呈交陆寒松。"
+    - stage: completed
+      text: "你已追回旧剑，正式拜入陆寒松门下为嵩阳入室剑徒并习得《岳峙步》。"
+  reward:
+    money: 55
+    combat_exp: 90
+    potential: 70
+    items: []
+  events:
+    - id: songyang_inner_start
+      trigger:
+        type: talk
+        npc: songyang_elder
+      conditions:
+        - type: flag
+          flag: sect.active.songyang
+        - type: art_level_at_least
+          art: songyang_cloud_sword
+          level: 14
+        - type: quest_not_started
+          quest: sect_inner_songyang
+      actions:
+        - type: set_stage
+          quest: sect_inner_songyang
+          stage: fight_bridge
+        - type: show_npc
+          npc: songyang_bridge_challenger
+        - type: message
+          speaker: "嵩阳剑痴陆寒松"
+          text: "旧剑市流出一柄早年嵩阳折断的旧剑，如今落在一个轻狂游侠手里，正站在天津桥头拿它嘲讽我嵩阳剑法。去用《嵩阳叠云剑》把旧剑堂堂正正赢回来！"
+
+    - id: songyang_inner_fight
+      trigger:
+        type: talk
+        npc: songyang_bridge_challenger
+      conditions:
+        - type: quest_stage
+          quest: sect_inner_songyang
+          stage: fight_bridge
+      actions:
+        - type: message
+          speaker: "挑衅剑客"
+          text: "嵩阳的新徒弟？来，接我这几招洛阳快剑！"
+        - type: start_battle
+          target: songyang_bridge_challenger
+
+    - id: songyang_inner_defeat
+      trigger:
+        type: kill
+        npc: songyang_bridge_challenger
+      conditions:
+        - type: quest_stage
+          quest: sect_inner_songyang
+          stage: fight_bridge
+      actions:
+        - type: hide_npc
+          npc: songyang_bridge_challenger
+        - type: give_item
+          item: songyang_broken_sword
+          amount: 1
+        - type: set_stage
+          quest: sect_inner_songyang
+          stage: return_sword
+        - type: message
+          speaker: "旁白"
+          text: "挑衅剑客心服口服，解下腰间的《嵩阳旧断剑》双手奉还。"
+
+    - id: songyang_inner_complete
+      trigger:
+        type: talk
+        npc: songyang_elder
+      conditions:
+        - type: quest_stage
+          quest: sect_inner_songyang
+          stage: return_sword
+        - type: has_item
+          item: songyang_broken_sword
+      actions:
+        - type: take_item
+          item: songyang_broken_sword
+          amount: 1
+        - type: set_flag
+          flag: sect.rank.inner.songyang
+        - type: complete_quest
+          quest: sect_inner_songyang
+        - type: message
+          speaker: "嵩阳剑痴陆寒松"
+          text: "旧剑归鞘，不坠嵩阳之名。从今日起你便是我陆寒松的入室剑徒，这门《岳峙步》也一并传你。待叠云剑修至二十六级，去牡丹台迎战华山同辈，胜了便可体面出师！"
+
+- id: sect_grad_songyang
+  name: "出师·牡丹扬锋"
+  objectives:
+    - stage: duel_huashan
+      text: "赴洛阳牡丹会场，与前来试剑的华山游剑客林昭一战。"
+    - stage: report_elder
+      text: "回洛水冷泉向陆寒松辞行出师。"
+    - stage: completed
+      text: "你在牡丹台扬锋出师，体面离开嵩阳门墙。"
+  reward:
+    money: 130
+    combat_exp: 125
+    potential: 95
+    items: []
+  events:
+    - id: songyang_grad_start
+      trigger:
+        type: talk
+        npc: songyang_elder
+      conditions:
+        - type: flag
+          flag: sect.active.songyang
+        - type: flag
+          flag: sect.rank.inner.songyang
+        - type: art_level_at_least
+          art: songyang_cloud_sword
+          level: 26
+        - type: quest_not_started
+          quest: sect_grad_songyang
+      actions:
+        - type: set_stage
+          quest: sect_grad_songyang
+          stage: duel_huashan
+        - type: show_npc
+          npc: songyang_rival_lin
+        - type: message
+          speaker: "嵩阳剑痴陆寒松"
+          text: "华山游剑客林昭听闻你的剑名，正在牡丹台前等你。胜过他，你便足以独步五岳，回来领出师之礼。"
+
+    - id: songyang_grad_fight
+      trigger:
+        type: talk
+        npc: songyang_rival_lin
+      conditions:
+        - type: quest_stage
+          quest: sect_grad_songyang
+          stage: duel_huashan
+      actions:
+        - type: message
+          speaker: "华山游剑客林昭"
+          text: "嵩阳高徒请出剑，五岳剑意就在这三尺青锋之上！"
+        - type: start_battle
+          target: songyang_rival_lin
+
+    - id: songyang_grad_defeat
+      trigger:
+        type: kill
+        npc: songyang_rival_lin
+      conditions:
+        - type: quest_stage
+          quest: sect_grad_songyang
+          stage: duel_huashan
+      actions:
+        - type: hide_npc
+          npc: songyang_rival_lin
+        - type: set_stage
+          quest: sect_grad_songyang
+          stage: report_elder
+        - type: message
+          speaker: "旁白"
+          text: "林昭长剑归鞘，朗声赞你剑势如云海压顶，台下洛阳豪客齐声喝彩。"
+
+    - id: songyang_grad_complete
+      trigger:
+        type: talk
+        npc: songyang_elder
+      conditions:
+        - type: quest_stage
+          quest: sect_grad_songyang
+          stage: report_elder
+      actions:
+        - type: clear_flag
+          flag: sect.active.songyang
+        - type: clear_flag
+          flag: sect.has_active
+        - type: set_flag
+          flag: sect.graduated.songyang
+        - type: complete_quest
+          quest: sect_grad_songyang
+        - type: message
+          speaker: "嵩阳剑痴陆寒松"
+          text: "哈哈，好！老夫没看错人。今日你体面出师，叠云剑与岳峙步尽归你身，往后天下剑客任你去会！"
+
+- id: sect_job_songyang_duel
+  name: "门派差事·洛水巡剑"
+  objectives:
+    - stage: patrol_gallery
+      text: "前往洛水步法廊与牡丹会场巡查剑客动静。"
+    - stage: report_elder
+      text: "回洛水冷泉向陆寒松复命。"
+  reward:
+    money: 50
+    combat_exp: 85
+    potential: 60
+    items: []
+  events:
+    - id: sect_job_songyang_start
+      trigger:
+        type: talk
+        npc: songyang_elder
+      conditions:
+        - type: flag
+          flag: sect.active.songyang
+        - type: quest_not_started
+          quest: sect_job_songyang_duel
+      actions:
+        - type: set_stage
+          quest: sect_job_songyang_duel
+          stage: patrol_gallery
+        - type: message
+          speaker: "嵩阳剑痴陆寒松"
+          text: "去洛水步法廊走一趟，体悟湿阶换步，顺路看看牡丹会场有没有寻衅的外客，回来算你一份剑课。"
+
+    - id: sect_job_songyang_gallery
+      trigger:
+        type: enter_room
+        map: luoyang_city
+        position: [2, 2]
+      conditions:
+        - type: quest_stage
+          quest: sect_job_songyang_duel
+          stage: patrol_gallery
+      actions:
+        - type: set_stage
+          quest: sect_job_songyang_duel
+          stage: report_elder
+        - type: message
+          speaker: "旁白"
+          text: "你在步法廊观摩剑客拆招，剑意愈发锋利，转身回洛水冷泉复命。"
+
+    - id: sect_job_songyang_finish
+      trigger:
+        type: talk
+        npc: songyang_elder
+      conditions:
+        - type: quest_stage
+          quest: sect_job_songyang_duel
+          stage: report_elder
+      actions:
+        - type: message
+          speaker: "嵩阳剑痴陆寒松"
+          text: "脚下沉稳了不少，这五十文拿去置办好酒好剑。"
+        - type: complete_job
+          quest: sect_job_songyang_duel
+
+# ============================================================================
+# 4. 太湖水榭真传（太湖水榭药堂·白发医者）
+# ============================================================================
+
+- id: sect_join_taihu
+  name: "机缘·碧波救危"
+  objectives:
+    - stage: check_patient
+      text: "前往切脉房查看身中奇毒的垂危江湖客。"
+    - stage: ask_antidote
+      text: "赴方书阁告知沈青笺此乃汴北碧水毒砂，配取解药。"
+    - stage: report_senior
+      text: "回水榭药堂向白发医者复命。"
+    - stage: completed
+      text: "你凭医缘与分寸拜入太湖水榭真传，获赠水榭玉针并习得《水榭听涛剑》。"
+  reward:
+    money: 0
+    combat_exp: 65
+    potential: 50
+    items: []
+  events:
+    - id: taihu_join_start
+      trigger:
+        type: talk
+        npc: taihu_senior
+      conditions:
+        - type: flag
+          flag: taihu.inner_guest
+        - type: not_flag
+          flag: sect.has_active
+        - type: not_flag
+          flag: sect.betrayed.any
+        - type: not_flag
+          flag: sect.betrayed.taihu
+        - type: not_flag
+          flag: sect.graduated.taihu
+        - type: quest_not_started
+          quest: sect_join_taihu
+      actions:
+        - type: set_stage
+          quest: sect_join_taihu
+          stage: check_patient
+        - type: show_npc
+          npc: taihu_poisoned_guest
+        - type: message
+          speaker: "太湖白发医者"
+          text: "来得正好！切脉房刚抬进一名身中奇毒的北来行客，毒性阴寒却辨不出配比。你常走汴北江湖，快去切脉房替老夫看一眼。"
+
+    - id: taihu_join_check
+      trigger:
+        type: talk
+        npc: taihu_poisoned_guest
+      conditions:
+        - type: quest_stage
+          quest: sect_join_taihu
+          stage: check_patient
+      actions:
+        - type: set_stage
+          quest: sect_join_taihu
+          stage: ask_antidote
+        - type: message
+          speaker: "垂危江湖客"
+          text: "咳……是汴北盐帮暗桩撒出的碧水毒砂……胸口冷得像坠了冰块……"
+        - type: message
+          speaker: "旁白"
+          text: "你一眼认出这是盐帮“碧水毒砂”的路数，快去方书阁告诉沈青笺对症配药。"
+
+    - id: taihu_join_archivist
+      trigger:
+        type: talk
+        npc: taihu_archivist
+      conditions:
+        - type: quest_stage
+          quest: sect_join_taihu
+          stage: ask_antidote
+      actions:
+        - type: hide_npc
+          npc: taihu_poisoned_guest
+        - type: set_stage
+          quest: sect_join_taihu
+          stage: report_senior
+        - type: message
+          speaker: "守阁女医沈青笺"
+          text: "原来是碧水毒砂！以冷泉苇灰配甘草三七即可压住寒毒。多亏你认得路数，病人已经稳住了，快回药堂见先生吧。"
+
+    - id: taihu_join_complete
+      trigger:
+        type: talk
+        npc: taihu_senior
+      conditions:
+        - type: quest_stage
+          quest: sect_join_taihu
+          stage: report_senior
+      actions:
+        - type: set_flag
+          flag: sect.active.taihu
+        - type: set_flag
+          flag: sect.has_active
+        - type: give_item
+          item: taihu_jade_needle
+          amount: 1
+        - type: complete_quest
+          quest: sect_join_taihu
+        - type: message
+          speaker: "太湖白发医者"
+          text: "你手上既有剑茧，心里又存着救人的分寸。老夫破例收你为太湖水榭真传弟子，这盒水榭玉针与《水榭听涛剑》传你。待剑法修至十四级，随水榭去查清这毒砂源头。"
+
+- id: sect_inner_taihu
+  name: "师门·暗港溯毒"
+  objectives:
+    - stage: hunt_smuggler
+      text: "前往芦苇暗港，截住私贩毒药暗桩并夺回暗港毒砂囊。"
+    - stage: report_senior
+      text: "将《暗港毒砂囊》交回水榭药堂白发医者，晋升水榭执方弟子。"
+    - stage: completed
+      text: "你已查清毒源，获授水榭执方真传并习得《碧波续脉诀》。"
+  reward:
+    money: 55
+    combat_exp: 90
+    potential: 70
+    items:
+      - id: taihu_mending_pill
+        amount: 1
+  events:
+    - id: taihu_inner_start
+      trigger:
+        type: talk
+        npc: taihu_senior
+      conditions:
+        - type: flag
+          flag: sect.active.taihu
+        - type: art_level_at_least
+          art: taihu_tide_sword
+          level: 14
+        - type: quest_not_started
+          quest: sect_inner_taihu
+      actions:
+        - type: set_stage
+          quest: sect_inner_taihu
+          stage: hunt_smuggler
+        - type: show_npc
+          npc: taihu_poison_smuggler
+        - type: message
+          speaker: "太湖白发医者"
+          text: "沈青笺查到有私贩毒药的暗桩躲在芦苇暗港配毒。你听涛剑已有火候，去把那毒囊夺回来交入病案，莫让毒物散进湖区。"
+
+    - id: taihu_inner_fight
+      trigger:
+        type: talk
+        npc: taihu_poison_smuggler
+      conditions:
+        - type: quest_stage
+          quest: sect_inner_taihu
+          stage: hunt_smuggler
+      actions:
+        - type: message
+          speaker: "私贩毒药暗桩"
+          text: "水榭的弟子也敢管盐帮暗线？吃我一掌毒砂！"
+        - type: start_battle
+          target: taihu_poison_smuggler
+
+    - id: taihu_inner_defeat
+      trigger:
+        type: kill
+        npc: taihu_poison_smuggler
+      conditions:
+        - type: quest_stage
+          quest: sect_inner_taihu
+          stage: hunt_smuggler
+      actions:
+        - type: hide_npc
+          npc: taihu_poison_smuggler
+        - type: give_item
+          item: taihu_poison_pouch
+          amount: 1
+        - type: set_stage
+          quest: sect_inner_taihu
+          stage: report_senior
+        - type: message
+          speaker: "旁白"
+          text: "暗桩狼狈逃走，你收起掉落的《暗港毒砂囊》，准备回水榭药堂复命。"
+
+    - id: taihu_inner_complete
+      trigger:
+        type: talk
+        npc: taihu_senior
+      conditions:
+        - type: quest_stage
+          quest: sect_inner_taihu
+          stage: report_senior
+        - type: has_item
+          item: taihu_poison_pouch
+      actions:
+        - type: take_item
+          item: taihu_poison_pouch
+          amount: 1
+        - type: set_flag
+          flag: sect.rank.inner.taihu
+        - type: complete_quest
+          quest: sect_inner_taihu
+        - type: message
+          speaker: "太湖白发医者"
+          text: "好徒儿。从今日起你晋升水榭执方弟子，镇派内功《碧波续脉诀》亲传于你。待听涛剑修至二十六级，便可接水榭出师之试。"
+
+- id: sect_grad_taihu
+  name: "出师·平毒护岸"
+  objectives:
+    - stage: stop_plague
+      text: "赴芦苇暗港击退企图向湖岸水源投毒的投毒暗桩头目。"
+    - stage: report_senior
+      text: "回水榭药堂向白发医者辞行出师。"
+    - stage: completed
+      text: "你已护住湖岸体面出师，保留全部水榭真传医武。"
+  reward:
+    money: 130
+    combat_exp: 125
+    potential: 95
+    items: []
+  events:
+    - id: taihu_grad_start
+      trigger:
+        type: talk
+        npc: taihu_senior
+      conditions:
+        - type: flag
+          flag: sect.active.taihu
+        - type: flag
+          flag: sect.rank.inner.taihu
+        - type: art_level_at_least
+          art: taihu_tide_sword
+          level: 26
+        - type: quest_not_started
+          quest: sect_grad_taihu
+      actions:
+        - type: set_stage
+          quest: sect_grad_taihu
+          stage: stop_plague
+        - type: show_npc
+          npc: taihu_plague_raider
+        - type: message
+          speaker: "太湖白发医者"
+          text: "盐帮死士扬言今夜要在芦苇暗港下毒逼水榭就范。你既已修成听涛剑与碧波诀，替水榭挡下这一劫，便可体面出师游历天下。"
+
+    - id: taihu_grad_fight
+      trigger:
+        type: talk
+        npc: taihu_plague_raider
+      conditions:
+        - type: quest_stage
+          quest: sect_grad_taihu
+          stage: stop_plague
+      actions:
+        - type: message
+          speaker: "投毒暗桩头目"
+          text: "水榭执方弟子？今日便让你尝尝五毒蚀骨掌的厉害！"
+        - type: start_battle
+          target: taihu_plague_raider
+
+    - id: taihu_grad_defeat
+      trigger:
+        type: kill
+        npc: taihu_plague_raider
+      conditions:
+        - type: quest_stage
+          quest: sect_grad_taihu
+          stage: stop_plague
+      actions:
+        - type: hide_npc
+          npc: taihu_plague_raider
+        - type: set_stage
+          quest: sect_grad_taihu
+          stage: report_senior
+        - type: message
+          speaker: "旁白"
+          text: "你以柔韧剑势逼退毒掌，将毒坛尽数沉入泥底，太湖沿岸转危为安。"
+
+    - id: taihu_grad_complete
+      trigger:
+        type: talk
+        npc: taihu_senior
+      conditions:
+        - type: quest_stage
+          quest: sect_grad_taihu
+          stage: report_senior
+      actions:
+        - type: clear_flag
+          flag: sect.active.taihu
+        - type: clear_flag
+          flag: sect.has_active
+        - type: set_flag
+          flag: sect.graduated.taihu
+        - type: complete_quest
+          quest: sect_grad_taihu
+        - type: message
+          speaker: "太湖白发医者"
+          text: "医者仁心，剑者守正。今日你已体面出师，所学水榭真传尽归己身，日后无论入何门墙，记得先救人、后论剑。"
+
+- id: sect_job_taihu_clinic
+  name: "门派差事·水榭巡诊"
+  objectives:
+    - stage: fetch_meds
+      text: "到煎药房取配好的汤药，再前往听雨荷亭巡诊。"
+    - stage: report_archivist
+      text: "回方书阁向沈青笺复命。"
+  reward:
+    money: 45
+    combat_exp: 72
+    potential: 58
+    items: []
+  events:
+    - id: sect_job_taihu_start
+      trigger:
+        type: talk
+        npc: taihu_archivist
+      conditions:
+        - type: flag
+          flag: sect.active.taihu
+        - type: quest_not_started
+          quest: sect_job_taihu_clinic
+      actions:
+        - type: set_stage
+          quest: sect_job_taihu_clinic
+          stage: fetch_meds
+        - type: message
+          speaker: "守阁女医沈青笺"
+          text: "师弟/师妹，劳烦去煎药房取两帖退暑药，再顺道去听雨荷亭看看江师兄那边可缺伤药，回来记你一份诊务。"
+
+    - id: sect_job_taihu_pavilion
+      trigger:
+        type: enter_room
+        map: taihu_water_pavilion
+        position: [0, 6]
+      conditions:
+        - type: quest_stage
+          quest: sect_job_taihu_clinic
+          stage: fetch_meds
+      actions:
+        - type: set_stage
+          quest: sect_job_taihu_clinic
+          stage: report_archivist
+        - type: message
+          speaker: "旁白"
+          text: "你将汤药分送妥当，顺着湖风听雨调息片刻，回方书阁复命便是。"
+
+    - id: sect_job_taihu_finish
+      trigger:
+        type: talk
+        npc: taihu_archivist
+      conditions:
+        - type: quest_stage
+          quest: sect_job_taihu_clinic
+          stage: report_archivist
+      actions:
+        - type: message
+          speaker: "守阁女医沈青笺"
+          text: "药账核对清清楚楚，这份门内诊资请收好。"
+        - type: complete_job
+          quest: sect_job_taihu_clinic

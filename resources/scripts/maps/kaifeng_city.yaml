@@ -82,6 +82,9 @@ rooms:
     desc: "棚下堆着缆绳、破桨和几盏备用风灯。这里是漕帮在州桥东侧的缆桩棚，不通城内。"
     char:
       - salt_gang_thug
+      - caoban_dock_mate
+      - caoban_night_raider
+      - alley_vengeance_boss
     exits:
       west: [0, -2]
 
@@ -160,6 +163,8 @@ rooms:
     name: "甜水巷"
     kind: street
     desc: "巷子窄得两个人错身也要侧肩。茶楼、钱庄和公告墙的门脸紧挨着，各自迎客。"
+    char:
+      - salt_caoban_sentry
     exits:
       east: [-1, 0]
       west: [-3, 0]
@@ -188,6 +193,8 @@ rooms:
     name: "老井"
     kind: landmark
     desc: "井台石沿被磨得发亮，附近居民常在这里打水。再往北就是闭门人家的后巷。"
+    char:
+      - fake_taoist_guard
     exits:
       south: [-3, 0]
 
@@ -339,6 +346,9 @@ rooms:
     name: "武庙前街"
     kind: street
     desc: "小武庙临街而立。西边是洛阳车马行，往北折进窄巷便是北街。"
+    char:
+      - wudang_wandering_taoist
+      - shrine_street_ruffian
     exits:
       east: [0, 2]
       west: [-2, 2]
@@ -361,6 +371,8 @@ rooms:
     desc: "后巷夹在武庙与北街之间，墙角留着衙役查访的粉笔记号，平时鲜少有人往来。"
     char:
       - alley_beggar_chen
+      - alley_old_beggar
+      - alley_salt_enforcer
     exits:
       east: [0, 3]
       south: [-1, 2]

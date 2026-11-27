@@ -222,6 +222,8 @@
       conditions:
         - type: quest_completed
           quest: dali_chongsheng_bell
+        - type: not_flag
+          flag: sect.betrayed.any
       actions:
         - type: message
           speaker: "守塔僧枯木"

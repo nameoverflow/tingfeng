@@ -6,22 +6,37 @@
     foundation:
       - id: basic_fist
         level: 10
+      - id: basic_blade
+        level: 28
       - id: basic_lightness
-        level: 12
+        level: 28
     fist:
       - id: nameless_trial_fist
         level: 8
+    blade:
+      - id: caoban_river_saber
+        level: 24
+    lightness:
+      - id: caoban_tide_step
+        level: 24
   prepared:
-    fist:
-      id: nameless_trial_fist
-      level: 8
-  teach_bonus: 3
+    blade:
+      id: caoban_river_saber
+      level: 24
+  teach_bonus: 4
   teaches:
     bianshui_wave_step: 18
-    basic_lightness: 12
+    basic_lightness: 24
+    basic_blade: 28
+    caoban_river_saber: 30
+    caoban_tide_step: 30
   teach_requires:
     flag: jianghu.caoban_friend
-    refusal: "漕帮的步子是踩在跳板和浪头上练出来的，不教外人。先把南渡缆桩的事帮我料理干净。"
+    refusal: "漕帮的步子与刀法不教外人。先把南渡缆桩的事帮我料理干净。"
+    forbid_flags:
+      - sect.active.saltgang
+      - sect.betrayed.caoban
+    forbid_refusal: "吃里扒外投了盐帮的人，柳岸码头容不下你，滚！"
   dialogue:
     - "汴河上的船认漕帮的旗，不认官府的牌。码头的事，码头自己了。"
   respawn: 0

@@ -112,6 +112,7 @@ pub data StoryCondition {
     HasItem(String),
     LacksItem(String),
     InMap(String),
+    ArtLevelAtLeast(String, Int),
 }
 
 pub def decodeStoryCondition(): Decoder StoryCondition =
@@ -131,6 +132,12 @@ pub def decodeStoryCondition(): Decoder StoryCondition =
         ("has_item", at("item", str) |> mapD((i) -> HasItem(i))),
         ("not_has_item", at("item", str) |> mapD((i) -> LacksItem(i))),
         ("in_map", at("map", str) |> mapD((m) -> InMap(m))),
+        (
+            "art_level_at_least",
+            succeed((a) -> (lvl) -> ArtLevelAtLeast(a, lvl))
+                |> req("art", str)
+                |> req("level", int)
+        ),
     ])
 
 pub data StoryAction {
@@ -148,6 +155,7 @@ pub data StoryAction {
     TakeItem(String, Int),
     GiveMoney(Int),
     LearnArt(String, Int),
+    HalveArtLevel(String),
     StartBattle(String),
     MovePlayer(String, (Int, Int)),
 }
@@ -198,6 +206,7 @@ pub def decodeStoryAction(): Decoder StoryAction =
                 |> req("art", str)
                 |> withDefault("level", int, 1)
         ),
+        ("halve_art_level", at("art", str) |> mapD((a) -> HalveArtLevel(a))),
         ("start_battle", at("target", str) |> mapD((t) -> StartBattle(t))),
         (
             "move_player",

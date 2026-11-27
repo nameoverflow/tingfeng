@@ -1,0 +1,975 @@
+- id: luohan_subduing_staff
+  name: "罗汉伏魔棍"
+  type: staff
+  tier: regional
+  desc: "少林罗汉堂外传的沉稳棍法，借大开大合的扫砸稳住阵脚，不求凌厉杀伤，重在以重制轻、震退强敌。"
+  foundation: basic_staff
+  requires:
+    - art: basic_staff
+      level: 12
+    - art: basic_internal
+      level: 10
+  max_level: 45
+  attack_moves:
+    - id: luohan_sweep_dust
+      name: "扫叶归根"
+      desc: "横棍低扫，如老僧扫落叶般逼退对手下盘。"
+      msg: "沉步挥棍，自下而上扫向对手下盘"
+      unlock_level: 1
+      damage: 16
+      animation:
+        action: rig.staff.sweep_a
+        tags: ["staff", "sweep"]
+    - id: luohan_lift_bell
+      name: "托钟镇岳"
+      desc: "双手托棍上撩，卸开来兵并反震腕脉。"
+      msg: "双手沉力托棍上挑，似托古钟"
+      unlock_level: 10
+      damage: 20
+      animation:
+        action: rig.sword.rising_cut_a
+        tags: ["staff", "rising"]
+    - id: luohan_heavy_staff
+      name: "金刚杵地"
+      desc: "借身形下坠之势，以棍端重砸中路。"
+      msg: "沉肩落步，长棍如金刚杵般重砸而下"
+      unlock_level: 20
+      damage: 25
+      animation:
+        action: rig.staff.smash_a
+        tags: ["staff", "heavy"]
+  active_skills:
+    - id: luohan_iron_wall
+      name: "罗汉封门"
+      desc: "横棍护胸，稳固身形与护体真气。"
+      msg: "长棍斜横身前，气沉丹田守住门户"
+      unlock_level: 4
+      cd: 14.0
+      target: Self
+      cost: 40
+      ap_req: 45
+      req_status: []
+      animation:
+        action: rig.sword.guard
+        tags: ["stance", "self"]
+      effect:
+        self:
+          - id: iron_body_buff
+            duration: 14.0
+            value: 5
+          - id: focused_guard
+            duration: 14.0
+            value: 2
+        target: []
+    - id: luohan_subdue_demon
+      name: "伏魔重击"
+      desc: "纵身举棍力劈而下，震得对手臂膀酸麻。"
+      msg: "纵身提棍，携雷霆之势当头砸落"
+      unlock_level: 14
+      cd: 16.0
+      target: Single
+      cost: 65
+      ap_req: 80
+      req_status: []
+      damage: 98
+      animation:
+        action: rig.staff.smash_a
+        tags: ["staff", "aerial", "heavy"]
+      effect:
+        self: []
+        target:
+          - id: weakened
+            duration: 10.0
+            value: 2
+
+- id: shaolin_vajra_body
+  name: "少林金刚护体"
+  type: internal
+  tier: regional
+  desc: "少林罗汉堂秘传护体禅功。练至深处气息浑厚如铜钟，既能卸去重击，又能以禅定抚平伤势。"
+  foundation: basic_internal
+  requires:
+    - art: basic_internal
+      level: 14
+  max_level: 45
+  active_skills:
+    - id: vajra_golden_bell
+      name: "金刚罩体"
+      desc: "运气遍布周身，大幅减轻所受外伤。"
+      msg: "默运禅息，周身劲力凝若金钟护体"
+      unlock_level: 3
+      cd: 16.0
+      target: Self
+      cost: 50
+      ap_req: 45
+      req_status: []
+      animation:
+        action: rig.fist.guard
+        tags: ["buff", "self"]
+      effect:
+        self:
+          - id: iron_body_buff
+            duration: 16.0
+            value: 6
+        target: []
+    - id: vajra_zen_recovery
+      name: "禅定回春"
+      desc: "定心吐纳，化去滞气并大幅平复伤势。"
+      msg: "合目吐浊，浑厚禅息自丹田涌遍四肢百骸"
+      unlock_level: 16
+      cd: 20.0
+      target: Self
+      cost: 75
+      ap_req: 60
+      req_status: []
+      heal: 95
+      cleanse: [debuff]
+      animation:
+        action: rig.fist.healing_palm
+        tags: ["heal", "buff", "self"]
+      effect:
+        self:
+          - id: iron_body_buff
+            duration: 10.0
+            value: 4
+        target: []
+
+- id: wudang_taiji_sword
+  name: "武当太极剑"
+  type: sword
+  tier: regional
+  desc: "武当清修一脉相传的绵长剑法。剑走圆弧、以守带攻，须先稳住凝神守势，再借对手来力反制。"
+  foundation: basic_sword
+  requires:
+    - art: basic_sword
+      level: 12
+    - art: basic_internal
+      level: 12
+  max_level: 45
+  attack_moves:
+    - id: taiji_draw_circle
+      name: "揽雀画圆"
+      desc: "剑尖轻挽圆弧，顺势切入对手外门。"
+      msg: "长剑画圆，顺势斜削对手外门"
+      unlock_level: 1
+      damage: 15
+      animation:
+        action: rig.sword.cut_a
+        tags: ["sword", "slash"]
+    - id: taiji_point_star
+      name: "指南定针"
+      desc: "圆转之后忽然凝锋直刺中宫。"
+      msg: "剑势由圆转直，一点寒星直刺中路"
+      unlock_level: 10
+      damage: 19
+      animation:
+        action: rig.sword.thrust_a
+        tags: ["sword", "stab"]
+    - id: taiji_cloud_lift
+      name: "云手挑剑"
+      desc: "借腰胯轻转，剑锋自下挑起破开来势。"
+      msg: "腰胯轻旋，剑锋如云手般向上挑出"
+      unlock_level: 20
+      damage: 23
+      animation:
+        action: rig.sword.rising_cut_a
+        tags: ["sword", "uppercut"]
+  active_skills:
+    - id: taiji_circle_guard
+      name: "画圆卸力"
+      desc: "在身前布下绵密剑圈，稳固守势并减轻伤势。"
+      msg: "剑光如轮缓缓画圆，将周身空门尽数护住"
+      unlock_level: 3
+      cd: 13.0
+      target: Self
+      cost: 38
+      ap_req: 45
+      req_status: []
+      animation:
+        action: rig.sword.guard
+        tags: ["stance", "self"]
+      effect:
+        self:
+          - id: focused_guard
+            duration: 15.0
+            value: 3
+          - id: iron_body_buff
+            duration: 12.0
+            value: 3
+        target: []
+    - id: taiji_borrow_force
+      name: "借力回剑"
+      desc: "须先进入凝神式。借对手发力空当连环封剑反制。"
+      msg: "顺势借力，剑网如潮回卷对手周身要害"
+      unlock_level: 12
+      cd: 15.0
+      target: Single
+      cost: 62
+      ap_req: 75
+      req_status:
+        - focused_guard
+      damage: 112
+      animation:
+        action: rig.sword.sword_net_a
+        tags: ["sword", "combo", "net"]
+      effect:
+        self: []
+        target:
+          - id: weakened
+            duration: 10.0
+            value: 2
+
+- id: chunyang_breath
+  name: "纯阳吐纳功"
+  type: internal
+  tier: regional
+  desc: "武当道门筑基养气的内功心法。气息纯和绵长，最擅化解阴毒滞气、抱元守一。"
+  foundation: basic_internal
+  requires:
+    - art: basic_internal
+      level: 14
+  max_level: 45
+  active_skills:
+    - id: chunyang_clear_qi
+      name: "纯阳化浊"
+      desc: "以纯阳温气驱散体内毒伤与滞气。"
+      msg: "缓运纯阳真气，将体内浊毒与疲倦一并化去"
+      unlock_level: 4
+      cd: 14.0
+      target: Self
+      cost: 45
+      ap_req: 45
+      req_status: []
+      heal: 55
+      cleanse: [debuff, dot]
+      animation:
+        action: rig.fist.healing_palm
+        tags: ["heal", "self"]
+      effect:
+        self: []
+        target: []
+    - id: chunyang_steady_meridian
+      name: "抱元守一"
+      desc: "气归丹田，兼顾疗伤、凝神与护体。"
+      msg: "抱元守一，清朗真气在周身流转不息"
+      unlock_level: 15
+      cd: 18.0
+      target: Self
+      cost: 65
+      ap_req: 55
+      req_status: []
+      heal: 80
+      animation:
+        action: rig.fist.guard
+        tags: ["heal", "buff", "self"]
+      effect:
+        self:
+          - id: focused_guard
+            duration: 16.0
+            value: 2
+          - id: iron_body_buff
+            duration: 16.0
+            value: 4
+        target: []
+
+- id: songyang_cloud_sword
+  name: "嵩阳叠云剑"
+  type: sword
+  tier: regional
+  desc: "五岳嵩阳一脉的凌厉快剑。剑势层层叠进如中岳云海压顶，专求抢占先手、撕裂对手防线。"
+  foundation: basic_sword
+  requires:
+    - art: basic_sword
+      level: 14
+    - art: basic_lightness
+      level: 10
+  max_level: 45
+  attack_moves:
+    - id: songyang_split_cloud
+      name: "拨云见锋"
+      desc: "快步抢进，当胸斜劈破开守架。"
+      msg: "踏步抢先，剑锋如拨云破雾般斜劈而出"
+      unlock_level: 1
+      damage: 17
+      animation:
+        action: rig.sword.chop_a
+        tags: ["sword", "slash"]
+    - id: songyang_pierce_mist
+      name: "穿云疾刺"
+      desc: "腕抖剑直，快刺对手咽喉与心口。"
+      msg: "手腕微震，长剑穿云疾刺中路"
+      unlock_level: 10
+      damage: 21
+      animation:
+        action: rig.sword.thrust_a
+        tags: ["sword", "stab"]
+    - id: songyang_falling_peak
+      name: "叠峰压顶"
+      desc: "连环两势相叠，以快打慢压制退路。"
+      msg: "身随剑走，凛冽剑光层层压落"
+      unlock_level: 20
+      damage: 26
+      animation:
+        action: rig.sword.cut_a
+        tags: ["sword", "slash", "heavy"]
+  active_skills:
+    - id: songyang_bleed_thrust
+      name: "断崖穿心"
+      desc: "极速一剑刺破护体，留下持续流血的剑伤。"
+      msg: "寒光一闪，剑尖直穿对手空门带出一道血线"
+      unlock_level: 4
+      cd: 12.0
+      target: Single
+      cost: 50
+      ap_req: 65
+      req_status: []
+      damage: 72
+      animation:
+        action: rig.sword.thrust_a
+        tags: ["sword", "stab", "heavy"]
+      effect:
+        self: []
+        target:
+          - id: bleeding
+            duration: 10.0
+            value: 6
+    - id: songyang_cloud_net
+      name: "五岳叠云"
+      desc: "倾力施展嵩阳绝剑，漫天剑影封死退路并重创对手。"
+      msg: "剑势骤起如五岳叠云，连环寒光倾泻而下"
+      unlock_level: 15
+      cd: 18.0
+      target: Single
+      cost: 82
+      ap_req: 90
+      req_status: []
+      damage: 135
+      animation:
+        action: rig.sword.sword_net_a
+        tags: ["sword", "combo", "net"]
+      effect:
+        self: []
+        target:
+          - id: bleeding
+            duration: 8.0
+            value: 8
+
+- id: yuezhi_footwork
+  name: "岳峙步"
+  type: lightness
+  tier: regional
+  desc: "五岳剑客在陡峭山道间练就的迅捷身法，进则如山风骤起，停则稳如岳峙。"
+  foundation: basic_lightness
+  requires:
+    - art: basic_lightness
+      level: 12
+  max_level: 45
+  active_skills:
+    - id: yuezhi_side_step
+      name: "绝壁挪步"
+      desc: "贴地侧滑抢占侧翼，稳住身形。"
+      msg: "足尖轻点，如履绝壁般侧滑半步稳住架势"
+      unlock_level: 4
+      cd: 12.0
+      target: Self
+      cost: 35
+      ap_req: 40
+      req_status: []
+      animation:
+        action: rig.fist.guard
+        tags: ["stance", "self"]
+      effect:
+        self:
+          - id: focused_guard
+            duration: 12.0
+            value: 2
+        target: []
+    - id: yuezhi_flying_kick
+      name: "凌崖惊踢"
+      desc: "纵身拔起，凌空扫出一记迅猛快腿。"
+      msg: "借山风之势腾空跃起，一腿凌厉扫出"
+      unlock_level: 14
+      cd: 15.0
+      target: Single
+      cost: 60
+      ap_req: 70
+      req_status: []
+      damage: 84
+      animation:
+        action: rig.fist.leap_kick_a
+        tags: ["fist", "kick", "aerial"]
+      effect:
+        self: []
+        target: []
+
+- id: taihu_tide_sword
+  name: "水榭听涛剑"
+  type: sword
+  tier: regional
+  desc: "太湖水榭镇榭真传剑法。比外传的拂柳剑法更深一层，听风辨势、绵里藏针，专擅化解强敌锐气。"
+  foundation: basic_sword
+  requires:
+    - art: basic_sword
+      level: 12
+    - art: basic_internal
+      level: 12
+  max_level: 45
+  attack_moves:
+    - id: tide_skim_lotus
+      name: "荷影点波"
+      desc: "剑势轻盈如风过荷塘，点向对手腕脉。"
+      msg: "长剑轻点，如荷影掠波般拂向对手手腕"
+      unlock_level: 1
+      damage: 15
+      animation:
+        action: rig.sword.cut_a
+        tags: ["sword", "slash"]
+    - id: tide_part_reeds
+      name: "分苇寒光"
+      desc: "顺势拨开来兵，剑锋自下斜挑。"
+      msg: "剑身一贴一挑，如分苇破浪般撩起寒光"
+      unlock_level: 10
+      damage: 19
+      animation:
+        action: rig.sword.rising_cut_a
+        tags: ["sword", "uppercut"]
+    - id: tide_return_wave
+      name: "回澜截脉"
+      desc: "趁对手回气之际，剑尖无声直截中宫。"
+      msg: "步法轻回，一剑如暗澜回涌直截对手中路"
+      unlock_level: 20
+      damage: 23
+      animation:
+        action: rig.sword.thrust_a
+        tags: ["sword", "stab"]
+  active_skills:
+    - id: tide_listening_wave
+      name: "听涛卸锋"
+      desc: "荡出一道绵韧剑气，大幅削弱对手攻势。"
+      msg: "侧耳听涛，一剑荡出柔韧寒气直卸对手锐锋"
+      unlock_level: 4
+      cd: 13.0
+      target: Single
+      cost: 48
+      ap_req: 65
+      req_status: []
+      damage: 66
+      animation:
+        action: rig.sword.qi_wave_a
+        tags: ["sword", "qi", "ranged"]
+      effect:
+        self: []
+        target:
+          - id: weakened
+            duration: 12.0
+            value: 2
+    - id: tide_mist_net
+      name: "烟波剑网"
+      desc: "化剑为网，既护自身周全又令对手力竭。"
+      msg: "长剑急旋化作烟波剑网，攻守一体罩向对手"
+      unlock_level: 15
+      cd: 17.0
+      target: Single
+      cost: 72
+      ap_req: 80
+      req_status: []
+      damage: 102
+      animation:
+        action: rig.sword.sword_net_a
+        tags: ["sword", "combo", "net"]
+      effect:
+        self:
+          - id: focused_guard
+            duration: 12.0
+            value: 2
+        target:
+          - id: weakened
+            duration: 8.0
+            value: 2
+
+- id: bibo_mending_art
+  name: "碧波续脉诀"
+  type: internal
+  tier: regional
+  desc: "太湖水榭执方弟子方可修习的医武上乘内功，兼具深厚疗伤与驱毒涤浊之能。"
+  foundation: basic_internal
+  requires:
+    - art: basic_internal
+      level: 14
+  max_level: 48
+  active_skills:
+    - id: bibo_detox_breath
+      name: "碧波涤毒"
+      desc: "以湖水般温润真气涤清体内剧毒与衰弱，并回复气血。"
+      msg: "轻舒长息，温润真气如碧波涤荡经脉毒伤"
+      unlock_level: 3
+      cd: 12.0
+      target: Self
+      cost: 42
+      ap_req: 40
+      req_status: []
+      heal: 68
+      cleanse: [dot, debuff]
+      animation:
+        action: rig.fist.healing_palm
+        tags: ["heal", "self"]
+      effect:
+        self: []
+        target: []
+    - id: bibo_mending_tide
+      name: "续脉回澜"
+      desc: "水榭镇派续命法门，大幅疗伤解毒并凝聚护体真气。"
+      msg: "真气回澜涌入百骸，伤势与余毒顷刻平复"
+      unlock_level: 16
+      cd: 18.0
+      target: Self
+      cost: 80
+      ap_req: 55
+      req_status: []
+      heal: 125
+      cleanse: [dot, debuff]
+      animation:
+        action: rig.fist.healing_palm
+        tags: ["heal", "buff", "self"]
+      effect:
+        self:
+          - id: iron_body_buff
+            duration: 12.0
+            value: 3
+        target: []
+
+- id: chansi_dog_staff
+  name: "丐帮缠丝棒"
+  type: staff
+  tier: regional
+  desc: "丐帮开封大梁分舵执杖弟子所修的刁钻棒法，讲究缠、绊、封、挑，专破名门正派的板正架势。"
+  foundation: basic_staff
+  requires:
+    - art: basic_staff
+      level: 12
+    - art: basic_lightness
+      level: 12
+  max_level: 45
+  attack_moves:
+    - id: dog_poke_ankle
+      name: "拨狗朝天"
+      desc: "短棍自下刁钻上挑，专点对手腕踝。"
+      msg: "竹棒微沉，自下刁钻挑向对手手腕"
+      unlock_level: 1
+      damage: 15
+      animation:
+        action: rig.sword.rising_cut_a
+        tags: ["staff", "rising"]
+    - id: dog_sweep_lane
+      name: "横扫暗巷"
+      desc: "贴身滑步，长棒平扫封住左右退路。"
+      msg: "低身滑步，长棒带着劲风横扫而出"
+      unlock_level: 10
+      damage: 20
+      animation:
+        action: rig.staff.sweep_a
+        tags: ["staff", "sweep"]
+    - id: dog_seal_gate
+      name: "恶犬拦路"
+      desc: "虚晃一棒后顺势重砸对手肩头。"
+      msg: "虚晃一步，长棒猛然变势重砸对手肩井"
+      unlock_level: 20
+      damage: 24
+      animation:
+        action: rig.staff.smash_a
+        tags: ["staff", "heavy"]
+  active_skills:
+    - id: dog_tangle_trip
+      name: "缠字绊步"
+      desc: "棒影如丝缠住对手下盘，令其立足不稳、力竭难支。"
+      msg: "棒身急转缠住对手下盘，一绊一压令其气血翻涌"
+      unlock_level: 4
+      cd: 12.0
+      target: Single
+      cost: 44
+      ap_req: 60
+      req_status: []
+      damage: 64
+      animation:
+        action: rig.staff.sweep_a
+        tags: ["staff", "sweep"]
+      effect:
+        self: []
+        target:
+          - id: weakened
+            duration: 12.0
+            value: 2
+    - id: dog_no_way_out
+      name: "棒打双犬"
+      desc: "丐帮绝艺，凌空猛击封死四方闪避，重创并震伤对手。"
+      msg: "身形跃起，棒影漫天封死退路，重重砸落"
+      unlock_level: 16
+      cd: 17.0
+      target: Single
+      cost: 78
+      ap_req: 85
+      req_status: []
+      damage: 126
+      animation:
+        action: rig.staff.smash_a
+        tags: ["staff", "aerial", "heavy"]
+      effect:
+        self: []
+        target:
+          - id: bleeding
+            duration: 8.0
+            value: 6
+          - id: weakened
+            duration: 8.0
+            value: 2
+
+- id: xiaoyao_beggar_step
+  name: "逍遥游步"
+  type: lightness
+  tier: regional
+  desc: "丐帮行走大江南北的滑溜身法，穿巷越墙快若泥鳅，总能从意想不到的角度递出冷腿。"
+  foundation: basic_lightness
+  requires:
+    - art: basic_lightness
+      level: 12
+  max_level: 45
+  active_skills:
+    - id: alley_slip_away
+      name: "钻巷泥鳅"
+      desc: "身形一缩一滑，极难被对手正面击中。"
+      msg: "肩胯一缩，身形如泥鳅般滑出半步护住要害"
+      unlock_level: 3
+      cd: 11.0
+      target: Self
+      cost: 32
+      ap_req: 40
+      req_status: []
+      animation:
+        action: rig.fist.guard
+        tags: ["stance", "self"]
+      effect:
+        self:
+          - id: focused_guard
+            duration: 14.0
+            value: 3
+        target: []
+    - id: alley_sneak_kick
+      name: "穿花拂柳腿"
+      desc: "借错身之机踢出一记刁钻快腿，打乱对手呼吸。"
+      msg: "侧身错步，一记冷腿穿花拂柳般直点对手肋下"
+      unlock_level: 14
+      cd: 14.0
+      target: Single
+      cost: 56
+      ap_req: 65
+      req_status: []
+      damage: 82
+      animation:
+        action: rig.fist.kick_a
+        tags: ["fist", "kick"]
+      effect:
+        self: []
+        target:
+          - id: weakened
+            duration: 8.0
+            value: 1
+
+- id: caoban_river_saber
+  name: "汴河断浪刀"
+  type: blade
+  tier: regional
+  desc: "汴河漕帮南渡堂执旗头目所传的水路重刀。刀势沉猛如大江开闸，专擅在船头硬拼压阵。"
+  foundation: basic_blade
+  requires:
+    - art: basic_blade
+      level: 12
+    - art: basic_lightness
+      level: 10
+  max_level: 45
+  attack_moves:
+    - id: river_split_wave
+      name: "顺水劈浪"
+      desc: "借进身之势斜刀劈出，干脆狠辣。"
+      msg: "踏步沉肩，长刀顺水劈浪般斜斩而下"
+      unlock_level: 1
+      damage: 16
+      animation:
+        action: rig.sword.cut_a
+        tags: ["blade", "slash"]
+    - id: river_sweep_deck
+      name: "横扫船头"
+      desc: "双手握柄平扫中路，逼退近身之敌。"
+      msg: "腰马合一，单刀平扫如扫清船头"
+      unlock_level: 10
+      damage: 21
+      animation:
+        action: rig.blade.sweep_a
+        tags: ["blade", "slash"]
+    - id: river_anchor_chop
+      name: "沉锚重斩"
+      desc: "蓄力高举重劈，力道沉如铁锚坠水。"
+      msg: "举刀蓄势，如铁锚坠江般重斩对手中门"
+      unlock_level: 20
+      damage: 26
+      animation:
+        action: rig.blade.cleave_a
+        tags: ["blade", "heavy", "chop"]
+  active_skills:
+    - id: river_iron_cable
+      name: "铁索横江"
+      desc: "势大力沉的一记横扫，震得对手虎口发麻。"
+      msg: "长刀横卷如铁索拦江，狠狠扫向对手臂肋"
+      unlock_level: 4
+      cd: 13.0
+      target: Single
+      cost: 48
+      ap_req: 65
+      req_status: []
+      damage: 72
+      animation:
+        action: rig.blade.sweep_a
+        tags: ["blade", "slash", "heavy"]
+      effect:
+        self: []
+        target:
+          - id: weakened
+            duration: 10.0
+            value: 2
+    - id: river_break_tide
+      name: "断浪开闸"
+      desc: "南渡堂压箱绝刀，全力抢步力劈，劈开守架并留下深创。"
+      msg: "怒喝抢步，长刀如大河开闸般当头劈落"
+      unlock_level: 15
+      cd: 17.0
+      target: Single
+      cost: 78
+      ap_req: 85
+      req_status: []
+      damage: 130
+      animation:
+        action: rig.blade.cleave_a
+        tags: ["blade", "heavy", "chop"]
+      effect:
+        self: []
+        target:
+          - id: bleeding
+            duration: 8.0
+            value: 6
+
+- id: caoban_tide_step
+  name: "过江踏浪步"
+  type: lightness
+  tier: regional
+  desc: "汴河漕帮南渡堂高阶水上身法，在急流晃板之上仍能稳如平地，更能借浪腾踢。"
+  foundation: basic_lightness
+  requires:
+    - art: basic_lightness
+      level: 12
+  max_level: 45
+  active_skills:
+    - id: tide_steady_plank
+      name: "稳板踏波"
+      desc: "沉腰稳步，兼顾闪避架势与护体劲力。"
+      msg: "双足微错如踏急流船板，周身架势稳如磐石"
+      unlock_level: 3
+      cd: 12.0
+      target: Self
+      cost: 34
+      ap_req: 40
+      req_status: []
+      animation:
+        action: rig.fist.guard
+        tags: ["stance", "self"]
+      effect:
+        self:
+          - id: focused_guard
+            duration: 14.0
+            value: 3
+          - id: iron_body_buff
+            duration: 10.0
+            value: 2
+        target: []
+    - id: tide_oar_kick
+      name: "过江翻浪踢"
+      desc: "腾身借势踢出重腿，如大桨翻浪。"
+      msg: "腾空拧身，一记重腿如巨桨翻浪般踢出"
+      unlock_level: 14
+      cd: 15.0
+      target: Single
+      cost: 58
+      ap_req: 70
+      req_status: []
+      damage: 86
+      animation:
+        action: rig.fist.leap_kick_a
+        tags: ["fist", "kick", "aerial"]
+      effect:
+        self: []
+        target: []
+
+- id: salt_venom_palm
+  name: "五毒蚀骨掌"
+  type: fist
+  tier: regional
+  desc: "盐帮黄河芦苇分坛香主秘传的阴毒掌法，掌劲暗藏青毒，令中招者气血持续溃散、力竭难支。"
+  foundation: basic_fist
+  requires:
+    - art: basic_fist
+      level: 12
+    - art: basic_internal
+      level: 10
+  max_level: 45
+  attack_moves:
+    - id: venom_sand_slap
+      name: "暗沙拍脉"
+      desc: "出掌无声，阴劲暗透对手脉门。"
+      msg: "掌心微黑，无声拍向对手手腕脉门"
+      unlock_level: 1
+      damage: 15
+      animation:
+        action: rig.fist.punch_a
+        tags: ["fist", "strike"]
+    - id: venom_cold_palm
+      name: "阴风蚀骨"
+      desc: "双掌交错推出，寒毒掌风直逼胸腹。"
+      msg: "阴风骤起，一掌直印对手胸口"
+      unlock_level: 10
+      damage: 20
+      animation:
+        action: rig.fist.palm_knockback_a
+        tags: ["fist", "palm"]
+    - id: venom_combo_claw
+      name: "毒龙连爪"
+      desc: "连环三掌快击，掌掌专取要害。"
+      msg: "欺身连拍三掌，掌影森寒逼人"
+      unlock_level: 20
+      damage: 24
+      animation:
+        action: rig.fist.combo_a
+        tags: ["fist", "combo"]
+  active_skills:
+    - id: venom_green_mist
+      name: "碧雾散毒"
+      desc: "掌风裹挟青毒细雾，令对手持续中毒掉血。"
+      msg: "双掌一扬，一团淡青毒雾随阴掌扑向对手"
+      unlock_level: 4
+      cd: 12.0
+      target: Single
+      cost: 46
+      ap_req: 60
+      req_status: []
+      damage: 58
+      animation:
+        action: rig.fist.palm_knockback_a
+        tags: ["fist", "palm", "poison"]
+      effect:
+        self: []
+        target:
+          - id: poisoned
+            duration: 12.0
+            value: 7
+    - id: venom_bone_rotting
+      name: "五毒摧心"
+      desc: "盐帮绝学，连环毒掌重创对手并令其剧毒攻心、筋疲力竭。"
+      msg: "连环毒掌倾泻而出，寒毒透骨直逼心脉"
+      unlock_level: 16
+      cd: 17.0
+      target: Single
+      cost: 80
+      ap_req: 85
+      req_status: []
+      damage: 108
+      animation:
+        action: rig.fist.combo_a
+        tags: ["fist", "combo", "poison"]
+      effect:
+        self: []
+        target:
+          - id: poisoned
+            duration: 12.0
+            value: 9
+          - id: weakened
+            duration: 10.0
+            value: 2
+
+- id: salt_shadow_blade
+  name: "夜渡鬼头刀"
+  type: blade
+  tier: regional
+  desc: "盐帮夜袭截船所用的狠辣快刀，刀锋常抹暗毒，专为夜战一击致命而生。"
+  foundation: basic_blade
+  requires:
+    - art: basic_blade
+      level: 12
+    - art: basic_lightness
+      level: 12
+  max_level: 45
+  attack_moves:
+    - id: shadow_quick_slash
+      name: "暗滩斜削"
+      desc: "借夜色掩护斜削而出，出手极刁。"
+      msg: "刀光一隐一现，斜削对手肋下"
+      unlock_level: 1
+      damage: 16
+      animation:
+        action: rig.sword.cut_a
+        tags: ["blade", "slash"]
+    - id: shadow_low_sweep
+      name: "苇丛撩刀"
+      desc: "低身扫刀，专削对手下盘。"
+      msg: "伏低身形，长刀自苇丛高度骤然横扫"
+      unlock_level: 10
+      damage: 21
+      animation:
+        action: rig.blade.sweep_a
+        tags: ["blade", "slash"]
+    - id: shadow_heavy_hack
+      name: "鬼头断魂"
+      desc: "毫不留情的当头重劈。"
+      msg: "反手提刀，狠狠劈向对手头颈"
+      unlock_level: 20
+      damage: 26
+      animation:
+        action: rig.blade.cleave_a
+        tags: ["blade", "heavy", "chop"]
+  active_skills:
+    - id: shadow_poison_edge
+      name: "淬毒抹颈"
+      desc: "毒刃横扫，同时留下血线与青毒双重暗伤。"
+      msg: "淬毒刀锋贴身横抹，寒光过处毒血俱现"
+      unlock_level: 4
+      cd: 13.0
+      target: Single
+      cost: 50
+      ap_req: 65
+      req_status: []
+      damage: 68
+      animation:
+        action: rig.blade.sweep_a
+        tags: ["blade", "slash", "poison"]
+      effect:
+        self: []
+        target:
+          - id: poisoned
+            duration: 10.0
+            value: 6
+          - id: bleeding
+            duration: 8.0
+            value: 5
+    - id: shadow_night_raid
+      name: "夜袭断渡"
+      desc: "倾尽全力的一记绝命重劈，威力极猛。"
+      msg: "身形骤扑，鬼头刀携森寒煞气当头断落"
+      unlock_level: 16
+      cd: 18.0
+      target: Single
+      cost: 82
+      ap_req: 90
+      req_status: []
+      damage: 136
+      animation:
+        action: rig.blade.cleave_a
+        tags: ["blade", "heavy", "chop"]
+      effect:
+        self: []
+        target: []

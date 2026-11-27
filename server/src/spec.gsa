@@ -27,7 +27,7 @@ use entity.{
     EquipSlot, WeaponSlot, ArmorSlot,
     ActiveEffect, MkActiveEffect,
     AnimationRef, MkAnimationRef, AttackMove, MkAttackMove,
-    ArtType, Foundation, Internal, Sword, Fist, artTypeEq,
+    ArtType, Foundation, Internal, Sword, Fist, Staff, artTypeEq,
     ArtRequirement, MkArtRequirement, MartialArt, MkMartialArt,
     ArtEntity, MkArtEntity,
     CharAction, Attacking, CharStatus, CharAlive, CharDead, CharBattle, charStatusEq,
@@ -1067,7 +1067,7 @@ def testKaifengRegionalAndEconomy(tr: TestRunner, baseGs: GameState): Void = {
             charStrength: c.charStrength, charAgility: c.charAgility, charVitality: c.charVitality,
             charEquipped: c.charEquipped, charEnabled: c.charEnabled, charTeaches: c.charTeaches,
             charTeachBonus: c.charTeachBonus,
-            charTeachRequires: Some(MkTeachRequirement { teachRequiresFlag: "test.trusted", teachRefusal: "门外人不教。" }),
+            charTeachRequires: Some(MkTeachRequirement { teachRequiresFlag: "test.trusted", teachRefusal: "门外人不教。", teachForbidFlags: Nil, teachForbidRefusal: None }),
             charShop: c.charShop, charRank: c.charRank, charRewardExpCeiling: c.charRewardExpCeiling,
             charFixedReward: c.charFixedReward, charArt: c.charArt, charStatus: c.charStatus,
         }));
@@ -1210,6 +1210,57 @@ def testKaifengRegionalAndEconomy(tr: TestRunner, baseGs: GameState): Void = {
         },
         None -> assertThat(tr, false, "bounty_north_raider missing from world"),
     };
+
+    // 4b. Sect lifecycle: ArtLevelAtLeast, join Shaolin, betrayal at pawnshop (HalveArtLevel + forbid_flags), Beggar acceptance & Dali redemption
+    let shJoin0 = gs0
+        |> (g) -> setTesterArt(Foundation, "basic_internal", 12, 0, g)
+        |> overF(gsStoriesL(), (sm) -> mapUpdate(sm, "tester", (st) ->
+            st |> overF(storyFlagsL(), (fs) -> setInsert(fs, "luoyang.wensheng_trusted"))
+        ));
+    let (_, atStele) = runOk(tr, "move stele", shJoin0, movePlayerToRoom("tester", "luoyang_city", (-1, 7)));
+    let (_, shS1) = runOk(tr, "start shaolin join", atStele, playerTalk("tester", "baima_stone_sweeper"));
+    assertThat(tr, optOr(questStageOf("sect_join_shaolin", shS1), "") == "stele_stance", "sect_join_shaolin did not start");
+    let (_, atGate) = runOk(tr, "move baima gate", shS1, movePlayerToRoom("tester", "luoyang_city", (0, 7)));
+    let (_, shS2) = runOk(tr, "monk hands staff", atGate, playerTalk("tester", "baima_guest_monk"));
+    let (_, backStele) = runOk(tr, "return stele", shS2, movePlayerToRoom("tester", "luoyang_city", (-1, 7)));
+    let (_, shJoined) = runOk(tr, "complete shaolin join", backStele, playerTalk("tester", "baima_stone_sweeper"));
+    assertThat(tr, hasStoryFlag("sect.active.shaolin", shJoined) && hasStoryFlag("sect.has_active", shJoined), "shaolin join failed");
+
+    // Grant basic_staff lv 14 & luohan_subduing_staff lv 10, betray via 2-step pawnshop, verify halved to 5 while basic_staff stays 14
+    let (_, shRaised) = runOk(
+        tr,
+        "grant shaolin arts",
+        shJoined,
+        grantArt("tester", "basic_staff", 14) *>> grantArt("tester", "luohan_subduing_staff", 10)
+    );
+    let (_, atPawn) = runOk(tr, "move pawnshop", shRaised, movePlayerToRoom("tester", "kaifeng_city", (-3, -1)));
+    let (_, warnedBetray) = runOk(tr, "warn betrayal", atPawn, playerTalk("tester", "kaifeng_pawnbroker"));
+    assertThat(tr, hasStoryFlag("sect.betrayal_warned", warnedBetray) && hasStoryFlag("sect.active.shaolin", warnedBetray), "betrayal warning did not preserve sect");
+    let (_, betrayed) = runOk(tr, "execute betrayal", warnedBetray, playerTalk("tester", "kaifeng_pawnbroker"));
+    let pBetrayed = requirePlayer(tr, betrayed);
+    assertThat(
+        tr,
+        hasStoryFlag("sect.betrayed.shaolin", betrayed)
+        && hasStoryFlag("sect.betrayed.any", betrayed)
+        && !hasStoryFlag("sect.active.shaolin", betrayed)
+        && knowsArtAt("luohan_subduing_staff", 5, pBetrayed)
+        && knowsArtAt("basic_staff", 14, pBetrayed),
+        "betrayal HalveArtLevel / flags mismatch"
+    );
+    let (_, backSteleBetrayed) = runOk(tr, "return stele after betrayal", betrayed, movePlayerToRoom("tester", "luoyang_city", (-1, 7)));
+    expectStructuredError(tr, "forbid_flags blocks betrayed disciple", "teacher_refuses", backSteleBetrayed, playerLearnArt("tester", "baima_stone_sweeper", "luohan_subduing_staff", 1));
+
+    // Verify Dali redemption clears `sect.betrayed.any`
+    let red0 = betrayed
+        |> overF(gsStoriesL(), (sm) -> mapUpdate(sm, "tester", overF(storyQuestStagesL(), (qm) -> mapInsert(qm, "dali_chongsheng_bell", "completed"))))
+        |> (g) -> updateTester(overF(playerInventoryL(), (inv) -> mapInsert(inv, "taihu_mending_pill", 1)), g);
+    let (_, atChongsheng) = runOk(tr, "move chongsheng", red0, movePlayerToRoom("tester", "dali_city", (0, 7)));
+    let (_, red1) = runOk(tr, "start redemption", atChongsheng, playerTalk("tester", "chongsheng_monk"));
+    let (_, red2) = runOk(tr, "give redemption pill", red1, playerTalk("tester", "chongsheng_monk"));
+    let (_, atPagoda) = runOk(tr, "listen redemption bell", red2, playerMove("tester", North));
+    let (_, backChongsheng) = runOk(tr, "return chongsheng", atPagoda, playerMove("tester", South));
+    let (_, redeemed) = runOk(tr, "complete redemption", backChongsheng, playerTalk("tester", "chongsheng_monk"));
+    assertThat(tr, !hasStoryFlag("sect.betrayed.any", redeemed) && hasStoryFlag("sect.redeemed", redeemed) && hasStoryFlag("sect.betrayed.shaolin", redeemed), "Dali redemption flags mismatch");
 
     // 5. Legacy `prepared` folding + PlayerSave v6 round-trip & v5 migration reset
     let legacyJson = "{\"player_id\":\"tester\",\"version\":6,\"prepared\":{\"sword\":{\"id\":\"weiyuan_sword\",\"level\":3},\"fist\":{\"id\":\"nameless_trial_fist\",\"level\":1}},\"enabled\":{\"sword\":{\"id\":\"nameless_trial_sword\",\"level\":1}}}";

@@ -22,6 +22,7 @@ use prelude.{
 }
 use ordmap.{OrdMap, mapEmpty, mapLookup, mapInsert, mapElems}
 use i18n.{Locale, Zh, En, isZh, parseLocale, tr, trParams, formatSystemMsg, formatErrorMsg}
+use names.rollWuxiaName
 use protocol.{
     Direction, North, South, East, West, dirEq, parseDirection, directionGridDelta,
     PlayerAction, ActGo, ActTalk, ActAttack, ActPerform, ActPractice, ActLearn,
@@ -2235,6 +2236,31 @@ pub def handleUiAction(kind: String, a1: String, a2: String, m0: ClientModel): (
                 auCreationCfg: au.auCreationCfg, auCreateChoice: au.auCreateChoice,
                 auDevReset: au.auDevReset,
             })), Nil)
+        },
+        "random_name" -> {
+            let au = m0.cmAuth;
+            let style =
+                if (a1 == "male" || a1 == "female" || a1 == "unisex") a1
+                else if (au.auCreateStep >= 1 && (au.auCreateChoice.ccGender == "male" || au.auCreateChoice.ccGender == "female")) au.auCreateChoice.ccGender
+                else "any";
+            let seed = floorInt(m0.cmVp.vpClockMs * 17.0) + m0.cmVp.vpDrawCmdCount * 13 + au.auCreateStep * 31 + 97;
+            let picked = rollWuxiaName(style, seed, au.auUsername);
+            let nextGender =
+                if (a1 == "male" || a1 == "female") a1
+                else au.auCreateChoice.ccGender;
+            let nextChoice = MkCreationChoice {
+                ccGender: nextGender,
+                ccOrigin: au.auCreateChoice.ccOrigin,
+                ccChildhood1: au.auCreateChoice.ccChildhood1,
+                ccChildhood2: au.auCreateChoice.ccChildhood2,
+            };
+            (markDirty(withAuth(m0, MkAuthState {
+                auConnected: au.auConnected, auConnecting: au.auConnecting,
+                auUsername: picked, auLastError: None,
+                auLoginMode: au.auLoginMode, auCreateStep: au.auCreateStep,
+                auCreationCfg: au.auCreationCfg, auCreateChoice: nextChoice,
+                auDevReset: au.auDevReset,
+            })), [CmdBlurInput])
         },
         "create_step" -> {
             let stp = clampInt(0, 5, parseIntOr(a1, 0));

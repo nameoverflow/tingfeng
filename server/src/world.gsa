@@ -28,11 +28,11 @@ use quest.{
     Quest, QuestReward, QuestRewardItem, QuestEvent,
     StoryTrigger, TriggerTalk, TriggerEnterRoom, TriggerKill,
     StoryCondition, QuestNotStarted, QuestStageIs, QuestCompleted,
-    FlagSet, FlagUnset, NpcDead, NpcAlive, HasItem, LacksItem, InMap,
+    FlagSet, FlagUnset, NpcDead, NpcAlive, HasItem, LacksItem, InMap, ArtLevelAtLeast,
     StoryAction, StoryMessage, StoryDelay, StoryTransition,
     SetQuestStage, CompleteQuest, CompleteRepeatableJob,
     SetFlag, ClearFlag, HideNpc, ShowNpc,
-    GiveItem, TakeItem, GiveMoney, LearnArt, StartBattle, MovePlayer
+    GiveItem, TakeItem, GiveMoney, LearnArt, HalveArtLevel, StartBattle, MovePlayer
 }
 
 pub data World {
@@ -260,6 +260,9 @@ def validateQuestCondition(wrld: World, qid: String, eid: String, cond: StoryCon
     HasItem(iid) -> requireItem(wrld, qid, eid, "condition", iid),
     LacksItem(iid) -> requireItem(wrld, qid, eid, "condition", iid),
     InMap(mid) -> checkWhen(!mapMember(wrld.maps, mid), "quest " + qid + " event " + eid + " condition references missing map " + mid),
+    ArtLevelAtLeast(aid, lv) ->
+        requireArt(wrld, qid, eid, "art_level_at_least condition", aid)
+        <+> checkWhen(lv <= 0, "quest " + qid + " event " + eid + " art_level_at_least has non-positive level"),
 }
 
 def validateQuestAction(wrld: World, qid: String, eid: String, act: StoryAction): List String = match act {
@@ -284,6 +287,8 @@ def validateQuestAction(wrld: World, qid: String, eid: String, act: StoryAction)
         requireArt(wrld, qid, eid, "learn_art action", aid)
         <+> checkWhen(lvl <= 0, "quest " + qid + " event " + eid + " learns non-positive art level for " + aid)
         <+> validateLearnArtLevel(wrld, "quest " + qid + " event " + eid + " learn_art action", aid, lvl),
+    HalveArtLevel(aid) ->
+        requireArt(wrld, qid, eid, "halve_art_level action", aid),
     StartBattle(cid) -> requireChar(wrld, qid, eid, "start_battle action", cid),
     MovePlayer(mid, pos) -> requireRoom(wrld, qid, eid, "move_player action", mid, pos),
 }

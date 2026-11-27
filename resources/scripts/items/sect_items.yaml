@@ -1,0 +1,51 @@
+- id: shaolin_wooden_beads
+  name: "旧木念珠"
+  desc: "白马寺扫碑老人澄尘所赠的旧木念珠，珠面磨得温润发亮，是少林俗家外门弟子的身份信物。"
+
+- id: wudang_jade_talisman
+  name: "青竹道牌"
+  desc: "武当清虚道长亲手刻字的青竹道牌，背面刻着“抱元守一”四字，是武当外门清修弟子的凭证。"
+
+- id: songyang_sword_tassel
+  name: "嵩阳青丝剑穗"
+  desc: "嵩阳剑痴陆寒松所赠的青丝剑穗，系在剑柄上随风轻扬，洛阳剑客见之便知是嵩阳一脉门人。"
+
+- id: taihu_jade_needle
+  name: "水榭玉针"
+  desc: "太湖白发医者赐予真传弟子的白玉银针盒，既可试毒辨脉，也是水榭内门执方弟子的信物。"
+
+- id: beggar_bamboo_token
+  name: "大梁分舵青竹牌"
+  desc: "丐帮开封大梁分舵七袋长老韩九所发的小块青竹牌，刻着隐秘的结绳记号，走遍开封暗巷畅通无阻。"
+
+- id: caoban_iron_tally
+  name: "南渡堂铁牌"
+  desc: "汴河漕帮南渡堂把头杜三亲授的沉铁腰牌，一面铸着“漕”字，一面刻着汴水南渡缆桩记号。"
+
+- id: salt_black_seal
+  name: "暗盐黑印"
+  desc: "盐帮黄河芦苇分坛香主罗七所授的乌木黑印，凭此印可在南堤暗滩与西市黑市畅行无阻。"
+
+- id: shaolin_lost_scroll
+  name: "罗汉堂注疏残卷"
+  desc: "白马寺经阁遗失的少林罗汉堂护体禅功旧注疏，页角微卷却字迹工整。"
+
+- id: fake_taoist_pills
+  name: "伪造金丹木匣"
+  desc: "开封假道士用来行骗的朱砂劣药，涂着一层晃眼的金粉，气味呛鼻。"
+
+- id: songyang_broken_sword
+  name: "嵩阳旧断剑"
+  desc: "早年嵩阳剑客遗落在洛阳的半截铁剑，剑脊上仍留着清晰的嵩阳山纹徽记。"
+
+- id: taihu_poison_pouch
+  name: "暗港毒砂囊"
+  desc: "从太湖暗港私贩毒药暗桩手中截获的油布毒囊，里头装着配制碧水毒砂的剧毒药粉。"
+
+- id: beggar_secret_letter
+  name: "盐帮夜渡船期单"
+  desc: "丐帮大梁分舵从船棚眼线身上截下的暗语船期单，写明了盐帮今夜在黄河南堤卸货的时辰。"
+
+- id: salt_smuggle_parcel
+  name: "油布暗盐包"
+  desc: "用厚油布裹紧的私盐货样，沉甸甸的，是盐帮送往西市当铺暗柜交割的紧俏货。"

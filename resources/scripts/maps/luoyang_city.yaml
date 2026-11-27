@@ -26,6 +26,8 @@ rooms:
     name: "南市口"
     kind: street
     desc: "南市口把剑市、天津桥和牡丹街分开。卖剑的在西，过洛水向东，赴牡丹会则向北。"
+    char:
+      - songyang_enforcer_disciple
     exits:
       south: [0, 1]
       north: [0, 3]
@@ -49,6 +51,7 @@ rooms:
     desc: "天津桥横跨洛水。桥西接南市，桥东沿水铺着步法廊，湿滑石阶落到南岸水边。"
     char:
       - luoyang_bridge_swordsman
+      - songyang_bridge_challenger
     exits:
       west: [0, 2]
       east: [2, 2]
@@ -98,6 +101,7 @@ rooms:
       - peony_host_assistant
       - peony_challenger_song
       - luoyang_arena_swordsman
+      - songyang_rival_lin
     exits:
       south: [0, 3]
       north: [0, 5]
@@ -149,6 +153,8 @@ rooms:
     name: "洛水冷泉"
     kind: landmark
     desc: "泉眼在旧堂东院，剑客常来洗剑醒酒。东边竹篱外通向洛水边的旧堰亭。"
+    char:
+      - songyang_elder
     exits:
       west: [0, 5]
       east: [2, 5]
@@ -160,6 +166,7 @@ rooms:
     desc: "旧石堰拦住一湾洛水，亭中石桌上留着剑客比剑和私下买卖旧谱的茶渍。"
     char:
       - fake_manual_swordsman
+      - shaolin_scroll_thief
     exits:
       west: [1, 5]
 
@@ -168,6 +175,8 @@ rooms:
     name: "白马寺官道"
     kind: road
     desc: "官道从牡丹会后门出城，绕向东郊的白马寺。城声在身后逐渐淡去。"
+    char:
+      - shaolin_enforcer_monk
     exits:
       south: [0, 5]
       north: [0, 7]
@@ -182,6 +191,7 @@ rooms:
         desc: "白马寺山门外的钟声悠长，知客僧立在阶前，古碑亭方向的落叶已被扫得干干净净。"
     char:
       - baima_guest_monk
+      - shaolin_trial_monk
     exits:
       south: [0, 6]
       west: [-1, 7]

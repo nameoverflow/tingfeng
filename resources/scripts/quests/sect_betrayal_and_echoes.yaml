@@ -1,0 +1,616 @@
+# 强行叛师（当铺死当信物二次确认）、野外师兄问责、大理洗心赎罪、茶楼门派评书与洞天共鸣
+
+- id: sect_betrayal_system
+  name: "师门叛出与问责"
+  objectives: []
+  reward:
+    money: 0
+    items: []
+  events:
+    # --- 二次确认：在西市当铺典当师门信物以强行叛师 ---
+    - id: pawnshop_warn_betrayal
+      trigger:
+        type: talk
+        npc: kaifeng_pawnbroker
+      conditions:
+        - type: flag
+          flag: sect.has_active
+        - type: not_flag
+          flag: sect.betrayal_warned
+      actions:
+        - type: set_flag
+          flag: sect.betrayal_warned
+        - type: message
+          speaker: "秦朝奉"
+          text: "客官腰间挂着师门信物呢。若真想未出师便与旧门一刀两断，大可把信物拿来我这当铺死当——只是话先说清：当了信物便是叛师，本门绝学火候折半，正派也不再轻收。想清楚了，再找我开口便是。"
+
+    - id: betray_shaolin_at_pawnshop
+      trigger:
+        type: talk
+        npc: kaifeng_pawnbroker
+      conditions:
+        - type: flag
+          flag: sect.active.shaolin
+        - type: flag
+          flag: sect.betrayal_warned
+        - type: has_item
+          item: shaolin_wooden_beads
+      actions:
+        - type: take_item
+          item: shaolin_wooden_beads
+          amount: 1
+        - type: give_money
+          amount: 30
+        - type: clear_flag
+          flag: sect.active.shaolin
+        - type: clear_flag
+          flag: sect.has_active
+        - type: clear_flag
+          flag: sect.betrayal_warned
+        - type: set_flag
+          flag: sect.betrayed.shaolin
+        - type: set_flag
+          flag: sect.betrayed.any
+        - type: halve_art_level
+          art: luohan_subduing_staff
+        - type: halve_art_level
+          art: shaolin_vajra_body
+        - type: message
+          speaker: "秦朝奉"
+          text: "旧木念珠死当三十文。从今往后你与白马寺少林外门再无瓜葛，只是心境动摇，少林独门武学怕是散了一半火候。"
+
+    - id: betray_wudang_at_pawnshop
+      trigger:
+        type: talk
+        npc: kaifeng_pawnbroker
+      conditions:
+        - type: flag
+          flag: sect.active.wudang
+        - type: flag
+          flag: sect.betrayal_warned
+        - type: has_item
+          item: wudang_jade_talisman
+      actions:
+        - type: take_item
+          item: wudang_jade_talisman
+          amount: 1
+        - type: give_money
+          amount: 30
+        - type: clear_flag
+          flag: sect.active.wudang
+        - type: clear_flag
+          flag: sect.has_active
+        - type: clear_flag
+          flag: sect.betrayal_warned
+        - type: set_flag
+          flag: sect.betrayed.wudang
+        - type: set_flag
+          flag: sect.betrayed.any
+        - type: halve_art_level
+          art: wudang_taiji_sword
+        - type: halve_art_level
+          art: chunyang_breath
+        - type: message
+          speaker: "秦朝奉"
+          text: "青竹道牌死当三十文。你既执意背弃武当清修，武当独门武学火候已散去一半，基础功倒还留着。"
+
+    - id: betray_songyang_at_pawnshop
+      trigger:
+        type: talk
+        npc: kaifeng_pawnbroker
+      conditions:
+        - type: flag
+          flag: sect.active.songyang
+        - type: flag
+          flag: sect.betrayal_warned
+        - type: has_item
+          item: songyang_sword_tassel
+      actions:
+        - type: take_item
+          item: songyang_sword_tassel
+          amount: 1
+        - type: give_money
+          amount: 30
+        - type: clear_flag
+          flag: sect.active.songyang
+        - type: clear_flag
+          flag: sect.has_active
+        - type: clear_flag
+          flag: sect.betrayal_warned
+        - type: set_flag
+          flag: sect.betrayed.songyang
+        - type: set_flag
+          flag: sect.betrayed.any
+        - type: halve_art_level
+          art: songyang_cloud_sword
+        - type: halve_art_level
+          art: yuezhi_footwork
+        - type: message
+          speaker: "秦朝奉"
+          text: "青丝剑穗死当三十文。陆寒松脾气烈得很，你叛出嵩阳一脉，剑法与步法火候俱已折半，往后洛阳道上留神同门问剑。"
+
+    - id: betray_taihu_at_pawnshop
+      trigger:
+        type: talk
+        npc: kaifeng_pawnbroker
+      conditions:
+        - type: flag
+          flag: sect.active.taihu
+        - type: flag
+          flag: sect.betrayal_warned
+        - type: has_item
+          item: taihu_jade_needle
+      actions:
+        - type: take_item
+          item: taihu_jade_needle
+          amount: 1
+        - type: give_money
+          amount: 30
+        - type: clear_flag
+          flag: sect.active.taihu
+        - type: clear_flag
+          flag: sect.has_active
+        - type: clear_flag
+          flag: sect.betrayal_warned
+        - type: set_flag
+          flag: sect.betrayed.taihu
+        - type: set_flag
+          flag: sect.betrayed.any
+        - type: halve_art_level
+          art: taihu_tide_sword
+        - type: halve_art_level
+          art: bibo_mending_art
+        - type: message
+          speaker: "秦朝奉"
+          text: "水榭玉针死当三十文。你背离太湖水榭，水榭真传武学火候折半，白发医者往后怕是不会再见你了。"
+
+    - id: betray_beggar_at_pawnshop
+      trigger:
+        type: talk
+        npc: kaifeng_pawnbroker
+      conditions:
+        - type: flag
+          flag: sect.active.beggar
+        - type: flag
+          flag: sect.betrayal_warned
+        - type: has_item
+          item: beggar_bamboo_token
+      actions:
+        - type: take_item
+          item: beggar_bamboo_token
+          amount: 1
+        - type: give_money
+          amount: 30
+        - type: clear_flag
+          flag: sect.active.beggar
+        - type: clear_flag
+          flag: sect.has_active
+        - type: clear_flag
+          flag: sect.betrayal_warned
+        - type: set_flag
+          flag: sect.betrayed.beggar
+        - type: set_flag
+          flag: sect.betrayed.any
+        - type: halve_art_level
+          art: chansi_dog_staff
+        - type: halve_art_level
+          art: xiaoyao_beggar_step
+        - type: message
+          speaker: "秦朝奉"
+          text: "大梁分舵青竹牌死当三十文。韩九爷那边你算彻底撕破脸了，丐帮独门绝艺火候折半。"
+
+    - id: betray_caoban_at_pawnshop
+      trigger:
+        type: talk
+        npc: kaifeng_pawnbroker
+      conditions:
+        - type: flag
+          flag: sect.active.caoban
+        - type: flag
+          flag: sect.betrayal_warned
+        - type: has_item
+          item: caoban_iron_tally
+      actions:
+        - type: take_item
+          item: caoban_iron_tally
+          amount: 1
+        - type: give_money
+          amount: 30
+        - type: clear_flag
+          flag: sect.active.caoban
+        - type: clear_flag
+          flag: sect.has_active
+        - type: clear_flag
+          flag: sect.betrayal_warned
+        - type: set_flag
+          flag: sect.betrayed.caoban
+        - type: set_flag
+          flag: sect.betrayed.any
+        - type: halve_art_level
+          art: caoban_river_saber
+        - type: halve_art_level
+          art: caoban_tide_step
+        - type: message
+          speaker: "秦朝奉"
+          text: "南渡堂铁牌死当三十文。杜三最恨吃里扒外，漕帮刀步火候折半，柳岸码头往后别去晃悠了。"
+
+    - id: betray_saltgang_at_pawnshop
+      trigger:
+        type: talk
+        npc: kaifeng_pawnbroker
+      conditions:
+        - type: flag
+          flag: sect.active.saltgang
+        - type: flag
+          flag: sect.betrayal_warned
+        - type: has_item
+          item: salt_black_seal
+      actions:
+        - type: take_item
+          item: salt_black_seal
+          amount: 1
+        - type: give_money
+          amount: 30
+        - type: clear_flag
+          flag: sect.active.saltgang
+        - type: clear_flag
+          flag: sect.has_active
+        - type: clear_flag
+          flag: sect.betrayal_warned
+        - type: set_flag
+          flag: sect.betrayed.saltgang
+        - type: set_flag
+          flag: sect.betrayed.any
+        - type: halve_art_level
+          art: salt_venom_palm
+        - type: halve_art_level
+          art: salt_shadow_blade
+        - type: message
+          speaker: "秦朝奉"
+          text: "暗盐黑印死当三十文。罗七手辣得很，你既叛出盐帮芦苇分坛，毒掌与夜渡刀法火候折半。"
+
+    # --- 野外原门派师兄一次性问责切磋 ---
+    - id: shaolin_enforcer_ambush
+      trigger:
+        type: enter_room
+        map: luoyang_city
+        position: [0, 6]
+      conditions:
+        - type: flag
+          flag: sect.betrayed.shaolin
+        - type: not_flag
+          flag: sect.enforcer_met.shaolin
+      actions:
+        - type: set_flag
+          flag: sect.enforcer_met.shaolin
+        - type: show_npc
+          npc: shaolin_enforcer_monk
+        - type: message
+          speaker: "少林戒律院师兄"
+          text: "叛出白马寺还敢走这条官道？接师兄几棍，恩怨就此两清！"
+        - type: start_battle
+          target: shaolin_enforcer_monk
+
+    - id: shaolin_enforcer_done
+      trigger:
+        type: kill
+        npc: shaolin_enforcer_monk
+      conditions:
+        - type: flag
+          flag: sect.enforcer_met.shaolin
+      actions:
+        - type: hide_npc
+          npc: shaolin_enforcer_monk
+        - type: message
+          speaker: "旁白"
+          text: "戒律院师兄收棍合十，叹息一声转身离去，此后再不相拦。"
+
+    - id: wudang_enforcer_ambush
+      trigger:
+        type: enter_room
+        map: north_post_road
+        position: [0, 1]
+      conditions:
+        - type: flag
+          flag: sect.betrayed.wudang
+        - type: not_flag
+          flag: sect.enforcer_met.wudang
+      actions:
+        - type: set_flag
+          flag: sect.enforcer_met.wudang
+        - type: show_npc
+          npc: wudang_enforcer_disciple
+        - type: message
+          speaker: "武当巡山道人"
+          text: "负了清虚师叔一片苦心，今日便以剑问心！"
+        - type: start_battle
+          target: wudang_enforcer_disciple
+
+    - id: wudang_enforcer_done
+      trigger:
+        type: kill
+        npc: wudang_enforcer_disciple
+      conditions:
+        - type: flag
+          flag: sect.enforcer_met.wudang
+      actions:
+        - type: hide_npc
+          npc: wudang_enforcer_disciple
+        - type: message
+          speaker: "旁白"
+          text: "巡山道人收剑拱手，转身没入松林，师门旧账就此了结。"
+
+    - id: songyang_enforcer_ambush
+      trigger:
+        type: enter_room
+        map: luoyang_city
+        position: [0, 2]
+      conditions:
+        - type: flag
+          flag: sect.betrayed.songyang
+        - type: not_flag
+          flag: sect.enforcer_met.songyang
+      actions:
+        - type: set_flag
+          flag: sect.enforcer_met.songyang
+        - type: show_npc
+          npc: songyang_enforcer_disciple
+        - type: message
+          speaker: "嵩阳执剑师兄"
+          text: "陆师叔破格收你，你竟半途叛门！今日南市口讨回这口气！"
+        - type: start_battle
+          target: songyang_enforcer_disciple
+
+    - id: songyang_enforcer_done
+      trigger:
+        type: kill
+        npc: songyang_enforcer_disciple
+      conditions:
+        - type: flag
+          flag: sect.enforcer_met.songyang
+      actions:
+        - type: hide_npc
+          npc: songyang_enforcer_disciple
+        - type: message
+          speaker: "旁白"
+          text: "执剑师兄收剑哼了一声，拂袖而去。"
+
+- id: sect_redemption
+  name: "大理·洗心赎罪"
+  objectives:
+    - stage: offer_medicine
+      text: "备妥 1 粒《太湖续脉丹》交予崇圣寺山门守塔僧枯木济助伤客。"
+    - stage: listen_bell
+      text: "步入崇圣寺三塔院静听晚钟，涤清叛师旧念。"
+    - stage: report_monk
+      text: "回山门向守塔僧枯木领受「洗心偈」。"
+    - stage: completed
+      text: "你已在大理崇圣寺洗心赎罪，名门正派的机缘重新向你敞开（原被叛之门除外）。"
+  reward:
+    money: 0
+    combat_exp: 60
+    potential: 50
+    items: []
+  events:
+    - id: redemption_start
+      trigger:
+        type: talk
+        npc: chongsheng_monk
+      conditions:
+        - type: flag
+          flag: sect.betrayed.any
+        - type: quest_completed
+          quest: dali_chongsheng_bell
+        - type: quest_not_started
+          quest: sect_redemption
+      actions:
+        - type: set_stage
+          quest: sect_redemption
+          stage: offer_medicine
+        - type: message
+          speaker: "守塔僧枯木"
+          text: "施主眉间带着负门之气，想是早年冲动叛出师门。旧错难追，善行可补——你去寻一粒《太湖续脉丹》交予寺中济助过路重伤客，再入三塔院静听一声晚钟吧。"
+
+    - id: redemption_give_pill
+      trigger:
+        type: talk
+        npc: chongsheng_monk
+      conditions:
+        - type: quest_stage
+          quest: sect_redemption
+          stage: offer_medicine
+        - type: has_item
+          item: taihu_mending_pill
+      actions:
+        - type: take_item
+          item: taihu_mending_pill
+          amount: 1
+        - type: set_stage
+          quest: sect_redemption
+          stage: listen_bell
+        - type: message
+          speaker: "守塔僧枯木"
+          text: "善哉，此丹可救一条性命。去北侧三塔院听钟片刻再来见老衲。"
+
+    - id: redemption_bell
+      trigger:
+        type: enter_room
+        map: dali_city
+        position: [0, 8]
+      conditions:
+        - type: quest_stage
+          quest: sect_redemption
+          stage: listen_bell
+      actions:
+        - type: set_stage
+          quest: sect_redemption
+          stage: report_monk
+        - type: message
+          speaker: "旁白"
+          text: "三塔晚钟悠远苍凉，你默念旧日过错，胸口郁结的戾气随钟声渐渐散去。"
+
+    - id: redemption_complete
+      trigger:
+        type: talk
+        npc: chongsheng_monk
+      conditions:
+        - type: quest_stage
+          quest: sect_redemption
+          stage: report_monk
+      actions:
+        - type: clear_flag
+          flag: sect.betrayed.any
+        - type: set_flag
+          flag: sect.redeemed
+        - type: complete_quest
+          quest: sect_redemption
+        - type: message
+          speaker: "守塔僧枯木"
+          text: "浪子回头金不换。此番洗心之后，天下正派门户再不以旧恶相拒；只是原被你负过的那一家，仍须各安天命。"
+
+- id: sect_storyteller_and_world_echoes
+  name: "门派风声与洞天共鸣"
+  objectives: []
+  reward:
+    money: 0
+    items: []
+  events:
+    - id: constable_scolds_saltgang
+      trigger:
+        type: talk
+        npc: kaifeng_constable
+      conditions:
+        - type: flag
+          flag: sect.active.saltgang
+      actions:
+        - type: message
+          speaker: "顾捕头"
+          text: "好大的胆子，入了黄河南堤盐帮分坛还敢大摇大摆进开封府捕房？趁我还没下拿人的条子，立刻出去！"
+
+    - id: storyteller_sect_shaolin
+      trigger:
+        type: talk
+        npc: tea_storyteller
+      conditions:
+        - type: flag
+          flag: sect.active.shaolin
+        - type: not_flag
+          flag: kaifeng.heard_sect_shaolin
+      actions:
+        - type: set_flag
+          flag: kaifeng.heard_sect_shaolin
+        - type: message
+          speaker: "张一嘴"
+          text: "列位听说了吗？洛阳白马寺那位扫了四十年落叶的老僧原是少林罗汉堂宿老，前日竟收了个外乡俗家弟子！"
+
+    - id: storyteller_sect_wudang
+      trigger:
+        type: talk
+        npc: tea_storyteller
+      conditions:
+        - type: flag
+          flag: sect.active.wudang
+        - type: not_flag
+          flag: kaifeng.heard_sect_wudang
+      actions:
+        - type: set_flag
+          flag: kaifeng.heard_sect_wudang
+        - type: message
+          speaker: "张一嘴"
+          text: "咱们开封武庙前街那个爱打盹的邋遢老道，居然是武当山清虚师叔！有位少侠替他挡了泼皮，直接得了武当真传。"
+
+    - id: storyteller_sect_songyang
+      trigger:
+        type: talk
+        npc: tea_storyteller
+      conditions:
+        - type: flag
+          flag: sect.active.songyang
+        - type: not_flag
+          flag: kaifeng.heard_sect_songyang
+      actions:
+        - type: set_flag
+          flag: kaifeng.heard_sect_songyang
+        - type: message
+          speaker: "张一嘴"
+          text: "西边洛阳传来新段子：嵩阳剑痴陆寒松在洛水冷泉破格收了外山剑徒，五岳快剑怕是又要多一位狠角色！"
+
+    - id: storyteller_sect_taihu
+      trigger:
+        type: talk
+        npc: tea_storyteller
+      conditions:
+        - type: flag
+          flag: sect.active.taihu
+        - type: not_flag
+          flag: kaifeng.heard_sect_taihu
+      actions:
+        - type: set_flag
+          flag: kaifeng.heard_sect_taihu
+        - type: message
+          speaker: "张一嘴"
+          text: "太湖水榭向来只看病不收外徒，这回居然把一位救过毒伤客的少侠收入了真传，连沈青笺姑娘都赞不绝口。"
+
+    - id: storyteller_sect_beggar
+      trigger:
+        type: talk
+        npc: tea_storyteller
+      conditions:
+        - type: flag
+          flag: sect.active.beggar
+        - type: not_flag
+          flag: kaifeng.heard_sect_beggar
+      actions:
+        - type: set_flag
+          flag: kaifeng.heard_sect_beggar
+        - type: message
+          speaker: "张一嘴"
+          text: "北街后巷丐帮大梁分舵的韩九爷破天荒收了新弟子，听说连盐帮的硬茬在暗巷里都没讨着好！"
+
+    - id: storyteller_sect_caoban
+      trigger:
+        type: talk
+        npc: tea_storyteller
+      conditions:
+        - type: flag
+          flag: sect.active.caoban
+        - type: not_flag
+          flag: kaifeng.heard_sect_caoban
+      actions:
+        - type: set_flag
+          flag: kaifeng.heard_sect_caoban
+        - type: message
+          speaker: "张一嘴"
+          text: "柳岸码头过江鳅杜三把南渡堂的铁牌交给了外乡新秀，汴河水路往后怕是要换新气象咯。"
+
+    - id: storyteller_sect_saltgang
+      trigger:
+        type: talk
+        npc: tea_storyteller
+      conditions:
+        - type: flag
+          flag: sect.active.saltgang
+        - type: not_flag
+          flag: kaifeng.heard_sect_saltgang
+      actions:
+        - type: set_flag
+          flag: kaifeng.heard_sect_saltgang
+        - type: message
+          speaker: "张一嘴"
+          text: "嘘……听说黄河南堤芦苇荡里新出了个盐帮香头，出手带青毒，连开封府捕房都吃了暗亏，茶客们小声议论便是。"
+
+    - id: storyteller_sect_betrayed
+      trigger:
+        type: talk
+        npc: tea_storyteller
+      conditions:
+        - type: flag
+          flag: sect.betrayed.any
+        - type: not_flag
+          flag: kaifeng.heard_sect_betrayed
+      actions:
+        - type: set_flag
+          flag: kaifeng.heard_sect_betrayed
+        - type: message
+          speaker: "张一嘴"
+          text: "近来江湖上传得沸沸扬扬：有位年轻好手未出师就把师门信物死当在了西市当铺！正派避之不及，北街后巷倒有人夸他敢掀桌子。"

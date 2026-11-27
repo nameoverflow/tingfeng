@@ -479,6 +479,12 @@ def viewCreateBody(th: Theme, m: ClientModel, zh: Bool): Element ClientMsg =
                             ),
                             woodBtn("cstep-next", [wFixed(84.0)], 36.0, 12.5, TonePrimary, false, if (zh) "下一步" else "Next", MsgUi("create_step", "1", ""))
                         ]),
+                        row([wGrow(1.0), gap(6.0), alignY(AlignMid)], [
+                            woodBtn("btn-rand-any", [wGrow(1.0)], 30.0, 12.0, ToneJade, false, if (zh) "随机取名" else "Random", MsgUi("random_name", "any", "")),
+                            woodBtn("btn-rand-male", [wFixed(64.0)], 30.0, 12.0, ToneDefault, false, if (zh) "男名" else "Male", MsgUi("random_name", "male", "")),
+                            woodBtn("btn-rand-female", [wFixed(64.0)], 30.0, 12.0, ToneDefault, false, if (zh) "女名" else "Female", MsgUi("random_name", "female", "")),
+                            woodBtn("btn-rand-unisex", [wFixed(64.0)], 30.0, 12.0, ToneDefault, false, if (zh) "雅名" else "Poetic", MsgUi("random_name", "unisex", ""))
+                        ]),
                         match m.cmAuth.auLastError {
                             Some(errTxt) -> paragraph(fontSans(12.0, 600), 17.0, hexColor("#a32c22"), errTxt),
                             None -> emptyEl(),
@@ -539,7 +545,11 @@ def viewCreateBody(th: Theme, m: ClientModel, zh: Bool): Element ClientMsg =
                         row([wGrow(1.0), pad(10.0), gap(12.0), bg(hexColor("#efe7d4")), border(1.0, hexColor("#c5b9a0")), rounded(3.0), alignY(AlignMid)], [
                             imageBox(portraitUrl(cc.ccGender, tot.cbAppearance, uTxt), 64.0, 64.0, 3.0),
                             col([wGrow(1.0), gap(4.0)], [
-                                label(fontSerif(16.0, 700), hexColor("#1e1a16"), if (strLen(uTxt) == 0) "无名客" else uTxt),
+                                row([wGrow(1.0), gap(8.0), alignY(AlignMid)], [
+                                    label(fontSerif(16.0, 700), hexColor("#1e1a16"), if (strLen(uTxt) == 0) "无名客" else uTxt),
+                                    growSpacer(),
+                                    woodBtn("btn-preview-rand", [wFixed(60.0)], 24.0, 11.0, ToneDefault, false, if (zh) "换名" else "Roll", MsgUi("random_name", "", ""))
+                                ]),
                                 label(fontSans(12.0, 500), hexColor("#5c5346"),
                                     "臂力 " + intToStr(tot.cbStrength) + " · 身法 " + intToStr(tot.cbAgilityValue) + " · 根骨 " + intToStr(tot.cbVitality)),
                                 label(fontSans(12.0, 500), hexColor("#2b594b"),

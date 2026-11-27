@@ -154,17 +154,36 @@
   martial_arts:
     foundation:
       - id: basic_fist
-        level: 12
+        level: 26
+      - id: basic_blade
+        level: 28
       - id: basic_lightness
-        level: 10
+        level: 20
     fist:
       - id: salt_gang_poison_fist
         level: 10
+      - id: salt_venom_palm
+        level: 24
+    blade:
+      - id: salt_shadow_blade
+        level: 24
   prepared:
     fist:
       id: salt_gang_poison_fist
       level: 10
-  teaches: {}
+  teach_bonus: 5
+  teaches:
+    basic_fist: 26
+    basic_blade: 28
+    salt_venom_palm: 30
+    salt_shadow_blade: 30
+  teach_requires:
+    flag: sect.active.saltgang
+    refusal: "盐帮分坛的毒掌与夜渡刀法只传自己人，外人想偷学？做梦。"
+    forbid_flags:
+      - sect.graduated.saltgang
+      - sect.betrayed.saltgang
+    forbid_refusal: "出了盐帮分坛，往后桥归桥、路归路，老七不再教你一招半式。"
   dialogue:
     - "南堤的芦苇荡向来不管官私，谁敢截我的船，我就拿谁填河。"
   respawn: 45
@@ -436,10 +455,34 @@
   martial_arts:
     foundation:
       - id: basic_internal
-        level: 20
+        level: 28
+      - id: basic_staff
+        level: 28
       - id: basic_sword
         level: 18
-  prepared: {}
+    staff:
+      - id: luohan_subduing_staff
+        level: 26
+    internal:
+      - id: shaolin_vajra_body
+        level: 26
+  prepared:
+    staff:
+      id: luohan_subduing_staff
+      level: 26
+  teach_bonus: 5
+  teaches:
+    basic_staff: 28
+    basic_internal: 26
+    luohan_subduing_staff: 30
+    shaolin_vajra_body: 30
+  teach_requires:
+    flag: sect.active.shaolin
+    refusal: "老朽只是白马寺扫落叶的闲人，不教外客武艺。"
+    forbid_flags:
+      - sect.graduated.shaolin
+      - sect.betrayed.shaolin
+    forbid_refusal: "你我师徒缘分已了，往后禅棍火候全凭你自己悟去吧。"
   teaches: {}
   dialogue:
     - "纸上的字涂一笔就能改，石头上的字风吹雨打几十年还在。洛阳城里争了一辈子名头的人，到头来往往还不如这碑阴两行修桥记耐看。"

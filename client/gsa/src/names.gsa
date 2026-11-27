@@ -1,0 +1,195 @@
+// High-Taste Wuxia Character Name Generator (`names`).
+// Combines curated full names (120) with structured surname + given-name pools
+// (96 surnames x 148 single-char + 256 two-char given names => ~38,900+ distinct names)
+// tuned for Song/Ming grounded wuxia aesthetics (no web-novel clichés).
+
+use std.list.listLen
+use prelude.{floorMod, listNthOr, utf8FoldCodepoints}
+
+// ----------------------------------------------------------------------------
+// 1. Curated Full Names (120)
+// ----------------------------------------------------------------------------
+
+def curatedMaleNames(): List String = [
+    "沈知远", "谢听竹", "顾清晏", "陆辞镜", "苏问津", "裴孤鸿", "温临渊", "江晚舟", "宋秋河", "程长风",
+    "萧明夷", "韩枕戈", "杜怀瑾", "周敬之", "林景行", "陈折桂", "徐浮白", "许载酒", "唐观海", "梁惊蛰",
+    "魏扶摇", "严归鸿", "卢青崖", "傅松声", "贺鹤鸣", "秦剑南", "晏星野", "楚云深", "白行简", "方伯言",
+    "薛子谦", "柳玄度", "叶无咎", "季不疑", "宁既明", "段思齐", "卫望舒", "霍沧溟", "邵凌云", "岑寒江",
+    "荀听雨", "池看剑", "闻枕流", "辛漱石", "崔平沙"
+]
+
+def curatedFemaleNames(): List String = [
+    "沈青蝉", "谢晚晴", "顾疏影", "陆清欢", "苏映雪", "裴微澜", "温知秋", "江听雪", "宋拂衣", "程抱月",
+    "萧栖梧", "韩采薇", "杜纫兰", "周佩蘅", "林含章", "陈令仪", "徐嘉禾", "许素问", "唐青黛", "梁沉璧",
+    "魏浮光", "严流萤", "卢惊鸿", "傅照影", "贺凝霜", "秦寒露", "晏谷雨", "楚白露", "白小满", "方清照",
+    "薛婉清", "柳舒窈", "叶明月", "季初霁", "宁云裳", "段雪霁", "卫烟波", "霍秋水", "邵春山", "岑眉妩",
+    "荀画屏", "池玉簪", "闻兰亭", "辛芷若", "崔疏桐"
+]
+
+def curatedUnisexNames(): List String = [
+    "沈听风", "谢忘机", "顾归去", "陆无尘", "苏不语", "裴清绝", "温长安", "江洛水", "宋江篱", "程青衫",
+    "萧白衣", "韩墨客", "杜寒山", "周秋声", "林暮雪", "陈朝露", "徐浮生", "许半夏", "唐苍术", "梁沉香",
+    "魏木兰", "严辛夷", "卢青萍", "傅断鸿", "贺飞蓬", "秦惊弦", "晏鸣玉", "楚击筑", "白踏歌", "方行舟"
+]
+
+// ----------------------------------------------------------------------------
+// 2. Surname Pools (82 single-char + 14 restrained compound surnames)
+// ----------------------------------------------------------------------------
+
+def singleSurnames(): List String = [
+    "沈", "谢", "顾", "陆", "苏", "林", "周", "陈", "徐", "许",
+    "宋", "唐", "韩", "萧", "裴", "秦", "温", "程", "贺", "傅",
+    "卢", "严", "魏", "孟", "梁", "江", "晏", "楚", "白", "方",
+    "薛", "杜", "柳", "叶", "季", "宁", "段", "卫", "霍", "邵",
+    "岑", "荀", "池", "闻", "辛", "崔", "钟", "虞", "陶", "殷",
+    "纪", "喻", "莫", "乔", "石", "罗", "姜", "范", "彭", "潘",
+    "葛", "易", "齐", "游", "黎", "解", "商", "柯", "明", "常",
+    "关", "袁", "董", "邱", "谭", "耿", "燕", "云", "容", "厉",
+    "祁", "封"
+]
+
+def compoundSurnames(): List String = [
+    "司徒", "慕容", "欧阳", "公孙", "上官", "独孤", "闻人",
+    "长孙", "端木", "诸葛", "司马", "皇甫", "南宫", "百里"
+]
+
+// ----------------------------------------------------------------------------
+// 3. Single-Character Given Names (148) — Grounded Two-Char Wuxia Names
+// ----------------------------------------------------------------------------
+
+def maleSingleGiven(): List String = [
+    "执", "慎", "安", "澜", "舟", "辞", "野", "衡", "川", "岳",
+    "朔", "昭", "珩", "渊", "洵", "谦", "恪", "霁", "远", "瞻",
+    "策", "锋", "毅", "沉", "屹", "铭", "钧", "铎", "朗", "煦",
+    "晏", "澈", "泽", "原", "峰", "岭", "松", "柏", "枫", "岚",
+    "霄", "霆", "震", "鸣", "鸿", "鹤", "驹", "凛", "冽", "砚",
+    "墨", "渊", "桓", "湛"
+]
+
+def femaleSingleGiven(): List String = [
+    "蝉", "笺", "晴", "欢", "雪", "澜", "秋", "衣", "月", "梧",
+    "薇", "兰", "蘅", "章", "仪", "禾", "问", "黛", "璧", "光",
+    "萤", "鸿", "影", "霜", "露", "雨", "满", "照", "清", "窈",
+    "霁", "裳", "波", "水", "山", "妩", "屏", "簪", "亭", "若",
+    "桐", "梅", "溪", "漪", "杏", "梨", "荷", "烟", "瓷", "商",
+    "瑟", "琴", "笙", "枝"
+]
+
+def unisexSingleGiven(): List String = [
+    "风", "机", "尘", "语", "绝", "安", "篱", "衫", "山", "声",
+    "雪", "露", "生", "夏", "香", "萍", "弦", "玉", "歌", "舟",
+    "云", "涛", "夜", "遗", "心", "禅", "晓", "霜", "烟", "岚",
+    "落", "冥", "锋", "刃", "竹", "石", "泉", "松", "柳", "荷"
+]
+
+// ----------------------------------------------------------------------------
+// 4. Two-Character Given Names (256) — Literary & Classical Imagery
+// ----------------------------------------------------------------------------
+
+def maleDoubleGiven(): List String = [
+    "听竹", "晚舟", "秋河", "长风", "知远", "清晏", "辞镜", "问津", "孤鸿", "临渊",
+    "明夷", "枕戈", "怀瑾", "敬之", "景行", "折桂", "浮白", "载酒", "观海", "惊蛰",
+    "霜降", "扶摇", "归鸿", "青崖", "松声", "鹤鸣", "剑南", "星野", "云深", "行简",
+    "伯言", "子谦", "玄度", "无咎", "不疑", "既明", "思齐", "望舒", "沧溟", "凌云",
+    "乘风", "破浪", "寒江", "孤舟", "听雨", "看剑", "枕流", "漱石", "平沙", "落雁",
+    "鸣岐", "定远", "镇岳", "昭明", "澄怀", "晏清", "疏狂", "纵横", "千帆", "万川",
+    "百川", "一苇", "渡江", "栖霞", "踏雪", "寻梅", "折柳", "听松", "卧云", "饮冰",
+    "砺剑", "抱朴", "守拙", "藏锋", "敛光", "知节", "清风", "朗月", "明河", "星沉",
+    "玉衡", "天枢", "沧浪", "兰舟", "竹溪", "石泉", "松风", "山岚", "云壑", "清川",
+    "鹤亭", "霜林"
+]
+
+def femaleDoubleGiven(): List String = [
+    "青蝉", "青笺", "晚晴", "疏影", "清欢", "映雪", "微澜", "知秋", "听雪", "拂衣",
+    "抱月", "栖梧", "采薇", "纫兰", "佩蘅", "含章", "令仪", "嘉禾", "素问", "青黛",
+    "沉璧", "浮光", "流萤", "惊鸿", "照影", "凝霜", "寒露", "谷雨", "白露", "小满",
+    "清照", "婉清", "舒窈", "明月", "初霁", "云裳", "雪霁", "烟波", "秋水", "春山",
+    "眉妩", "画屏", "玉簪", "兰亭", "芷若", "疏桐", "落梅", "折梅", "听澜", "枕溪",
+    "扶疏", "清漪", "微雨", "杏雨", "梨雪", "荷风", "竹露", "松烟", "墨韵", "青瓷",
+    "素商", "锦瑟", "瑶琴", "玉笙", "清商", "弄影", "凌波", "踏月", "寻芳", "问茶",
+    "煮雪", "裁云", "栖霞", "映月", "含烟", "带露", "凝碧", "染霜", "知微", "见素",
+    "守静", "安澜", "宁远", "景明", "昭华", "瑾瑜", "佩玖", "琼枝", "瑶华", "云岫",
+    "汀兰", "月白"
+]
+
+def unisexDoubleGiven(): List String = [
+    "听风", "忘机", "归去", "无尘", "不语", "清绝", "长安", "洛水", "江篱", "青衫",
+    "白衣", "墨客", "寒山", "秋声", "暮雪", "朝露", "浮生", "半夏", "苍术", "沉香",
+    "苏合", "木兰", "辛夷", "青萍", "断鸿", "飞蓬", "惊弦", "鸣玉", "击筑", "踏歌",
+    "行舟", "渡月", "栖云", "枕风", "饮露", "观澜", "听涛", "照夜", "逐风", "拾遗",
+    "知返", "守心", "问禅", "破晓", "归尘", "流云", "素心", "清霜", "寒烟", "孤烟",
+    "远山", "沧海", "烟雨", "微尘", "疏星", "残月", "晓风", "暮雨", "晴岚", "碧落",
+    "青冥", "玄霜", "霜刃", "寒锋", "玉尘", "雪泥", "鸿爪", "竹影", "松涛", "溪声",
+    "云帆", "沧洲"
+]
+
+// ----------------------------------------------------------------------------
+// 5. Deterministic Hash Mixing & Selection
+// ----------------------------------------------------------------------------
+
+def nextSeed(s: Int): Int = {
+    let x = if (s < 0) -s else s;
+    let m = floorMod(x * 1103515245 + 12345, 2147483647);
+    if (m < 0) -m else m
+}
+
+def pickFrom(xs: List String, s: Int): String = {
+    let n = listLen(xs);
+    if (n <= 0) "沈青蝉"
+    else listNthOr(xs, floorMod(s, n), "沈青蝉")
+}
+
+def hashString(txt: String): Int =
+    utf8FoldCodepoints(txt, 216613626, (acc, cp) -> floorMod(acc * 33 + cp + 7, 2147483647))
+
+def rollOnce(style: String, seed0: Int): String = {
+    let s1 = nextSeed(seed0);
+    let s2 = nextSeed(s1);
+    let s3 = nextSeed(s2);
+    let s4 = nextSeed(s3);
+
+    // Resolve effective bucket: "male", "female", or "unisex"
+    let bucket =
+        if (style == "male") (if (floorMod(s1, 100) < 18) "unisex" else "male")
+        else if (style == "female") (if (floorMod(s1, 100) < 18) "unisex" else "female")
+        else if (style == "unisex") "unisex"
+        else {
+            let b = floorMod(s1, 3);
+            if (b == 0) "male" else if (b == 1) "female" else "unisex"
+        };
+
+    // 20% curated full name, 80% high-taste surname + given-name combination
+    if (floorMod(s2, 100) < 20) {
+        if (bucket == "male") pickFrom(curatedMaleNames(), s3)
+        else if (bucket == "female") pickFrom(curatedFemaleNames(), s3)
+        else pickFrom(curatedUnisexNames(), s3)
+    } else {
+        // 8% restrained compound surname, 92% classic single surname
+        let useCompound = floorMod(s2, 100) >= 92;
+        let sur =
+            if (useCompound) pickFrom(compoundSurnames(), s3)
+            else pickFrom(singleSurnames(), s3);
+
+        // Single surnames get 22% crisp two-char names; compound surnames get 28% three-char names
+        let singleChance = if (useCompound) 28 else 22;
+        let useSingle = floorMod(s3, 100) < singleChance;
+        let given =
+            if (useSingle) {
+                if (bucket == "male") pickFrom(maleSingleGiven(), s4)
+                else if (bucket == "female") pickFrom(femaleSingleGiven(), s4)
+                else pickFrom(unisexSingleGiven(), s4)
+            } else {
+                if (bucket == "male") pickFrom(maleDoubleGiven(), s4)
+                else if (bucket == "female") pickFrom(femaleDoubleGiven(), s4)
+                else pickFrom(unisexDoubleGiven(), s4)
+            };
+        sur + given
+    }
+}
+
+pub def rollWuxiaName(style: String, seed: Int, avoidName: String): String = {
+    let mixed = nextSeed(seed + hashString(avoidName) + hashString(style));
+    let first = rollOnce(style, mixed);
+    if (first != avoidName) first
+    else rollOnce(style, nextSeed(mixed + 104729))
+}

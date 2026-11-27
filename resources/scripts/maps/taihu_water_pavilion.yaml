@@ -63,6 +63,7 @@ rooms:
     desc: "房中只有一张木榻和三盏小灯。灯火用来照脸色，不用来照刀。"
     char:
       - taihu_wounded_traveler
+      - taihu_poisoned_guest
     exits:
       east: [0, 3]
       south: [-1, 2]
@@ -132,6 +133,8 @@ rooms:
     char:
       - water_fort_second_boss
       - bounty_taihu_pirate
+      - taihu_poison_smuggler
+      - taihu_plague_raider
     exits:
       east: [0, 5]
 

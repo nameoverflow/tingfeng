@@ -1075,13 +1075,22 @@ pub data TeachRequirement {
     MkTeachRequirement {
         teachRequiresFlag: String,
         teachRefusal: String,
+        teachForbidFlags: List String,
+        teachForbidRefusal: Option String,
     },
 }
 
 pub def decodeTeachRequirement(): Decoder TeachRequirement =
-    succeed((fl) -> (ref) -> MkTeachRequirement { teachRequiresFlag: fl, teachRefusal: ref })
+    succeed((fl) -> (ref) -> (ff) -> (fr) -> MkTeachRequirement {
+        teachRequiresFlag: fl,
+        teachRefusal: ref,
+        teachForbidFlags: ff,
+        teachForbidRefusal: fr,
+    })
         |> req("flag", str)
         |> req("refusal", str)
+        |> withDefault("forbid_flags", list(str), Nil)
+        |> opt("forbid_refusal", str)
 
 pub data Character {
     MkCharacter {

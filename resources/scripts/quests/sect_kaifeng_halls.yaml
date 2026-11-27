@@ -1,0 +1,1179 @@
+# 开封三堂口：丐帮·开封大梁分舵 / 漕帮·汴河南渡堂 / 盐帮·黄河芦苇分坛
+# 包含：三条独立机缘入派线 -> 「汴河夜局」三视角二阶晋升 -> 出师试 -> 堂口日常 -> 跨堂口三角交互
+
+# ============================================================================
+# 5. 丐帮 · 开封大梁分舵（北街后巷·七袋长老韩九 / 破衣陈七）
+# ============================================================================
+
+- id: sect_join_beggar
+  name: "机缘·暗巷分药"
+  objectives:
+    - stage: fend_bully
+      text: "在北街后巷击退欺负老叫花韩九的盐帮恶棍。"
+    - stage: completed
+      text: "你已拜入丐帮开封大梁分舵受封一袋弟子，获青竹牌并习得《丐帮缠丝棒》。"
+  reward:
+    money: 0
+    combat_exp: 60
+    potential: 45
+    items: []
+  events:
+    - id: beggar_join_from_saltgang_warning
+      trigger:
+        type: talk
+        npc: alley_old_beggar
+      conditions:
+        - type: flag
+          flag: sect.betrayed.saltgang
+        - type: not_flag
+          flag: sect.has_active
+        - type: not_flag
+          flag: sect.beggar.salt_vow_done
+      actions:
+        - type: set_flag
+          flag: sect.beggar.salt_vow_done
+        - type: message
+          speaker: "丐帮七袋长老韩九"
+          text: "哟，从盐帮芦苇分坛出来的？老叫花不忌你叛过师，但进我大梁分舵，先立个誓：往后绝不拿青毒害寻常百姓。再跟我说句话，咱便认这缘分。"
+
+    - id: beggar_join_start
+      trigger:
+        type: talk
+        npc: alley_old_beggar
+      conditions:
+        - type: quest_completed
+          quest: first_steps_kaifeng
+        - type: not_flag
+          flag: sect.has_active
+        - type: not_flag
+          flag: sect.betrayed.beggar
+        - type: not_flag
+          flag: sect.graduated.beggar
+        - type: quest_not_started
+          quest: sect_join_beggar
+      actions:
+        - type: set_stage
+          quest: sect_join_beggar
+          stage: fend_bully
+        - type: show_npc
+          npc: alley_salt_enforcer
+        - type: message
+          speaker: "旁白"
+          text: "你刚递话，一个盐帮恶棍提着铁尺冲进后巷推搡老叫花，嘴里骂着“臭要饭的敢坏盐帮风声”。"
+        - type: message
+          speaker: "丐帮七袋长老韩九"
+          text: "嘿，年轻人，借你双拳帮老叫花挡一下？打赢了，九爷有好东西送你。"
+
+    - id: beggar_join_fight
+      trigger:
+        type: talk
+        npc: alley_salt_enforcer
+      conditions:
+        - type: quest_stage
+          quest: sect_join_beggar
+          stage: fend_bully
+      actions:
+        - type: message
+          speaker: "盐帮恶棍"
+          text: "连后巷老叫花也有人护着？一块收拾了！"
+        - type: start_battle
+          target: alley_salt_enforcer
+
+    - id: beggar_join_complete
+      trigger:
+        type: kill
+        npc: alley_salt_enforcer
+      conditions:
+        - type: quest_stage
+          quest: sect_join_beggar
+          stage: fend_bully
+      actions:
+        - type: hide_npc
+          npc: alley_salt_enforcer
+        - type: set_flag
+          flag: sect.active.beggar
+        - type: set_flag
+          flag: sect.has_active
+        - type: give_item
+          item: beggar_bamboo_token
+          amount: 1
+        - type: complete_quest
+          quest: sect_join_beggar
+        - type: message
+          speaker: "丐帮七袋长老韩九"
+          text: "好小子，不端架子、肯替穷苦人出头！老叫花是丐帮大梁分舵七袋长老韩九，这块青竹牌拿好，今日受封一袋弟子，先传你《丐帮缠丝棒》！练到十四级回来领分舵升袋差事。"
+
+- id: sect_inner_beggar
+  name: "堂口·大梁传信"
+  objectives:
+    - stage: catch_spy
+      text: "前往州桥东侧船棚，截住混进后巷摸底的盐帮水鬼并夺取船期单。"
+    - stage: deliver_or_sell
+      text: "带着《盐帮夜渡船期单》，回北街后巷交给韩九升袋（也可先顺路去柳岸码头卖一份风声给杜三）。"
+    - stage: completed
+      text: "你已护住分舵耳目，由韩九行升袋礼晋升三袋执杖弟子并习得《逍遥游步》。"
+  reward:
+    money: 55
+    combat_exp: 90
+    potential: 70
+    items: []
+  events:
+    - id: beggar_inner_start
+      trigger:
+        type: talk
+        npc: alley_old_beggar
+      conditions:
+        - type: flag
+          flag: sect.active.beggar
+        - type: art_level_at_least
+          art: chansi_dog_staff
+          level: 14
+        - type: quest_not_started
+          quest: sect_inner_beggar
+      actions:
+        - type: set_stage
+          quest: sect_inner_beggar
+          stage: catch_spy
+        - type: show_npc
+          npc: caoban_night_raider
+        - type: message
+          speaker: "丐帮七袋长老韩九"
+          text: "陈七探到盐帮今晚在汴河有大动作，还派了眼线摸到州桥船棚那边打听咱们分舵的耳目点。你缠丝棒已至十四级，去船棚把他的船期单截回来！"
+
+    - id: beggar_inner_fight
+      trigger:
+        type: talk
+        npc: caoban_night_raider
+      conditions:
+        - type: quest_stage
+          quest: sect_inner_beggar
+          stage: catch_spy
+      actions:
+        - type: message
+          speaker: "盐帮水鬼"
+          text: "丐帮大梁分舵的耳朵倒灵！想抢船期单，先吃我一刀！"
+        - type: start_battle
+          target: caoban_night_raider
+
+    - id: beggar_inner_defeat
+      trigger:
+        type: kill
+        npc: caoban_night_raider
+      conditions:
+        - type: quest_stage
+          quest: sect_inner_beggar
+          stage: catch_spy
+      actions:
+        - type: hide_npc
+          npc: caoban_night_raider
+        - type: give_item
+          item: beggar_secret_letter
+          amount: 1
+        - type: set_stage
+          quest: sect_inner_beggar
+          stage: deliver_or_sell
+        - type: message
+          speaker: "旁白"
+          text: "你从水鬼怀里搜出一张《盐帮夜渡船期单》。既可直接带回后巷交韩九升袋，也可顺路去柳岸码头把消息卖给漕帮杜三赚一笔线人银。"
+
+    - id: beggar_sells_tip_to_caoban
+      trigger:
+        type: talk
+        npc: caoban_du_san
+      conditions:
+        - type: quest_stage
+          quest: sect_inner_beggar
+          stage: deliver_or_sell
+        - type: has_item
+          item: beggar_secret_letter
+        - type: not_flag
+          flag: sect.beggar.sold_tip_caoban
+      actions:
+        - type: set_flag
+          flag: sect.beggar.sold_tip_caoban
+        - type: give_money
+          amount: 40
+        - type: message
+          speaker: "过江鳅杜三"
+          text: "大梁分舵果然耳目通天！这四十文是南渡堂买你这份盐帮船期风声的茶钱，原单你照旧带回给韩九爷交差便是。"
+
+    - id: beggar_inner_complete
+      trigger:
+        type: talk
+        npc: alley_old_beggar
+      conditions:
+        - type: quest_stage
+          quest: sect_inner_beggar
+          stage: deliver_or_sell
+        - type: has_item
+          item: beggar_secret_letter
+      actions:
+        - type: take_item
+          item: beggar_secret_letter
+          amount: 1
+        - type: set_flag
+          flag: sect.rank.inner.beggar
+        - type: complete_quest
+          quest: sect_inner_beggar
+        - type: message
+          speaker: "丐帮七袋长老韩九"
+          text: "干得漂亮！今儿九爷亲自行升袋礼，封你为大梁分舵三袋执杖弟子，再把《逍遥游步》传给你。待缠丝棒修至二十六级，替分舵摆平码头的盐帮硬茬便可体面出师！"
+
+- id: sect_grad_beggar
+  name: "出师·码头立威"
+  objectives:
+    - stage: fight_boss
+      text: "赴州桥船棚，击败寻仇杀到码头的盐帮铁尺堂主。"
+    - stage: report_nine
+      text: "回北街后巷向韩九辞行出师。"
+    - stage: completed
+      text: "你已在大梁分舵体面出师，保留全部丐帮绝艺。"
+  reward:
+    money: 130
+    combat_exp: 125
+    potential: 95
+    items: []
+  events:
+    - id: beggar_grad_start
+      trigger:
+        type: talk
+        npc: alley_old_beggar
+      conditions:
+        - type: flag
+          flag: sect.active.beggar
+        - type: flag
+          flag: sect.rank.inner.beggar
+        - type: art_level_at_least
+          art: chansi_dog_staff
+          level: 26
+        - type: quest_not_started
+          quest: sect_grad_beggar
+      actions:
+        - type: set_stage
+          quest: sect_grad_beggar
+          stage: fight_boss
+        - type: show_npc
+          npc: alley_vengeance_boss
+        - type: message
+          speaker: "丐帮七袋长老韩九"
+          text: "盐帮铁尺堂主带人堵在州桥船棚点名要找大梁分舵算账。去把他打回黄河北岸，回来九爷放你体面出师！"
+
+    - id: beggar_grad_fight
+      trigger:
+        type: talk
+        npc: alley_vengeance_boss
+      conditions:
+        - type: quest_stage
+          quest: sect_grad_beggar
+          stage: fight_boss
+      actions:
+        - type: message
+          speaker: "盐帮铁尺堂主"
+          text: "三袋叫花子也敢来船棚送死？接招！"
+        - type: start_battle
+          target: alley_vengeance_boss
+
+    - id: beggar_grad_defeat
+      trigger:
+        type: kill
+        npc: alley_vengeance_boss
+      conditions:
+        - type: quest_stage
+          quest: sect_grad_beggar
+          stage: fight_boss
+      actions:
+        - type: hide_npc
+          npc: alley_vengeance_boss
+        - type: set_stage
+          quest: sect_grad_beggar
+          stage: report_nine
+        - type: message
+          speaker: "旁白"
+          text: "铁尺堂主狼狈撤出船棚，大梁分舵在开封城里的威风一时无两。"
+
+    - id: beggar_grad_complete
+      trigger:
+        type: talk
+        npc: alley_old_beggar
+      conditions:
+        - type: quest_stage
+          quest: sect_grad_beggar
+          stage: report_nine
+      actions:
+        - type: clear_flag
+          flag: sect.active.beggar
+        - type: clear_flag
+          flag: sect.has_active
+        - type: set_flag
+          flag: sect.graduated.beggar
+        - type: complete_quest
+          quest: sect_grad_beggar
+        - type: message
+          speaker: "丐帮七袋长老韩九"
+          text: "好样的！今日体面卸袋出师，缠丝棒与逍遥步都归你带着。往后不管进哪家大门，北街后巷永远留你一碗热酒！"
+
+- id: sect_job_beggar_rumor
+  name: "堂口差事·暗巷收风"
+  objectives:
+    - stage: check_market
+      text: "走一趟西市当铺与柳岸码头，替分舵收集盐帮与水路风声。"
+    - stage: report_chen
+      text: "回北街后巷向破衣陈七复命。"
+  reward:
+    money: 48
+    combat_exp: 80
+    potential: 58
+    items: []
+  events:
+    - id: sect_job_beggar_start
+      trigger:
+        type: talk
+        npc: alley_beggar_chen
+      conditions:
+        - type: flag
+          flag: sect.active.beggar
+        - type: quest_not_started
+          quest: sect_job_beggar_rumor
+      actions:
+        - type: set_stage
+          quest: sect_job_beggar_rumor
+          stage: check_market
+        - type: message
+          speaker: "破衣陈七"
+          text: "自家兄弟！替分舵跑一趟柳岸码头听听今儿水路动静，回来领一份暗巷茶钱。"
+
+    - id: sect_job_beggar_dock
+      trigger:
+        type: enter_room
+        map: kaifeng_city
+        position: [-1, -3]
+      conditions:
+        - type: quest_stage
+          quest: sect_job_beggar_rumor
+          stage: check_market
+      actions:
+        - type: set_stage
+          quest: sect_job_beggar_rumor
+          stage: report_chen
+        - type: message
+          speaker: "旁白"
+          text: "你在柳岸码头听了半盏茶功夫的船夫闲话，把盐帮私船与官仓货期记了个大概，折回北街后巷交差。"
+
+    - id: sect_job_beggar_finish
+      trigger:
+        type: talk
+        npc: alley_beggar_chen
+      conditions:
+        - type: quest_stage
+          quest: sect_job_beggar_rumor
+          stage: report_chen
+      actions:
+        - type: message
+          speaker: "破衣陈七"
+          text: "消息够准！这份分舵茶钱拿好。"
+        - type: complete_job
+          quest: sect_job_beggar_rumor
+
+# ============================================================================
+# 6. 漕帮 · 汴河南渡堂（柳岸码头·过江鳅杜三 / 船棚大副水牛张）
+# ============================================================================
+
+- id: sect_join_caoban
+  name: "机缘·南渡拜旗"
+  objectives:
+    - stage: boat_shed_trial
+      text: "前往州桥东侧船棚，替水牛张击退摸黑割缆的盐帮水鬼。"
+    - stage: report_dusan
+      text: "回柳岸码头见杜三，正式入汴河南渡堂。"
+    - stage: completed
+      text: "你已拜入漕帮汴河南渡堂任押船舵手，获南渡堂铁牌并习得《汴河断浪刀》。"
+  reward:
+    money: 0
+    combat_exp: 60
+    potential: 45
+    items: []
+  events:
+    - id: caoban_rejects_saltgang
+      trigger:
+        type: talk
+        npc: caoban_du_san
+      conditions:
+        - type: flag
+          flag: sect.active.saltgang
+      actions:
+        - type: message
+          speaker: "过江鳅杜三"
+          text: "哼，南堤芦苇滩的盐帮走狗也敢来我柳岸码头？趁老子还没动刀，赶紧滚远点！"
+
+    - id: caoban_join_start
+      trigger:
+        type: talk
+        npc: caoban_du_san
+      conditions:
+        - type: flag
+          flag: jianghu.caoban_friend
+        - type: flag
+          flag: jianghu.canal_handed_caoban
+        - type: not_flag
+          flag: sect.has_active
+        - type: not_flag
+          flag: sect.betrayed.caoban
+        - type: not_flag
+          flag: sect.graduated.caoban
+        - type: quest_not_started
+          quest: sect_join_caoban
+      actions:
+        - type: set_stage
+          quest: sect_join_caoban
+          stage: boat_shed_trial
+        - type: show_npc
+          npc: caoban_night_raider
+        - type: message
+          speaker: "过江鳅杜三"
+          text: "南渡客，上回暗印铁匣的事你替漕帮挣足了脸面。若不嫌弃咱们水上人粗豪，我邀你喝碗上船酒、正式入我汴河南渡堂！先去船棚帮水牛张把摸黑割缆的盐帮水鬼打发了。"
+
+    - id: caoban_join_fight
+      trigger:
+        type: talk
+        npc: caoban_night_raider
+      conditions:
+        - type: quest_stage
+          quest: sect_join_caoban
+          stage: boat_shed_trial
+      actions:
+        - type: message
+          speaker: "盐帮水鬼"
+          text: "杜三又请了帮手来守船棚？砍了你！"
+        - type: start_battle
+          target: caoban_night_raider
+
+    - id: caoban_join_defeat
+      trigger:
+        type: kill
+        npc: caoban_night_raider
+      conditions:
+        - type: quest_stage
+          quest: sect_join_caoban
+          stage: boat_shed_trial
+      actions:
+        - type: hide_npc
+          npc: caoban_night_raider
+        - type: set_stage
+          quest: sect_join_caoban
+          stage: report_dusan
+        - type: message
+          speaker: "旁白"
+          text: "盐帮水鬼被你逼得跳河遁走，船棚缆绳安然无恙。"
+
+    - id: caoban_join_complete_from_beggar
+      trigger:
+        type: talk
+        npc: caoban_du_san
+      conditions:
+        - type: quest_stage
+          quest: sect_join_caoban
+          stage: report_dusan
+        - type: flag
+          flag: sect.graduated.beggar
+      actions:
+        - type: set_flag
+          flag: sect.active.caoban
+        - type: set_flag
+          flag: sect.has_active
+        - type: give_item
+          item: caoban_iron_tally
+          amount: 1
+        - type: complete_quest
+          quest: sect_join_caoban
+        - type: message
+          speaker: "过江鳅杜三"
+          text: "大梁分舵出师的人果然眼尖腿快！这面南渡堂铁牌归你，今日起任押船舵手，《汴河断浪刀》传你，练到十四级回来扛大旗！"
+
+    - id: caoban_join_complete
+      trigger:
+        type: talk
+        npc: caoban_du_san
+      conditions:
+        - type: quest_stage
+          quest: sect_join_caoban
+          stage: report_dusan
+      actions:
+        - type: set_flag
+          flag: sect.active.caoban
+        - type: set_flag
+          flag: sect.has_active
+        - type: give_item
+          item: caoban_iron_tally
+          amount: 1
+        - type: complete_quest
+          quest: sect_join_caoban
+        - type: message
+          speaker: "过江鳅杜三"
+          text: "利落！这面南渡堂铁牌收好，今日起你便是汴河南渡堂的押船舵手，这门《汴河断浪刀》传你。练到十四级回来，随我办一趟护漕大事升执旗头目。"
+
+- id: sect_inner_caoban
+  name: "堂口·汴河护漕"
+  objectives:
+    - stage: buy_beggar_tip
+      text: "去北街后巷向丐帮破衣陈七打探盐帮夜袭船棚的风声。"
+    - stage: defend_shed
+      text: "赴州桥船棚正面击退趁夜来袭的盐帮水鬼。"
+    - stage: report_dusan
+      text: "回柳岸码头向杜三复命，晋升南渡执旗头目。"
+    - stage: completed
+      text: "你已击退夜袭护住漕船，晋升南渡执旗头目并习得《过江踏浪步》。"
+  reward:
+    money: 60
+    combat_exp: 90
+    potential: 70
+    items: []
+  events:
+    - id: caoban_inner_start
+      trigger:
+        type: talk
+        npc: caoban_du_san
+      conditions:
+        - type: flag
+          flag: sect.active.caoban
+        - type: art_level_at_least
+          art: caoban_river_saber
+          level: 14
+        - type: quest_not_started
+          quest: sect_inner_caoban
+      actions:
+        - type: set_stage
+          quest: sect_inner_caoban
+          stage: buy_beggar_tip
+        - type: message
+          speaker: "过江鳅杜三"
+          text: "你的断浪刀已有火候。风声说盐帮这两夜要冲咱们船棚，漕帮水上眼尖，城里暗巷还得问丐帮。去北街后巷找破衣陈七买个准信！"
+
+    - id: caoban_inner_beggar_tip
+      trigger:
+        type: talk
+        npc: alley_beggar_chen
+      conditions:
+        - type: quest_stage
+          quest: sect_inner_caoban
+          stage: buy_beggar_tip
+      actions:
+        - type: set_stage
+          quest: sect_inner_caoban
+          stage: defend_shed
+        - type: show_npc
+          npc: caoban_night_raider
+        - type: message
+          speaker: "破衣陈七"
+          text: "杜三爷派来的？大梁分舵早就盯上了——盐帮水鬼今晚二更摸州桥船棚，快回去布防吧，这回算两家堂口互相照应！"
+
+    - id: caoban_inner_fight
+      trigger:
+        type: talk
+        npc: caoban_night_raider
+      conditions:
+        - type: quest_stage
+          quest: sect_inner_caoban
+          stage: defend_shed
+      actions:
+        - type: message
+          speaker: "盐帮水鬼"
+          text: "糟了，漕帮怎么提前埋伏在船棚里？杀出去！"
+        - type: start_battle
+          target: caoban_night_raider
+
+    - id: caoban_inner_defeat
+      trigger:
+        type: kill
+        npc: caoban_night_raider
+      conditions:
+        - type: quest_stage
+          quest: sect_inner_caoban
+          stage: defend_shed
+      actions:
+        - type: hide_npc
+          npc: caoban_night_raider
+        - type: set_stage
+          quest: sect_inner_caoban
+          stage: report_dusan
+        - type: message
+          speaker: "旁白"
+          text: "提前得了丐帮风声，盐帮夜袭一败涂地。回柳岸码头向杜三报喜吧。"
+
+    - id: caoban_inner_complete
+      trigger:
+        type: talk
+        npc: caoban_du_san
+      conditions:
+        - type: quest_stage
+          quest: sect_inner_caoban
+          stage: report_dusan
+      actions:
+        - type: set_flag
+          flag: sect.rank.inner.caoban
+        - type: complete_quest
+          quest: sect_inner_caoban
+        - type: message
+          speaker: "过江鳅杜三"
+          text: "好兄弟！今日升你为南渡堂执旗头目，《过江踏浪步》一并传你。待断浪刀修至二十六级，去南堤芦苇滩把盐帮过江蛟打服，便可体面出师！"
+
+- id: sect_grad_caoban
+  name: "出师·断浪平滩"
+  objectives:
+    - stage: fight_raider
+      text: "赴北郊南堤芦苇滩，击败盐帮水战头目过江蛟。"
+    - stage: report_dusan
+      text: "回柳岸码头向杜三辞行出师。"
+    - stage: completed
+      text: "你已平定南渡航道体面出师，保留全部漕帮武学。"
+  reward:
+    money: 140
+    combat_exp: 130
+    potential: 95
+    items: []
+  events:
+    - id: caoban_grad_start
+      trigger:
+        type: talk
+        npc: caoban_du_san
+      conditions:
+        - type: flag
+          flag: sect.active.caoban
+        - type: flag
+          flag: sect.rank.inner.caoban
+        - type: art_level_at_least
+          art: caoban_river_saber
+          level: 26
+        - type: quest_not_started
+          quest: sect_grad_caoban
+      actions:
+        - type: set_stage
+          quest: sect_grad_caoban
+          stage: fight_raider
+        - type: show_npc
+          npc: caoban_grad_raider
+        - type: message
+          speaker: "过江鳅杜三"
+          text: "盐帮请来了水战狠角色“过江蛟”蹲在南堤芦苇滩。你断浪刀已至二十六级，去替南渡堂把这条暗滩扫平，回来便放你体面出师！"
+
+    - id: caoban_grad_fight
+      trigger:
+        type: talk
+        npc: caoban_grad_raider
+      conditions:
+        - type: quest_stage
+          quest: sect_grad_caoban
+          stage: fight_raider
+      actions:
+        - type: message
+          speaker: "盐帮过江蛟"
+          text: "杜三的执旗头目？尝尝我这口夜渡鬼头刀！"
+        - type: start_battle
+          target: caoban_grad_raider
+
+    - id: caoban_grad_defeat
+      trigger:
+        type: kill
+        npc: caoban_grad_raider
+      conditions:
+        - type: quest_stage
+          quest: sect_grad_caoban
+          stage: fight_raider
+      actions:
+        - type: hide_npc
+          npc: caoban_grad_raider
+        - type: set_stage
+          quest: sect_grad_caoban
+          stage: report_dusan
+        - type: message
+          speaker: "旁白"
+          text: "过江蛟刀断人走，黄河南堤一片肃清。"
+
+    - id: caoban_grad_complete
+      trigger:
+        type: talk
+        npc: caoban_du_san
+      conditions:
+        - type: quest_stage
+          quest: sect_grad_caoban
+          stage: report_dusan
+      actions:
+        - type: clear_flag
+          flag: sect.active.caoban
+        - type: clear_flag
+          flag: sect.has_active
+        - type: set_flag
+          flag: sect.graduated.caoban
+        - type: complete_quest
+          quest: sect_grad_caoban
+        - type: message
+          speaker: "过江鳅杜三"
+          text: "漂亮！今日起你体面出师，断浪刀和踏浪步全归你身。往后只要不投盐帮，汴河上的船随时载你一程！"
+
+- id: sect_job_caoban_escort
+  name: "堂口差事·汴河巡缆"
+  objectives:
+    - stage: inspect_warehouse
+      text: "巡查官仓与汴水南渡缆桩，确认水路安稳。"
+    - stage: report_mate
+      text: "回州桥船棚向大副水牛张复命领分红。"
+  reward:
+    money: 52
+    combat_exp: 82
+    potential: 56
+    items: []
+  events:
+    - id: sect_job_caoban_start
+      trigger:
+        type: talk
+        npc: caoban_dock_mate
+      conditions:
+        - type: flag
+          flag: sect.active.caoban
+        - type: quest_not_started
+          quest: sect_job_caoban_escort
+      actions:
+        - type: set_stage
+          quest: sect_job_caoban_escort
+          stage: inspect_warehouse
+        - type: message
+          speaker: "船棚大副水牛张"
+          text: "自家兄弟，帮老张去官仓水口巡一眼封签有没有被盐帮动过手脚，回来船棚分红！"
+
+    - id: sect_job_caoban_warehouse
+      trigger:
+        type: enter_room
+        map: kaifeng_city
+        position: [2, 1]
+      conditions:
+        - type: quest_stage
+          quest: sect_job_caoban_escort
+          stage: inspect_warehouse
+      actions:
+        - type: set_stage
+          quest: sect_job_caoban_escort
+          stage: report_mate
+        - type: message
+          speaker: "旁白"
+          text: "官仓水口封签完好，几条漕船正有序卸货。回船棚找水牛张复命吧。"
+
+    - id: sect_job_caoban_finish
+      trigger:
+        type: talk
+        npc: caoban_dock_mate
+      conditions:
+        - type: quest_stage
+          quest: sect_job_caoban_escort
+          stage: report_mate
+      actions:
+        - type: message
+          speaker: "船棚大副水牛张"
+          text: "妥当！这五十二文分红收好，得空还能跟老张练两刀。"
+        - type: complete_job
+          quest: sect_job_caoban_escort
+
+# ============================================================================
+# 7. 盐帮 · 黄河芦苇分坛（北郊旧烽火台墩·泥鳅刘 / 南堤芦苇滩·香主罗七）
+# ============================================================================
+
+- id: sect_join_saltgang
+  name: "机缘·暗滩投名"
+  objectives:
+    - stage: deliver_med
+      text: "携带 1 包金创药前往南堤芦苇滩交给盐帮香主罗七，并挡下追来的捕房暗探。"
+    - stage: report_luoqi
+      text: "与南堤芦苇滩的盐帮香主罗七对话，正式入黄河芦苇分坛。"
+    - stage: completed
+      text: "你已拜入盐帮黄河芦苇分坛任暗滩脚夫，获暗盐黑印并习得《五毒蚀骨掌》。"
+  reward:
+    money: 60
+    combat_exp: 60
+    potential: 45
+    items: []
+  events:
+    - id: saltgang_join_start
+      trigger:
+        type: talk
+        npc: salt_scout_liu
+      conditions:
+        - type: quest_completed
+          quest: first_steps_kaifeng
+        - type: not_flag
+          flag: jianghu.canal_reported_yamen
+        - type: not_flag
+          flag: sect.has_active
+        - type: not_flag
+          flag: sect.betrayed.saltgang
+        - type: not_flag
+          flag: sect.graduated.saltgang
+        - type: quest_not_started
+          quest: sect_join_saltgang
+      actions:
+        - type: set_stage
+          quest: sect_join_saltgang
+          stage: deliver_med
+        - type: show_npc
+          npc: salt_gang_deputy
+        - type: show_npc
+          npc: salt_yamen_scout
+        - type: message
+          speaker: "暗滩哨子泥鳅刘"
+          text: "嘘，客官看着不像官府鹰犬。西边南堤芦苇滩里，罗七香主刚跟官差撞了一仗缺伤药。你若敢带一包金创药送过去、顺手帮着挡下尾随的捕房暗探，盐帮分坛绝不亏待你！"
+
+    - id: saltgang_join_fight_scout
+      trigger:
+        type: talk
+        npc: salt_yamen_scout
+      conditions:
+        - type: quest_stage
+          quest: sect_join_saltgang
+          stage: deliver_med
+      actions:
+        - type: message
+          speaker: "捕房暗探"
+          text: "果然有人给罗七送药！连你一块拿回开封府！"
+        - type: start_battle
+          target: salt_yamen_scout
+
+    - id: saltgang_join_defeat_scout
+      trigger:
+        type: kill
+        npc: salt_yamen_scout
+      conditions:
+        - type: quest_stage
+          quest: sect_join_saltgang
+          stage: deliver_med
+      actions:
+        - type: hide_npc
+          npc: salt_yamen_scout
+        - type: set_stage
+          quest: sect_join_saltgang
+          stage: report_luoqi
+        - type: message
+          speaker: "旁白"
+          text: "捕房暗探被你击退，苇丛里传来罗七低沉的笑声。"
+
+    - id: saltgang_join_complete_from_caoban
+      trigger:
+        type: talk
+        npc: salt_gang_deputy
+      conditions:
+        - type: quest_stage
+          quest: sect_join_saltgang
+          stage: report_luoqi
+        - type: has_item
+          item: wound_powder
+        - type: flag
+          flag: sect.betrayed.caoban
+      actions:
+        - type: take_item
+          item: wound_powder
+          amount: 1
+        - type: give_money
+          amount: 80
+        - type: set_flag
+          flag: sect.active.saltgang
+        - type: set_flag
+          flag: sect.has_active
+        - type: give_item
+          item: salt_black_seal
+          amount: 1
+        - type: complete_quest
+          quest: sect_join_saltgang
+        - type: message
+          speaker: "盐帮香主罗七"
+          text: "哈哈哈哈！从杜三那条破船上掀了桌子改投我黄河分坛，有胆色！这八十文见面礼另算，暗盐黑印拿好，《五毒蚀骨掌》传你，咱们一块让漕帮和捕房吃瘪！"
+
+    - id: saltgang_join_complete
+      trigger:
+        type: talk
+        npc: salt_gang_deputy
+      conditions:
+        - type: quest_stage
+          quest: sect_join_saltgang
+          stage: report_luoqi
+        - type: has_item
+          item: wound_powder
+      actions:
+        - type: take_item
+          item: wound_powder
+          amount: 1
+        - type: set_flag
+          flag: sect.active.saltgang
+        - type: set_flag
+          flag: sect.has_active
+        - type: give_item
+          item: salt_black_seal
+          amount: 1
+        - type: complete_quest
+          quest: sect_join_saltgang
+        - type: message
+          speaker: "盐帮香主罗七"
+          text: "有种！既敢替我挡捕房的探子，这块暗盐黑印你收着，今日起便是盐帮黄河芦苇分坛的暗滩脚夫，《五毒蚀骨掌》亲传于你。练到十四级回来接夜渡私盐的大活！"
+
+- id: sect_inner_saltgang
+  name: "堂口·夜渡暗盐"
+  objectives:
+    - stage: break_sentry
+      text: "带着《油布暗盐包》潜入开封甜水巷，击退半路拦货的漕帮暗哨。"
+    - stage: hand_pawnshop
+      text: "将《油布暗盐包》交给西市当铺秦朝奉暗中销货。"
+    - stage: report_luoqi
+      text: "回南堤芦苇滩向罗七复命分红，晋升私盐香头。"
+    - stage: completed
+      text: "你已打通城内暗市销路，晋升盐帮私盐香头并习得《夜渡鬼头刀》。"
+  reward:
+    money: 100
+    combat_exp: 95
+    potential: 70
+    items: []
+  events:
+    - id: saltgang_inner_start
+      trigger:
+        type: talk
+        npc: salt_gang_deputy
+      conditions:
+        - type: flag
+          flag: sect.active.saltgang
+        - type: art_level_at_least
+          art: salt_venom_palm
+          level: 14
+        - type: quest_not_started
+          quest: sect_inner_saltgang
+      actions:
+        - type: give_item
+          item: salt_smuggle_parcel
+          amount: 1
+        - type: set_stage
+          quest: sect_inner_saltgang
+          stage: break_sentry
+        - type: show_npc
+          npc: salt_caoban_sentry
+        - type: message
+          speaker: "盐帮香主罗七"
+          text: "五毒掌练得不错。把这包精盐货样悄悄送进开封西市当铺交给秦朝奉——甜水巷那边有杜三安插的漕帮暗哨，撞见了直接打穿过去！"
+
+    - id: saltgang_inner_fight
+      trigger:
+        type: talk
+        npc: salt_caoban_sentry
+      conditions:
+        - type: quest_stage
+          quest: sect_inner_saltgang
+          stage: break_sentry
+      actions:
+        - type: message
+          speaker: "漕帮暗哨"
+          text: "怀里鼓鼓囊囊的油布包，果然是盐帮私盐！站住！"
+        - type: start_battle
+          target: salt_caoban_sentry
+
+    - id: saltgang_inner_defeat
+      trigger:
+        type: kill
+        npc: salt_caoban_sentry
+      conditions:
+        - type: quest_stage
+          quest: sect_inner_saltgang
+          stage: break_sentry
+      actions:
+        - type: hide_npc
+          npc: salt_caoban_sentry
+        - type: set_stage
+          quest: sect_inner_saltgang
+          stage: hand_pawnshop
+        - type: message
+          speaker: "旁白"
+          text: "漕帮暗哨被你放翻在巷角，趁巡街差役没来，快去西市当铺找秦朝奉交货。"
+
+    - id: saltgang_inner_pawnshop
+      trigger:
+        type: talk
+        npc: kaifeng_pawnbroker
+      conditions:
+        - type: quest_stage
+          quest: sect_inner_saltgang
+          stage: hand_pawnshop
+        - type: has_item
+          item: salt_smuggle_parcel
+      actions:
+        - type: take_item
+          item: salt_smuggle_parcel
+          amount: 1
+        - type: set_stage
+          quest: sect_inner_saltgang
+          stage: report_luoqi
+        - type: message
+          speaker: "秦朝奉"
+          text: "嗯，罗七香主的货向来成色足。当铺只认货不问出处，账已记在黑印名下，你回芦苇滩领赏便是。"
+
+    - id: saltgang_inner_complete
+      trigger:
+        type: talk
+        npc: salt_gang_deputy
+      conditions:
+        - type: quest_stage
+          quest: sect_inner_saltgang
+          stage: report_luoqi
+      actions:
+        - type: set_flag
+          flag: sect.rank.inner.saltgang
+        - type: complete_quest
+          quest: sect_inner_saltgang
+        - type: message
+          speaker: "盐帮香主罗七"
+          text: "哈哈，杜三的暗哨挡不住你，秦朝奉也认了账！今日起升你为黄河分坛私盐香头，《夜渡鬼头刀》传你，百文红利拿去花！待五毒掌修至二十六级，破开官府封堤便可自立出师。"
+
+- id: sect_grad_saltgang
+  name: "出师·夜破封堤"
+  objectives:
+    - stage: break_levee
+      text: "赴黄河南堤击败带队缉私的府衙铁面巡检。"
+    - stage: report_luoqi
+      text: "回南堤芦苇滩向罗七辞行出师。"
+    - stage: completed
+      text: "你已突破官府封堤体面出师，保留全部盐帮狠辣绝学。"
+  reward:
+    money: 160
+    combat_exp: 135
+    potential: 95
+    items: []
+  events:
+    - id: saltgang_grad_start
+      trigger:
+        type: talk
+        npc: salt_gang_deputy
+      conditions:
+        - type: flag
+          flag: sect.active.saltgang
+        - type: flag
+          flag: sect.rank.inner.saltgang
+        - type: art_level_at_least
+          art: salt_venom_palm
+          level: 26
+        - type: quest_not_started
+          quest: sect_grad_saltgang
+      actions:
+        - type: set_stage
+          quest: sect_grad_saltgang
+          stage: break_levee
+        - type: show_npc
+          npc: salt_grad_constable
+        - type: message
+          speaker: "盐帮香主罗七"
+          text: "顾捕头派了府衙铁面巡检封死黄河南堤。你既想出坛自立，替分坛撕开这道封堤口子，回来罗七给你摆酒送行！"
+
+    - id: saltgang_grad_fight
+      trigger:
+        type: talk
+        npc: salt_grad_constable
+      conditions:
+        - type: quest_stage
+          quest: sect_grad_saltgang
+          stage: break_levee
+      actions:
+        - type: message
+          speaker: "府衙铁面巡检"
+          text: "盐帮私盐香头？今日便拿你归案！"
+        - type: start_battle
+          target: salt_grad_constable
+
+    - id: saltgang_grad_defeat
+      trigger:
+        type: kill
+        npc: salt_grad_constable
+      conditions:
+        - type: quest_stage
+          quest: sect_grad_saltgang
+          stage: break_levee
+      actions:
+        - type: hide_npc
+          npc: salt_grad_constable
+        - type: set_stage
+          quest: sect_grad_saltgang
+          stage: report_luoqi
+        - type: message
+          speaker: "旁白"
+          text: "铁面巡检被毒掌震退，南堤封锁线就此撕开缺口。"
+
+    - id: saltgang_grad_complete
+      trigger:
+        type: talk
+        npc: salt_gang_deputy
+      conditions:
+        - type: quest_stage
+          quest: sect_grad_saltgang
+          stage: report_luoqi
+      actions:
+        - type: clear_flag
+          flag: sect.active.saltgang
+        - type: clear_flag
+          flag: sect.has_active
+        - type: set_flag
+          flag: sect.graduated.saltgang
+        - type: complete_quest
+          quest: sect_grad_saltgang
+        - type: message
+          speaker: "盐帮香主罗七"
+          text: "痛快！今日放你体面出坛，五毒掌与鬼头刀都是你的本钱。江湖路黑，自求多福！"
+
+- id: sect_job_saltgang_smuggle
+  name: "堂口差事·暗盐销货"
+  objectives:
+    - stage: drop_pawnshop
+      text: "将暗盐货样送至开封西市当铺暗柜交割。"
+    - stage: report_liu
+      text: "回北郊旧烽火台墩向泥鳅刘复命领重赏。"
+  reward:
+    money: 68
+    combat_exp: 85
+    potential: 55
+    items: []
+  events:
+    - id: sect_job_saltgang_start
+      trigger:
+        type: talk
+        npc: salt_scout_liu
+      conditions:
+        - type: flag
+          flag: sect.active.saltgang
+        - type: quest_not_started
+          quest: sect_job_saltgang_smuggle
+      actions:
+        - type: set_stage
+          quest: sect_job_saltgang_smuggle
+          stage: drop_pawnshop
+        - type: message
+          speaker: "暗滩哨子泥鳅刘"
+          text: "香头/兄弟，这包精盐趁巡街换班送去西市当铺暗柜，回来六十八文现钱立结！"
+
+    - id: sect_job_saltgang_deliver
+      trigger:
+        type: enter_room
+        map: kaifeng_city
+        position: [-3, -1]
+      conditions:
+        - type: quest_stage
+          quest: sect_job_saltgang_smuggle
+          stage: drop_pawnshop
+      actions:
+        - type: set_stage
+          quest: sect_job_saltgang_smuggle
+          stage: report_liu
+        - type: message
+          speaker: "旁白"
+          text: "你趁当铺无人把油布包塞进柜底暗格，秦朝奉微不可察地点了点头。"
+
+    - id: sect_job_saltgang_finish
+      trigger:
+        type: talk
+        npc: salt_scout_liu
+      conditions:
+        - type: quest_stage
+          quest: sect_job_saltgang_smuggle
+          stage: report_liu
+      actions:
+        - type: message
+          speaker: "暗滩哨子泥鳅刘"
+          text: "手脚真利索！六十八文现钱拿稳了，下次货到我再招呼你。"
+        - type: complete_job
+          quest: sect_job_saltgang_smuggle

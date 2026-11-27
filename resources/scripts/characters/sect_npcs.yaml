@@ -1,0 +1,841 @@
+- id: shaolin_trial_monk
+  name: "罗汉堂执事僧慧石"
+  desc: "奉少室山之命来白马寺取经卷的武僧，身材敦实，手持熟铜齐眉棍，出招稳如铁柱落地。"
+  actions: [dialogue]
+  hidden: true
+  martial_arts:
+    foundation:
+      - id: basic_staff
+        level: 22
+      - id: basic_internal
+        level: 20
+    staff:
+      - id: luohan_subduing_staff
+        level: 20
+    internal:
+      - id: shaolin_vajra_body
+        level: 18
+  prepared:
+    staff:
+      id: luohan_subduing_staff
+      level: 20
+    internal:
+      id: shaolin_vajra_body
+      level: 18
+  dialogue:
+    - "阿弥陀佛。接老衲十棍不退，便算你过了罗汉堂出师印证。"
+  respawn: 0
+  attr:
+    hp: 260
+    qi: 180
+    max_qi: 180
+    jing: 160
+    qi_regen: 3.0
+    innate:
+      strength: 25
+      agility: 18
+      vitality: 26
+
+- id: shaolin_scroll_thief
+  name: "偷卷游侠"
+  desc: "怀里鼓鼓囊囊的落魄剑客，眼角不住往白马寺方向瞟，显然刚顺手牵羊了经阁旧卷。"
+  actions: [dialogue]
+  hidden: true
+  martial_arts:
+    foundation:
+      - id: basic_sword
+        level: 14
+      - id: basic_lightness
+        level: 12
+    sword:
+      - id: luoyang_sword
+        level: 12
+  prepared:
+    sword:
+      id: luoyang_sword
+      level: 12
+  dialogue:
+    - "这破经卷在庙里落灰也是白瞎，卖到旧剑市还能换几坛好酒！"
+  respawn: 0
+  attr:
+    hp: 160
+    qi: 120
+    max_qi: 120
+    jing: 120
+    qi_regen: 2.0
+    innate:
+      strength: 18
+      agility: 21
+      vitality: 17
+
+- id: shaolin_enforcer_monk
+  name: "少林戒律院师兄"
+  desc: "身披灰布僧衣的戒律院武僧，面色肃然，横棍拦在白马寺官道当中。"
+  actions: [dialogue]
+  hidden: true
+  martial_arts:
+    foundation:
+      - id: basic_staff
+        level: 20
+      - id: basic_internal
+        level: 18
+    staff:
+      - id: luohan_subduing_staff
+        level: 18
+  prepared:
+    staff:
+      id: luohan_subduing_staff
+      level: 18
+  dialogue:
+    - "既负澄尘师叔厚望，便接师兄几棍，恩怨就此两清。"
+  respawn: 0
+  attr:
+    hp: 230
+    qi: 150
+    max_qi: 150
+    jing: 150
+    qi_regen: 2.5
+    innate:
+      strength: 23
+      agility: 17
+      vitality: 23
+
+- id: wudang_wandering_taoist
+  name: "清虚道长"
+  desc: "穿洗白青道袍、腰挂旧葫芦的武当采药执事师叔。看着像个爱打盹的邋遢老道，步法却稳得吓人。"
+  actions: [dialogue]
+  martial_arts:
+    foundation:
+      - id: basic_sword
+        level: 28
+      - id: basic_internal
+        level: 30
+    sword:
+      - id: wudang_taiji_sword
+        level: 24
+    internal:
+      - id: chunyang_breath
+        level: 24
+  prepared:
+    sword:
+      id: wudang_taiji_sword
+      level: 24
+    internal:
+      id: chunyang_breath
+      level: 24
+  teach_bonus: 5
+  teaches:
+    basic_sword: 26
+    basic_internal: 28
+    chunyang_breath: 30
+    wudang_taiji_sword: 30
+  teach_requires:
+    flag: sect.active.wudang
+    refusal: "贫道不过是个路过开封买药的闲道士，不收外门生人。莫急，气先沉下去。"
+    forbid_flags:
+      - sect.graduated.wudang
+      - sect.betrayed.wudang
+    forbid_refusal: "你我师徒缘分已尽，武当剑意此后靠你自己参悟便是。"
+  dialogue:
+    - "莫急，气先沉下去。开封城里人人都赶着走路，倒忘了怎么站稳。"
+  respawn: 0
+  attr:
+    hp: 255
+    qi: 220
+    max_qi: 220
+    jing: 190
+    qi_regen: 3.5
+    innate:
+      strength: 20
+      agility: 24
+      vitality: 25
+
+- id: shrine_street_ruffian
+  name: "武庙泼皮头子"
+  desc: "敞着胸口、满嘴酒气的地痞，正借收香火钱的名义推搡游方道人。"
+  actions: [dialogue]
+  hidden: true
+  martial_arts:
+    foundation:
+      - id: basic_fist
+        level: 7
+    fist:
+      - id: nameless_trial_fist
+        level: 6
+  prepared:
+    fist:
+      id: nameless_trial_fist
+      level: 6
+  dialogue:
+    - "哪来的多管闲事的？这老道欠了咱们武庙的香火钱！"
+  respawn: 0
+  attr:
+    hp: 95
+    qi: 70
+    max_qi: 70
+    jing: 100
+    qi_regen: 1.5
+    innate:
+      strength: 18
+      agility: 14
+      vitality: 15
+
+- id: fake_taoist_guard
+  name: "假道护院"
+  desc: "替假道士看场子的粗壮打手，手里提着一根包铁短棒。"
+  actions: [dialogue]
+  hidden: true
+  martial_arts:
+    foundation:
+      - id: basic_fist
+        level: 14
+    fist:
+      - id: escort_short_fist
+        level: 12
+  prepared:
+    fist:
+      id: escort_short_fist
+      level: 12
+  dialogue:
+    - "敢砸咱们仙丹摊子的场子？先问问我这双拳头！"
+  respawn: 0
+  attr:
+    hp: 165
+    qi: 120
+    max_qi: 120
+    jing: 120
+    qi_regen: 2.0
+    innate:
+      strength: 22
+      agility: 16
+      vitality: 19
+
+- id: wudang_enforcer_disciple
+  name: "武当巡山道人"
+  desc: "青冠长剑的武当师兄，负手立在低松驿路旁，神色清冷。"
+  actions: [dialogue]
+  hidden: true
+  martial_arts:
+    foundation:
+      - id: basic_sword
+        level: 20
+      - id: basic_internal
+        level: 20
+    sword:
+      - id: wudang_taiji_sword
+        level: 18
+  prepared:
+    sword:
+      id: wudang_taiji_sword
+      level: 18
+  dialogue:
+    - "清虚师叔不愿与你动气，做师兄的却得替武当问一句：为何半途负门？"
+  respawn: 0
+  attr:
+    hp: 220
+    qi: 170
+    max_qi: 170
+    jing: 160
+    qi_regen: 3.0
+    innate:
+      strength: 19
+      agility: 22
+      vitality: 21
+
+- id: songyang_elder
+  name: "嵩阳剑痴陆寒松"
+  desc: "嵩阳客宋秋河的师叔，一身灰白劲装，正蹲在洛水冷泉边以泉水磨剑。看剑不看出身，孤傲直率。"
+  actions: [dialogue]
+  martial_arts:
+    foundation:
+      - id: basic_sword
+        level: 28
+      - id: basic_lightness
+        level: 26
+    sword:
+      - id: songyang_cloud_sword
+        level: 16
+    lightness:
+      - id: yuezhi_footwork
+        level: 16
+  prepared:
+    sword:
+      id: songyang_cloud_sword
+      level: 16
+    lightness:
+      id: yuezhi_footwork
+      level: 16
+  teach_bonus: 5
+  teaches:
+    basic_sword: 30
+    basic_lightness: 28
+    songyang_cloud_sword: 30
+    yuezhi_footwork: 30
+  teach_requires:
+    flag: sect.active.songyang
+    refusal: "剑慢了半寸，说再多都是虚的。没入我嵩阳一脉，老夫没空指点你。"
+    forbid_flags:
+      - sect.graduated.songyang
+      - sect.betrayed.songyang
+    forbid_refusal: "你既已离了我嵩阳门墙，往后剑路好坏，各凭造化。"
+  dialogue:
+    - "洛水冷泉能淬铁，也能淬心。剑慢了半寸，说再多都是虚的。"
+  respawn: 0
+  attr:
+    hp: 195
+    qi: 160
+    max_qi: 160
+    jing: 160
+    qi_regen: 3.0
+    innate:
+      strength: 22
+      agility: 26
+      vitality: 20
+
+- id: songyang_bridge_challenger
+  name: "挑衅剑客"
+  desc: "腰间悬着一柄刻有嵩阳旧徽的断剑，正站在天津桥头高声嘲讽嵩阳剑法徒有虚名。"
+  actions: [dialogue]
+  hidden: true
+  martial_arts:
+    foundation:
+      - id: basic_sword
+        level: 15
+      - id: basic_lightness
+        level: 14
+    sword:
+      - id: luoyang_sword
+        level: 14
+  prepared:
+    sword:
+      id: luoyang_sword
+      level: 14
+  dialogue:
+    - "嵩阳门下就派你来讨这柄旧断剑？来，让我瞧瞧五岳快剑有几分斤两！"
+  respawn: 0
+  attr:
+    hp: 175
+    qi: 130
+    max_qi: 130
+    jing: 130
+    qi_regen: 2.5
+    innate:
+      strength: 19
+      agility: 23
+      vitality: 18
+
+- id: songyang_rival_lin
+  name: "华山游剑客林昭"
+  desc: "听闻嵩阳门下出了新秀，专程来洛阳牡丹台登台试剑的五岳同辈。"
+  actions: [dialogue]
+  hidden: true
+  martial_arts:
+    foundation:
+      - id: basic_sword
+        level: 22
+      - id: basic_lightness
+        level: 20
+    sword:
+      - id: songyang_cloud_sword
+        level: 21
+    lightness:
+      - id: yuezhi_footwork
+        level: 18
+  prepared:
+    sword:
+      id: songyang_cloud_sword
+      level: 21
+    lightness:
+      id: yuezhi_footwork
+      level: 18
+  dialogue:
+    - "华山林昭，特来牡丹台领教嵩阳高徒的叠云剑意。请！"
+  respawn: 0
+  attr:
+    hp: 250
+    qi: 190
+    max_qi: 190
+    jing: 160
+    qi_regen: 3.0
+    innate:
+      strength: 22
+      agility: 27
+      vitality: 21
+
+- id: songyang_enforcer_disciple
+  name: "嵩阳执剑师兄"
+  desc: "手按剑柄挡在洛阳南市口的嵩阳同门，眉宇间满是怒气。"
+  actions: [dialogue]
+  hidden: true
+  martial_arts:
+    foundation:
+      - id: basic_sword
+        level: 20
+      - id: basic_lightness
+        level: 18
+    sword:
+      - id: songyang_cloud_sword
+        level: 19
+  prepared:
+    sword:
+      id: songyang_cloud_sword
+      level: 19
+  dialogue:
+    - "陆师叔破格收你入嵩阳，你竟半途叛门！拔剑，接我三招！"
+  respawn: 0
+  attr:
+    hp: 230
+    qi: 160
+    max_qi: 160
+    jing: 150
+    qi_regen: 2.5
+    innate:
+      strength: 21
+      agility: 25
+      vitality: 20
+
+- id: taihu_poisoned_guest
+  name: "垂危江湖客"
+  desc: "躺在切脉房竹榻上的北来行客，唇色发青，腕脉浮急，显然中了阴毒暗算。"
+  actions: [dialogue]
+  hidden: true
+  martial_arts:
+    foundation:
+      - id: basic_fist
+        level: 8
+  prepared: {}
+  dialogue:
+    - "咳……是汴北盐帮那种青毒细砂……胸口像压了块冰……"
+  respawn: 0
+  attr:
+    hp: 60
+    qi: 40
+    max_qi: 40
+    jing: 80
+    qi_regen: 1.0
+    innate:
+      strength: 12
+      agility: 12
+      vitality: 12
+
+- id: taihu_poison_smuggler
+  name: "私贩毒药暗桩"
+  desc: "躲在芦苇暗港边偷偷装填毒砂囊的蒙面人，腰间挂着盐帮私记。"
+  actions: [dialogue]
+  hidden: true
+  martial_arts:
+    foundation:
+      - id: basic_fist
+        level: 15
+      - id: basic_lightness
+        level: 14
+    fist:
+      - id: salt_gang_poison_fist
+        level: 14
+  prepared:
+    fist:
+      id: salt_gang_poison_fist
+      level: 14
+  dialogue:
+    - "太湖水榭的管事摸到这里来了？尝尝新配的碧水毒砂！"
+  respawn: 0
+  attr:
+    hp: 175
+    qi: 140
+    max_qi: 140
+    jing: 130
+    qi_regen: 2.5
+    innate:
+      strength: 20
+      agility: 21
+      vitality: 19
+
+- id: taihu_plague_raider
+  name: "投毒暗桩头目"
+  desc: "率人潜入芦苇暗港试图污染湖岸水源的盐帮死士，双掌隐泛青黑。"
+  actions: [dialogue]
+  hidden: true
+  martial_arts:
+    foundation:
+      - id: basic_fist
+        level: 20
+      - id: basic_internal
+        level: 18
+    fist:
+      - id: salt_venom_palm
+        level: 20
+  prepared:
+    fist:
+      id: salt_venom_palm
+      level: 20
+  dialogue:
+    - "水榭不肯独供伤药，就让整片湖岸一起尝尝五毒蚀骨的滋味！"
+  respawn: 0
+  attr:
+    hp: 245
+    qi: 180
+    max_qi: 180
+    jing: 150
+    qi_regen: 3.0
+    innate:
+      strength: 22
+      agility: 22
+      vitality: 22
+
+- id: alley_old_beggar
+  name: "丐帮七袋长老韩九"
+  desc: "北街后巷靠墙晒太阳的老叫花，破衣陈七口中的“九爷”，其实是丐帮开封大梁分舵的执事长老。"
+  actions: [dialogue]
+  martial_arts:
+    foundation:
+      - id: basic_staff
+        level: 28
+      - id: basic_lightness
+        level: 30
+    staff:
+      - id: chansi_dog_staff
+        level: 24
+    lightness:
+      - id: xiaoyao_beggar_step
+        level: 24
+  prepared:
+    staff:
+      id: chansi_dog_staff
+      level: 24
+    lightness:
+      id: xiaoyao_beggar_step
+      level: 24
+  teach_bonus: 5
+  teaches:
+    basic_staff: 28
+    basic_lightness: 30
+    chansi_dog_staff: 30
+    xiaoyao_beggar_step: 30
+  teach_requires:
+    flag: sect.active.beggar
+    refusal: "规矩是给活人用的，不是拴狗的。没领大梁分舵的青竹牌，老叫花凭什么教你棒法？"
+    forbid_flags:
+      - sect.graduated.beggar
+      - sect.betrayed.beggar
+    forbid_refusal: "你既已卸袋离了大梁分舵，往后江湖路远，棒法自己琢磨去吧。"
+  dialogue:
+    - "规矩是给活人用的，不是拴狗的。这开封城里，真正看得清人心的往往在墙根底下。"
+  respawn: 0
+  attr:
+    hp: 245
+    qi: 190
+    max_qi: 190
+    jing: 170
+    qi_regen: 3.0
+    innate:
+      strength: 22
+      agility: 28
+      vitality: 23
+
+- id: alley_salt_enforcer
+  name: "盐帮恶棍"
+  desc: "提着短铁尺在北街后巷欺负老叫花的盐帮小头目，满脸横肉。"
+  actions: [dialogue]
+  hidden: true
+  martial_arts:
+    foundation:
+      - id: basic_fist
+        level: 10
+    fist:
+      - id: salt_gang_poison_fist
+        level: 9
+  prepared:
+    fist:
+      id: salt_gang_poison_fist
+      level: 9
+  dialogue:
+    - "死老叫花敢坏我们盐帮的事，你也想替他挨打？"
+  respawn: 0
+  attr:
+    hp: 135
+    qi: 110
+    max_qi: 110
+    jing: 110
+    qi_regen: 2.0
+    innate:
+      strength: 20
+      agility: 17
+      vitality: 17
+
+- id: alley_vengeance_boss
+  name: "盐帮铁尺堂主"
+  desc: "寻仇杀到开封船棚的盐帮硬茬，一手大刀一手毒掌，气势汹汹。"
+  actions: [dialogue]
+  hidden: true
+  martial_arts:
+    foundation:
+      - id: basic_blade
+        level: 22
+      - id: basic_fist
+        level: 20
+    blade:
+      - id: kaifeng_saber
+        level: 20
+    fist:
+      - id: salt_gang_poison_fist
+        level: 18
+  prepared:
+    blade:
+      id: kaifeng_saber
+      level: 20
+    fist:
+      id: salt_gang_poison_fist
+      level: 18
+  dialogue:
+    - "大梁分舵那群臭叫花屡次坏我船期，今天就在船棚一并算清！"
+  respawn: 0
+  attr:
+    hp: 265
+    qi: 190
+    max_qi: 190
+    jing: 150
+    qi_regen: 3.0
+    innate:
+      strength: 26
+      agility: 20
+      vitality: 24
+
+- id: caoban_dock_mate
+  name: "船棚大副水牛张"
+  desc: "过江鳅杜三的得力副手，光膀扛缆绳的豪爽汉子，常在船棚操练断浪刀法，见同门总肯喂招。"
+  actions: [dialogue, attacking, sparring]
+  martial_arts:
+    foundation:
+      - id: basic_blade
+        level: 16
+      - id: basic_lightness
+        level: 14
+    blade:
+      - id: caoban_river_saber
+        level: 14
+  prepared:
+    blade:
+      id: caoban_river_saber
+      level: 14
+  dialogue:
+    - "汴河上的船头晃得厉害，下盘不稳拿不住刀。想活动手脚，直接找老张切磋两刀！"
+  respawn: 12
+  attr:
+    hp: 190
+    qi: 140
+    max_qi: 140
+    jing: 130
+    qi_regen: 2.5
+    innate:
+      strength: 24
+      agility: 18
+      vitality: 22
+  reward_exp_ceiling: 3800
+
+- id: caoban_night_raider
+  name: "盐帮水鬼"
+  desc: "浑身湿透、嘴里衔着短刀摸黑割断漕帮缆绳的盐帮水鬼。"
+  actions: [dialogue]
+  hidden: true
+  martial_arts:
+    foundation:
+      - id: basic_blade
+        level: 14
+      - id: basic_lightness
+        level: 14
+    blade:
+      - id: kaifeng_saber
+        level: 13
+  prepared:
+    blade:
+      id: kaifeng_saber
+      level: 13
+  dialogue:
+    - "杜三的船棚今晚别想安生！砍了缆绳沉他的货船！"
+  respawn: 0
+  attr:
+    hp: 165
+    qi: 120
+    max_qi: 120
+    jing: 120
+    qi_regen: 2.0
+    innate:
+      strength: 21
+      agility: 20
+      vitality: 18
+
+- id: caoban_grad_raider
+  name: "盐帮过江蛟"
+  desc: "趁夜率船冲击南渡航道的盐帮水战头目，鬼头刀寒光森然。"
+  actions: [dialogue]
+  hidden: true
+  martial_arts:
+    foundation:
+      - id: basic_blade
+        level: 22
+      - id: basic_fist
+        level: 20
+    blade:
+      - id: salt_shadow_blade
+        level: 21
+    fist:
+      - id: salt_venom_palm
+        level: 18
+  prepared:
+    blade:
+      id: salt_shadow_blade
+      level: 21
+    fist:
+      id: salt_venom_palm
+      level: 18
+  dialogue:
+    - "南渡堂的新执旗？过了我这口夜渡鬼头刀，再谈护漕吧！"
+  respawn: 0
+  attr:
+    hp: 265
+    qi: 190
+    max_qi: 190
+    jing: 150
+    qi_regen: 3.0
+    innate:
+      strength: 25
+      agility: 22
+      vitality: 23
+
+- id: salt_scout_liu
+  name: "暗滩哨子泥鳅刘"
+  desc: "蹲在旧烽火台墩瞭望官差与漕帮船只的盐帮放风头目，眼珠滴溜溜转，手里还兼做暗市伤药买卖。"
+  actions: [dialogue, attacking, sparring]
+  martial_arts:
+    foundation:
+      - id: basic_fist
+        level: 16
+      - id: basic_lightness
+        level: 16
+    fist:
+      - id: salt_venom_palm
+        level: 14
+  prepared:
+    fist:
+      id: salt_venom_palm
+      level: 14
+  shop:
+    wound_powder: 10
+    returning_qi_pill: 13
+    taihu_mending_pill: 34
+  dialogue:
+    - "站得高才能看得清哪条船是官差的、哪条船是杜三的。手痒了也可以跟老刘过两招，别下死手就行。"
+  respawn: 12
+  attr:
+    hp: 180
+    qi: 140
+    max_qi: 140
+    jing: 130
+    qi_regen: 2.5
+    innate:
+      strength: 20
+      agility: 24
+      vitality: 19
+  reward_exp_ceiling: 3800
+
+- id: salt_yamen_scout
+  name: "捕房暗探"
+  desc: "顺着苇丛脚印摸到南堤芦苇滩的开封府暗探，腰佩捕房短刃。"
+  actions: [dialogue]
+  hidden: true
+  martial_arts:
+    foundation:
+      - id: basic_fist
+        level: 12
+      - id: basic_lightness
+        level: 12
+    fist:
+      - id: yamen_grappling_hand
+        level: 11
+  prepared:
+    fist:
+      id: yamen_grappling_hand
+      level: 11
+  dialogue:
+    - "好大胆子，竟敢替盐帮香主罗七递药挡路！一并拿下！"
+  respawn: 0
+  attr:
+    hp: 145
+    qi: 110
+    max_qi: 110
+    jing: 120
+    qi_regen: 2.0
+    innate:
+      strength: 20
+      agility: 19
+      vitality: 18
+
+- id: salt_caoban_sentry
+  name: "漕帮暗哨"
+  desc: "受杜三指派在西市巷口盯梢盐帮私盐的漕帮好手，见可疑油布包立刻拔刀拦路。"
+  actions: [dialogue]
+  hidden: true
+  martial_arts:
+    foundation:
+      - id: basic_blade
+        level: 15
+      - id: basic_lightness
+        level: 14
+    blade:
+      - id: caoban_river_saber
+        level: 14
+  prepared:
+    blade:
+      id: caoban_river_saber
+      level: 14
+  dialogue:
+    - "果然是南堤芦苇滩偷运进城的私盐！留下货包！"
+  respawn: 0
+  attr:
+    hp: 175
+    qi: 130
+    max_qi: 130
+    jing: 130
+    qi_regen: 2.5
+    innate:
+      strength: 22
+      agility: 19
+      vitality: 20
+
+- id: salt_grad_constable
+  name: "府衙铁面巡检"
+  desc: "奉顾捕头之命带队封锁黄河南堤截查私盐的官府高手，长枪短拿俱精。"
+  actions: [dialogue]
+  hidden: true
+  martial_arts:
+    foundation:
+      - id: basic_fist
+        level: 22
+      - id: basic_spear
+        level: 22
+    fist:
+      - id: yamen_grappling_hand
+        level: 22
+    spear:
+      - id: bianliang_spear
+        level: 20
+  prepared:
+    spear:
+      id: bianliang_spear
+      level: 20
+    fist:
+      id: yamen_grappling_hand
+      level: 22
+  dialogue:
+    - "开封府奉令封堤缉私！盐帮贼子，束手就擒！"
+  respawn: 0
+  attr:
+    hp: 270
+    qi: 190
+    max_qi: 190
+    jing: 160
+    qi_regen: 3.0
+    innate:
+      strength: 25
+      agility: 22
+      vitality: 25

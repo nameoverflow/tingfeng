@@ -16,6 +16,8 @@ rooms:
     id: north_road_low_road
     name: "低松驿路"
     desc: "松枝压得很低，车马经过时常要低头。"
+    char:
+      - wudang_enforcer_disciple
     exits:
       south: [0, 0]
       north: [0, 2]
@@ -94,6 +96,8 @@ rooms:
     id: north_road_levee
     name: "黄河南堤"
     desc: "大堤横在北面，堤下黄水翻着泥沙。西侧是芦苇密布的浅滩，东侧立着座旧烽火台墩，往北下坡便是南渡津口。"
+    char:
+      - salt_grad_constable
     exits:
       south: [0, 4]
       west: [-1, 5]
@@ -107,6 +111,8 @@ rooms:
     desc: "芦苇比人还高，泥滩上留着夜船抢滩拖出的深槽，几只无名货箱半掩在苇丛里。"
     char:
       - salt_gang_deputy
+      - salt_yamen_scout
+      - caoban_grad_raider
     exits:
       east: [0, 5]
 
@@ -115,6 +121,8 @@ rooms:
     name: "旧烽火台墩"
     kind: landmark
     desc: "夯土台墩早年用来瞭望河防，如今只剩半截残垣。站在墩上，北郊递道与河滩的动静尽收眼底。"
+    char:
+      - salt_scout_liu
     insight:
       arts: [lightness, sword]
       bonus: 6

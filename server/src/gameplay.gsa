@@ -59,11 +59,11 @@ use quest.{
     Quest, QuestReward, MkQuestReward, QuestEvent,
     StoryTrigger, TriggerTalk, TriggerEnterRoom, TriggerKill, storyTriggerEq,
     StoryCondition, QuestNotStarted, QuestStageIs, QuestCompleted,
-    FlagSet, FlagUnset, NpcDead, NpcAlive, HasItem, LacksItem, InMap,
+    FlagSet, FlagUnset, NpcDead, NpcAlive, HasItem, LacksItem, InMap, ArtLevelAtLeast,
     StoryAction, StoryMessage, StoryDelay, StoryTransition,
     SetQuestStage, CompleteQuest, CompleteRepeatableJob,
     SetFlag, ClearFlag, HideNpc, ShowNpc,
-    GiveItem, TakeItem, GiveMoney, LearnArt, StartBattle, MovePlayer,
+    GiveItem, TakeItem, GiveMoney, LearnArt, HalveArtLevel, StartBattle, MovePlayer,
     PlayerStoryState, newPlayerStoryStateFor,
     storyQuestStagesL, storyFlagsL, storyHiddenNpcsL, storyJobStreaksL
 }
@@ -1070,6 +1070,7 @@ pub def storyConditionMet(pid: String, cond: StoryCondition): Game Bool =
             let (curMid, _) = p.playerPosition;
             pure(curMid == mid)
         }),
+        ArtLevelAtLeast(aid, minLv) -> getsPlayer(pid) >>= ((p) -> pure(optOr(playerKnownArtLevel(p, aid), 0) >= minLv)),
     })
 
 def normalizeStoryDuration(ms: Int): Int = clampInt(0, 8000, ms)
@@ -1093,6 +1094,7 @@ def actionIsSilent(act: StoryAction): Bool = match act {
     TakeItem(_, _) -> true,
     GiveMoney(_) -> true,
     LearnArt(_, _) -> true,
+    HalveArtLevel(_) -> true,
     _ -> false,
 }
 
@@ -1147,6 +1149,22 @@ def executeOneStoryAction(pid: String, elapsedMs: Int, act: StoryAction): Game (
         else updatePlayer(pid, overF(playerMoneyL(), (m) -> m + amt)) *>> pure([moneyRewardSummary(amt)]),
     LearnArt(aid, lvl) ->
         grantArtRewards(pid, aid, lvl),
+    HalveArtLevel(aid) ->
+        getsPlayer(pid) >>= ((player) -> match playerKnownArtEntity(player, aid) {
+            None -> pure(Nil),
+            Some((at, known)) ->
+                if (artTypeEq(at, Foundation)) pure(Nil)
+                else {
+                    let newLv = maxInt(1, floorDiv(known.artLevel, 2));
+                    let updated = MkArtEntity { artDef: known.artDef, artLevel: newLv, artProgress: 0 };
+                    upsertKnownArtEntity(pid, at, updated)
+                    *>> refreshEquippedArt(pid, at, updated)
+                    *>> markPlayerDirty(pid)
+                    *>> playerArts(pid)
+                    *>> sendPlayerStats(pid)
+                    *>> pure(Nil)
+                },
+        }),
     StartBattle(target) ->
         startStoryBattle(pid, target, elapsedMs) *>> pure(Nil),
     MovePlayer(mid, pos) ->
@@ -1653,6 +1671,8 @@ pub def learnStep(pid: String, teacherId: String, artId: String): Game Void =
     getsRoomCharacter(pid, teacherId, Dialogue) >>= ((teacher) ->
     ensureStoryState(pid) >>= ((st) -> {
         let flagCheck = match teacher.charTeachRequires {
+            Some(req) if (listAny(req.teachForbidFlags, (fl) -> setMember(st.storyFlags, fl))) ->
+                throwStructured("teacher_refuses", [("teacher", teacher.charName), ("reason", optOr(req.teachForbidRefusal, req.teachRefusal))]),
             Some(req) if (!setMember(st.storyFlags, req.teachRequiresFlag)) ->
                 throwStructured("teacher_refuses", [("teacher", teacher.charName), ("reason", req.teachRefusal)]),
             _ -> pure(()),

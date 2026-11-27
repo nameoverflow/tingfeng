@@ -33,6 +33,7 @@ use battle.{
     resolveCombatTimeline, reachPointAt, actorOffsetAt, sampleSvgPose
 }
 use state.portraitScoreFile
+use names.rollWuxiaName
 
 def ensure(msg: String, ok: Bool): Result Void String =
     if (ok) Ok(())
@@ -51,6 +52,16 @@ pub def runPortraitSpec(rootDir: String): Result Void String = {
     ensure("trimmed names select the same portrait", portraitScoreFile("female", 6, " 阿青 ") == portraitScoreFile("female", 6, "阿青"))?;
     ensure("unknown gender uses the former male-looking low-score fallback", portraitScoreFile("unknown", 2, "A") == portraitScoreFile("male", 2, "A"))?;
     ensure("unknown gender uses the former female-looking high-score fallback", portraitScoreFile("unknown", 7, "A") == portraitScoreFile("female", 8, "A"))?;
+
+    // Random Wuxia name generator sanity & diversity check
+    let rn1 = rollWuxiaName("male", 101, "");
+    let rn2 = rollWuxiaName("male", 101, rn1);
+    let rn3 = rollWuxiaName("female", 202, "");
+    let rn4 = rollWuxiaName("unisex", 303, "");
+    ensure("random male name non-empty", strLen(rn1) > 0)?;
+    ensure("random name avoids immediate repeat", rn2 != rn1)?;
+    ensure("random female name non-empty", strLen(rn3) > 0)?;
+    ensure("random unisex name non-empty", strLen(rn4) > 0)?;
 
     let portraitDir =
         if (fileExists(rootDir + "/client/public/portraits/beauty-v8-female-06-01.png"))
