@@ -18,7 +18,7 @@ if (checkOnly) {
     stdio: "inherit",
   });
   fs.rmSync(checkLl, { force: true });
-  console.log("✓ Kagura + Geisha Wasm client typecheck & IR verification passed (0 errors).");
+  console.log("✓ Crema + Geisha Wasm client typecheck & IR verification passed (0 errors).");
   process.exit(0);
 }
 
@@ -26,7 +26,7 @@ const outWasmDir = path.join(PUBLIC_DIR, "wasm");
 fs.mkdirSync(outWasmDir, { recursive: true });
 const finalWasm = path.join(outWasmDir, "tingfeng.wasm");
 
-console.log("[1/2] Compiling Tingfeng client via geisha.toml (wasm32 + kagura web_assets)...");
+console.log("[1/2] Compiling Tingfeng client via geisha.toml (wasm32 + crema web_assets)...");
 execFileSync(geisha, ["build", "--target", "wasm32", "-o", finalWasm], {
   cwd: GSA_DIR,
   stdio: "inherit",
@@ -51,4 +51,4 @@ if (fs.existsSync(portraitSrc)) {
 }
 
 const sz = fs.statSync(path.join(DIST_DIR, "wasm/tingfeng.wasm")).size;
-console.log(`✓ Built dist/wasm/tingfeng.wasm (${(sz / 1024).toFixed(1)} KB raw) with Kagura.`);
+console.log(`✓ Built dist/wasm/tingfeng.wasm (${(sz / 1024).toFixed(1)} KB raw) with Crema.`);

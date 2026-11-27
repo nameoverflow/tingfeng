@@ -1,5 +1,5 @@
-// Kagura Web Host (`host/web/kagura.js`)
-// Zero-dependency ES Module executing Kagura's 8-byte word-aligned binary `DrawList`
+// Crema Web Host (`host/web/crema.js`)
+// Zero-dependency ES Module executing Crema's 8-byte word-aligned binary `DrawList`
 // directly out of WebAssembly linear memory onto HiDPI HTML5 Canvas2D, with WebAudio SFX,
 // transparent `<input>` CJK IME proxy, and frame-boundary Mark-Sweep GC.
 
@@ -43,9 +43,9 @@ function createPaperPattern(ctx) {
   return ctx.createPattern(tile, "repeat");
 }
 
-export async function mountKaguraApp(options = {}) {
-  const canvas = options.canvas || document.getElementById("kagura-canvas");
-  const imeInput = options.imeInput || document.getElementById("kagura-ime");
+export async function mountCremaApp(options = {}) {
+  const canvas = options.canvas || document.getElementById("crema-canvas");
+  const imeInput = options.imeInput || document.getElementById("crema-ime");
   const wasmUrl = options.wasmUrl || "./app.wasm";
   const assetsPrefix = options.assetsPrefix || "";
   const ctx = canvas.getContext("2d", { alpha: false });
@@ -620,13 +620,13 @@ export async function mountKaguraApp(options = {}) {
         if (!res.ok) break;
         const { messages, closed } = await res.json();
         for (const m of messages || []) {
-          if (wasmExports.kagura_on_net_message) {
-            invokeWasm(() => wasmExports.kagura_on_net_message(writeStr(m)));
+          if (wasmExports.crema_on_net_message) {
+            invokeWasm(() => wasmExports.crema_on_net_message(writeStr(m)));
           }
         }
         if (closed) {
           bridgeSession = null;
-          if (wasmExports.kagura_on_net_close) invokeWasm(() => wasmExports.kagura_on_net_close());
+          if (wasmExports.crema_on_net_close) invokeWasm(() => wasmExports.crema_on_net_close());
           break;
         }
       } catch (e) {
@@ -646,12 +646,12 @@ export async function mountKaguraApp(options = {}) {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const { sessionId } = await res.json();
       bridgeSession = sessionId;
-      if (wasmExports.kagura_on_net_open) {
-        invokeWasm(() => wasmExports.kagura_on_net_open(writeStr(mode), writeStr(user), writeStr(token)));
+      if (wasmExports.crema_on_net_open) {
+        invokeWasm(() => wasmExports.crema_on_net_open(writeStr(mode), writeStr(user), writeStr(token)));
       }
       startHttpBridgeLoop(sessionId);
     } catch (_) {
-      if (wasmExports.kagura_on_net_close) invokeWasm(() => wasmExports.kagura_on_net_close());
+      if (wasmExports.crema_on_net_close) invokeWasm(() => wasmExports.crema_on_net_close());
     }
   }
 
@@ -679,13 +679,13 @@ export async function mountKaguraApp(options = {}) {
         if (settled) return;
         settled = true;
         if (fallbackTimer) clearTimeout(fallbackTimer);
-        if (wasmExports.kagura_on_net_open) {
-          invokeWasm(() => wasmExports.kagura_on_net_open(writeStr(mode), writeStr(user), writeStr(token)));
+        if (wasmExports.crema_on_net_open) {
+          invokeWasm(() => wasmExports.crema_on_net_open(writeStr(mode), writeStr(user), writeStr(token)));
         }
       });
       sock.addEventListener("message", (ev) => {
-        if (typeof ev.data === "string" && wasmExports.kagura_on_net_message) {
-          invokeWasm(() => wasmExports.kagura_on_net_message(writeStr(ev.data)));
+        if (typeof ev.data === "string" && wasmExports.crema_on_net_message) {
+          invokeWasm(() => wasmExports.crema_on_net_message(writeStr(ev.data)));
         }
       });
       sock.addEventListener("error", () => {
@@ -697,9 +697,9 @@ export async function mountKaguraApp(options = {}) {
         }
       });
       sock.addEventListener("close", () => {
-        if (settled && ws === sock && wasmExports.kagura_on_net_close) {
+        if (settled && ws === sock && wasmExports.crema_on_net_close) {
           ws = null;
-          invokeWasm(() => wasmExports.kagura_on_net_close());
+          invokeWasm(() => wasmExports.crema_on_net_close());
         }
       });
     } catch (_) {
@@ -720,9 +720,9 @@ export async function mountKaguraApp(options = {}) {
       })
         .then((r) => (r.ok ? r.json() : null))
         .then((data) => {
-          if (data?.messages?.length && wasmExports.kagura_on_net_message) {
+          if (data?.messages?.length && wasmExports.crema_on_net_message) {
             for (const m of data.messages) {
-              invokeWasm(() => wasmExports.kagura_on_net_message(writeStr(m)));
+              invokeWasm(() => wasmExports.crema_on_net_message(writeStr(m)));
             }
           }
         })
@@ -742,11 +742,11 @@ export async function mountKaguraApp(options = {}) {
       gs_log: (ptr, len) => {
         if (!wasmExports || !len) return;
         const msg = utf8Dec.decode(new Uint8Array(wasmExports.memory.buffer, ptr >>> 0, len >>> 0));
-        if (msg.trim()) console.log("[kagura]", msg.trimEnd());
+        if (msg.trim()) console.log("[crema]", msg.trimEnd());
       },
-      kagura_host_present: executeBinaryDrawList,
-      kagura_host_set_cursor: (curPtr) => { canvas.style.cursor = readStr(curPtr) || "default"; },
-      kagura_host_focus_ime: (idPtr, valPtr, x, y, w, h) => {
+      crema_host_present: executeBinaryDrawList,
+      crema_host_set_cursor: (curPtr) => { canvas.style.cursor = readStr(curPtr) || "default"; },
+      crema_host_focus_ime: (idPtr, valPtr, x, y, w, h) => {
         const id = readStr(idPtr);
         const val = readStr(valPtr);
         activeImeId = id;
@@ -758,16 +758,16 @@ export async function mountKaguraApp(options = {}) {
           try { imeInput.setSelectionRange(val.length, val.length); } catch (_) {}
         }
       },
-      kagura_host_blur_ime: () => {
+      crema_host_blur_ime: () => {
         activeImeId = "";
         if (imeInput && document.activeElement === imeInput) imeInput.blur();
       },
-      kagura_host_play_sfx: (sfxPtr) => playSfx(readStr(sfxPtr)),
-      kagura_host_save_local: (kPtr, vPtr) => {
+      crema_host_play_sfx: (sfxPtr) => playSfx(readStr(sfxPtr)),
+      crema_host_save_local: (kPtr, vPtr) => {
         try { localStorage.setItem(readStr(kPtr), readStr(vPtr)); } catch (_) {}
       },
-      kagura_host_send_net: (payloadPtr) => sendNet(readStr(payloadPtr)),
-      kagura_host_connect_net: (mPtr, uPtr, tPtr) => connectNet(readStr(mPtr), readStr(uPtr), readStr(tPtr)),
+      crema_host_send_net: (payloadPtr) => sendNet(readStr(payloadPtr)),
+      crema_host_connect_net: (mPtr, uPtr, tPtr) => connectNet(readStr(mPtr), readStr(uPtr), readStr(tPtr)),
       ...(options.extraImports ? options.extraImports({ readStr, writeStr, invokeWasm }) : {}),
     },
   });
@@ -778,7 +778,7 @@ export async function mountKaguraApp(options = {}) {
   if (options.beforeInit) {
     await options.beforeInit({ exports: wasmExports, readStr, writeStr, invokeWasm, cssW, cssH: layoutH });
   }
-  invokeWasm(() => wasmExports.kagura_init(cssW, layoutH));
+  invokeWasm(() => wasmExports.crema_init(cssW, layoutH));
 
   // Event listeners (unified pointer tap + touch/mouse drag + wheel + IME + keyboard)
   const rectOffset = (e) => {
@@ -810,13 +810,13 @@ export async function mountKaguraApp(options = {}) {
         const dy = y - lastY;
         lastX = x;
         lastY = y;
-        if (wasmExports.kagura_pointer_drag) {
-          invokeWasm(() => wasmExports.kagura_pointer_drag(startX, startY, x, y, dx, dy));
+        if (wasmExports.crema_pointer_drag) {
+          invokeWasm(() => wasmExports.crema_pointer_drag(startX, startY, x, y, dx, dy));
         }
         return;
       }
     }
-    if (wasmExports.kagura_pointer_move) invokeWasm(() => wasmExports.kagura_pointer_move(x, y));
+    if (wasmExports.crema_pointer_move) invokeWasm(() => wasmExports.crema_pointer_move(x, y));
   });
 
   canvas.addEventListener("pointerup", (e) => {
@@ -825,7 +825,7 @@ export async function mountKaguraApp(options = {}) {
     dragMoved = false;
     if (wasTap && e.button <= 0) {
       const { x, y } = rectOffset(e);
-      if (wasmExports.kagura_pointer_click) invokeWasm(() => wasmExports.kagura_pointer_click(x, y));
+      if (wasmExports.crema_pointer_click) invokeWasm(() => wasmExports.crema_pointer_click(x, y));
       if (activeImeId && imeInput) {
         imeInput.focus({ preventScroll: true });
       }
@@ -838,20 +838,20 @@ export async function mountKaguraApp(options = {}) {
     if (options.allowPageScroll) return;
     e.preventDefault();
     const { x, y } = rectOffset(e);
-    if (wasmExports.kagura_scroll_wheel) invokeWasm(() => wasmExports.kagura_scroll_wheel(x, y, e.deltaY));
+    if (wasmExports.crema_scroll_wheel) invokeWasm(() => wasmExports.crema_scroll_wheel(x, y, e.deltaY));
   }, { passive: false });
 
   window.addEventListener("keydown", (e) => {
     if (imeInput && document.activeElement === imeInput) return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
-    if (wasmExports.kagura_key_down) invokeWasm(() => wasmExports.kagura_key_down(writeStr(e.key)));
+    if (wasmExports.crema_key_down) invokeWasm(() => wasmExports.crema_key_down(writeStr(e.key)));
   });
 
   if (imeInput) {
     const syncText = () => {
       lastCaretActivityMs = performance.now();
-      if (activeImeId && wasmExports.kagura_text_input) {
-        invokeWasm(() => wasmExports.kagura_text_input(writeStr(activeImeId), writeStr(imeInput.value)));
+      if (activeImeId && wasmExports.crema_text_input) {
+        invokeWasm(() => wasmExports.crema_text_input(writeStr(activeImeId), writeStr(imeInput.value)));
       }
       repaintCachedFrame();
     };
@@ -869,9 +869,9 @@ export async function mountKaguraApp(options = {}) {
     imeInput.addEventListener("touchend", syncSelectionOnly);
     document.addEventListener("selectionchange", syncSelectionOnly);
     imeInput.addEventListener("keydown", (ev) => {
-      if (ev.key === "Enter" && !ev.isComposing && activeImeId && wasmExports.kagura_text_submit) {
+      if (ev.key === "Enter" && !ev.isComposing && activeImeId && wasmExports.crema_text_submit) {
         ev.preventDefault();
-        invokeWasm(() => wasmExports.kagura_text_submit(writeStr(activeImeId)));
+        invokeWasm(() => wasmExports.crema_text_submit(writeStr(activeImeId)));
       } else if (ev.key === "Escape") {
         ev.preventDefault();
         imeInput.blur();
@@ -879,7 +879,7 @@ export async function mountKaguraApp(options = {}) {
     });
     imeInput.addEventListener("blur", () => {
       activeImeId = "";
-      if (wasmExports.kagura_blur_input) invokeWasm(() => wasmExports.kagura_blur_input());
+      if (wasmExports.crema_blur_input) invokeWasm(() => wasmExports.crema_blur_input());
     });
   }
 
@@ -887,17 +887,17 @@ export async function mountKaguraApp(options = {}) {
   const loop = (ts) => {
     const dt = Math.min(200, Math.max(1, ts - lastTs));
     lastTs = ts;
-    if (!document.hidden && wasmExports.kagura_step_frame) {
+    if (!document.hidden && wasmExports.crema_step_frame) {
       frameCount++;
-      invokeWasm(() => wasmExports.kagura_step_frame(dt, cssW, layoutH));
+      invokeWasm(() => wasmExports.crema_step_frame(dt, cssW, layoutH));
       if (options.onAfterFrame) options.onAfterFrame();
     }
     requestAnimationFrame(loop);
   };
   // Render initial frame synchronously before starting rAF
-  if (wasmExports.kagura_step_frame) {
+  if (wasmExports.crema_step_frame) {
     frameCount++;
-    invokeWasm(() => wasmExports.kagura_step_frame(16.6, cssW, layoutH));
+    invokeWasm(() => wasmExports.crema_step_frame(16.6, cssW, layoutH));
     if (options.onAfterFrame) options.onAfterFrame();
   }
   requestAnimationFrame(loop);
@@ -913,15 +913,15 @@ export async function mountKaguraApp(options = {}) {
       heapLiveBytes: wasmExports.gs_wasm_heap_live() >>> 0,
       heapUsedBytes: wasmExports.gs_wasm_heap_used() >>> 0,
     }),
-    click: (x, y) => invokeWasm(() => wasmExports.kagura_pointer_click(x, y)),
-    move: (x, y) => invokeWasm(() => wasmExports.kagura_pointer_move(x, y)),
+    click: (x, y) => invokeWasm(() => wasmExports.crema_pointer_click(x, y)),
+    move: (x, y) => invokeWasm(() => wasmExports.crema_pointer_move(x, y)),
     drag: (sx, sy, cx, cy, dx, dy) =>
-      wasmExports.kagura_pointer_drag && invokeWasm(() => wasmExports.kagura_pointer_drag(sx, sy, cx, cy, dx, dy)),
-    wheel: (x, y, dy) => invokeWasm(() => wasmExports.kagura_scroll_wheel(x, y, dy)),
-    key: (k) => invokeWasm(() => wasmExports.kagura_key_down(writeStr(k))),
-    step: (dt = 16.6) => invokeWasm(() => wasmExports.kagura_step_frame(dt, cssW, layoutH)),
+      wasmExports.crema_pointer_drag && invokeWasm(() => wasmExports.crema_pointer_drag(sx, sy, cx, cy, dx, dy)),
+    wheel: (x, y, dy) => invokeWasm(() => wasmExports.crema_scroll_wheel(x, y, dy)),
+    key: (k) => invokeWasm(() => wasmExports.crema_key_down(writeStr(k))),
+    step: (dt = 16.6) => invokeWasm(() => wasmExports.crema_step_frame(dt, cssW, layoutH)),
   };
-  window.__kagura = api;
+  window.__crema = api;
   if (options.onReady) options.onReady(api);
   return api;
 }

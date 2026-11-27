@@ -2,8 +2,8 @@
 version = 1
 
 [[pkg]]
-name = "kagura"
-url = "github.com/geisha-lang/kagura"
-version = "0.1.0"
-rev = "1d1ea683537856133920bd4274263148e937fed0"
-sha256 = "9de0e13d079b0f84678819c65eb75f8d403e89ea0de1f57e8962d1d1a5e80cd9"
+name = "crema"
+url = "github.com/geisha-lang/crema"
+version = "0.1.1"
+rev = "e1b4dff49302755931005eb132d8db97c840bd0c"
+sha256 = "12b7977462788edc528efee8a969ac2ca3caf8218d226ad582d527d3fea75d60"

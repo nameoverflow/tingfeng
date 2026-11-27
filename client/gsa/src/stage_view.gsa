@@ -1,4 +1,4 @@
-// 2D Game Stage Renderers (`stage_view`) built directly on `kagura.gfx.DrawList` & `kagura.ui`.
+// 2D Game Stage Renderers (`stage_view`) built directly on `crema.gfx.DrawList` & `crema.ui`.
 // Renders Xuan-paper parallax ink mountains, ink-silhouette martial artists,
 // 3-pass Song-Dynasty cartographic maps, combat choreography, and the 41-pose inspector grid.
 
@@ -6,7 +6,7 @@ use std.option.{Option, Some, None}
 use std.list.{listLen, listMap, listRev}
 use std.vec.{Vec, vecNew, vecPush, vecToList}
 use std.str.intToStr
-use kagura.gfx.{
+use crema.gfx.{
     Vec2, vec2, Rect, rect,
     Color, rgba, hexColor, withAlpha,
     AlignCenter, fontSans, fontSerif,
@@ -15,7 +15,7 @@ use kagura.gfx.{
     drawLine, drawPolygon, drawRibbon, drawText, drawImage,
     pushClip, pushCircleClip, popClip, pushTransform, popTransform
 }
-use kagura.ui.{
+use crema.ui.{
     Element, CanvasHit, canvasHit, fillSpace, canvasStage
 }
 use prelude.{atan2, degToRad, fmodPos, optOr, optIsSome, listFind, utf8CharCount}

@@ -1,11 +1,11 @@
 // Tingfeng (《听风录》) Pure-Geisha Wasm Client Entry Point (`client/gsa/src/main.gsa`),
-// powered by `geisha-lang/kagura` (`kagura.gfx`, `kagura.ui`, `kagura.stage`, `kagura.app`, `kagura.host`).
+// powered by `geisha-lang/crema` (`crema.gfx`, `crema.ui`, `crema.stage`, `crema.app`, `crema.host`).
 
 use std.option.{Option, Some, None}
 use std.result.{Ok, Err}
 use std.list.{listAppend, listMap}
-use kagura.gfx.{Rect, maxFloat}
-use kagura.app.{
+use crema.gfx.{Rect, maxFloat}
+use crema.app.{
     Cmd, CmdNone, CmdSendNet, CmdConnectNet,
     CmdScrollTo, CmdScrollToBottom, CmdBlurIme, cmdBatch,
     AppConfig, MkAppConfig, Runtime,
@@ -13,7 +13,7 @@ use kagura.app.{
     rtPointerMove, rtPointerClick, rtPointerDrag, rtScrollWheel,
     rtTextInput, rtTextSubmit, rtBlurInput, rtKeyDown, rtIsPinnedBottom
 }
-use kagura.host.envHost
+use crema.host.envHost
 use prelude.utf8Trim
 use protocol.{
     CreationChoice, PlayerAction, ActGo,
@@ -41,7 +41,7 @@ use theme.{
 use ui_view.viewRoot
 
 // ============================================================================
-// Persistent Global Kagura Runtime & Seeded Assets
+// Persistent Global Crema Runtime & Seeded Assets
 // ============================================================================
 
 def seededPageRef: Cell AppPage = cellNew(PageGame)
@@ -72,8 +72,8 @@ def translateClientCmd(c: ClientCmd): Cmd ClientMsg = match c {
         CmdConnectNet(modeStr, u, p)
     },
     CmdSetCursor(_) -> CmdNone,
-    CmdPlaySfx(sfx) -> kagura.app.CmdPlaySfx(sfx),
-    CmdSaveLocal(k, v) -> kagura.app.CmdSaveLocal(k, v),
+    CmdPlaySfx(sfx) -> crema.app.CmdPlaySfx(sfx),
+    CmdSaveLocal(k, v) -> crema.app.CmdSaveLocal(k, v),
     CmdFocusInput(_, _, _, _, _, _) -> CmdNone,
     CmdBlurInput -> CmdBlurIme,
 }
@@ -224,7 +224,7 @@ def buildAppConfig(poseLib: PoseLibrary, cat: ActionCatalog): AppConfig ClientMo
 }
 
 // ============================================================================
-// Exported Kagura Host Entry Points (`kagura_*`) + Asset/Lab Hooks (`tf_*`)
+// Exported Crema Host Entry Points (`crema_*`) + Asset/Lab Hooks (`tf_*`)
 // ============================================================================
 
 pub def tf_seed_assets(
@@ -253,9 +253,9 @@ pub def tf_seed_assets(
     }
 }
 
-pub def kagura_init(w: Float, h: Float): Void =
+pub def crema_init(w: Float, h: Float): Void =
     match cellGet(seededAssetsRef) {
-        None -> printLn("kagura_init called before tf_seed_assets"),
+        None -> printLn("crema_init called before tf_seed_assets"),
         Some((poseLib, cat)) -> {
             let cfg = buildAppConfig(poseLib, cat);
             let rt = runtimeCreate(cfg, maxFloat(320.0, w), maxFloat(220.0, h), envHost());
@@ -263,7 +263,7 @@ pub def kagura_init(w: Float, h: Float): Void =
         },
     }
 
-pub def kagura_step_frame(dtMs: Float, w: Float, h: Float): Void =
+pub def crema_step_frame(dtMs: Float, w: Float, h: Float): Void =
     match cellGet(runtimeRef) {
         Some(rt) -> {
             let _ = rtStepFrame(rt, dtMs, w, h);
@@ -272,67 +272,67 @@ pub def kagura_step_frame(dtMs: Float, w: Float, h: Float): Void =
         None -> (),
     }
 
-pub def kagura_pointer_move(x: Float, y: Float): Void =
+pub def crema_pointer_move(x: Float, y: Float): Void =
     match cellGet(runtimeRef) {
         Some(rt) -> rtPointerMove(rt, x, y),
         None -> (),
     }
 
-pub def kagura_pointer_click(x: Float, y: Float): Void =
+pub def crema_pointer_click(x: Float, y: Float): Void =
     match cellGet(runtimeRef) {
         Some(rt) -> rtPointerClick(rt, x, y),
         None -> (),
     }
 
-pub def kagura_pointer_drag(sx: Float, sy: Float, cx: Float, cy: Float, dx: Float, dy: Float): Void =
+pub def crema_pointer_drag(sx: Float, sy: Float, cx: Float, cy: Float, dx: Float, dy: Float): Void =
     match cellGet(runtimeRef) {
         Some(rt) -> rtPointerDrag(rt, sx, sy, cx, cy, dx, dy),
         None -> (),
     }
 
-pub def kagura_scroll_wheel(x: Float, y: Float, deltaY: Float): Void =
+pub def crema_scroll_wheel(x: Float, y: Float, deltaY: Float): Void =
     match cellGet(runtimeRef) {
         Some(rt) -> rtScrollWheel(rt, x, y, deltaY),
         None -> (),
     }
 
-pub def kagura_text_input(inpId: String, valStr: String): Void =
+pub def crema_text_input(inpId: String, valStr: String): Void =
     match cellGet(runtimeRef) {
         Some(rt) -> rtTextInput(rt, inpId, valStr),
         None -> (),
     }
 
-pub def kagura_text_submit(inpId: String): Void =
+pub def crema_text_submit(inpId: String): Void =
     match cellGet(runtimeRef) {
         Some(rt) -> rtTextSubmit(rt, inpId),
         None -> (),
     }
 
-pub def kagura_blur_input(): Void =
+pub def crema_blur_input(): Void =
     match cellGet(runtimeRef) {
         Some(rt) -> rtBlurInput(rt),
         None -> (),
     }
 
-pub def kagura_key_down(keyStr: String): Void =
+pub def crema_key_down(keyStr: String): Void =
     match cellGet(runtimeRef) {
         Some(rt) -> rtKeyDown(rt, keyStr),
         None -> (),
     }
 
-pub def kagura_on_net_open(mode: String, user: String, pass: String): Void =
+pub def crema_on_net_open(mode: String, user: String, pass: String): Void =
     match cellGet(runtimeRef) {
         Some(rt) -> rtDispatch(rt, MsgNetOpen(mode, user, pass)),
         None -> (),
     }
 
-pub def kagura_on_net_message(raw: String): Void =
+pub def crema_on_net_message(raw: String): Void =
     match cellGet(runtimeRef) {
         Some(rt) -> rtDispatch(rt, MsgNetMessage(raw)),
         None -> (),
     }
 
-pub def kagura_on_net_close(): Void =
+pub def crema_on_net_close(): Void =
     match cellGet(runtimeRef) {
         Some(rt) -> rtDispatch(rt, MsgNetClose),
         None -> (),

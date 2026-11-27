@@ -1,9 +1,9 @@
-// Song-Dynasty Xuan-Paper Design System & Message Algebra (`theme`) built on `kagura.ui`.
+// Song-Dynasty Xuan-Paper Design System & Message Algebra (`theme`) built on `crema.ui`.
 
 use std.option.{Option, Some, None}
 use std.list.listAppend
-use kagura.gfx.{Color, rgba, hexColor, withAlpha, fontSans}
-use kagura.ui.{
+use crema.gfx.{Color, rgba, hexColor, withAlpha, fontSans}
+use crema.ui.{
     Theme, MkTheme, StyleMod, Element,
     hFixed, wGrow, padXY, bg, border, rounded,
     styledButton, progressBar, badge

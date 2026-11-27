@@ -1,8 +1,8 @@
-// Tingfeng (《听风录》) Thin Kagura Bootstrapper (`client/public/app.js`).
+// Tingfeng (《听风录》) Thin Crema Bootstrapper (`client/public/app.js`).
 // All layout, rendering, binary DrawList execution, WebAudio, IME, and WS/HTTP bridging
-// are handled by `geisha-lang/kagura` (`/wasm/kagura.js` + `/wasm/tingfeng.wasm`).
+// are handled by `geisha-lang/crema` (`/wasm/crema.js` + `/wasm/tingfeng.wasm`).
 
-import { mountKaguraApp } from "/wasm/kagura.js";
+import { mountCremaApp } from "/wasm/crema.js";
 
 const pageKind = document.body.dataset.page || "game";
 const canvas = document.getElementById("c2d-stage");
@@ -13,7 +13,7 @@ const reducedMotionQuery = matchMedia("(prefers-reduced-motion: reduce)");
 let resolveWasmReady = null;
 globalThis.__tfHsReady = new Promise((r) => { resolveWasmReady = r; });
 
-let kaguraApp = null;
+let cremaApp = null;
 let wasmReady = false;
 let latestLabStateObj = {
   stageEventId: "idle",
@@ -26,8 +26,8 @@ let latestLabStateObj = {
 };
 
 function pullLabState() {
-  if (!kaguraApp) return latestLabStateObj;
-  const { exports, readStr, invokeWasm } = kaguraApp;
+  if (!cremaApp) return latestLabStateObj;
+  const { exports, readStr, invokeWasm } = cremaApp;
   const raw = invokeWasm(() => readStr(exports.tf_lab_state_json()));
   if (raw) {
     latestLabStateObj = JSON.parse(raw);
@@ -45,14 +45,14 @@ function pullLabState() {
 }
 
 function callUi(kind, a1 = "", a2 = "") {
-  if (!kaguraApp) return;
-  const { exports, writeStr, invokeWasm } = kaguraApp;
+  if (!cremaApp) return;
+  const { exports, writeStr, invokeWasm } = cremaApp;
   invokeWasm(() => exports.tf_ui_action(writeStr(kind), writeStr(a1), writeStr(a2)));
 }
 
 function callLab(cmd, a1 = "", a2 = "", a3 = "", numArg = 0) {
-  if (!kaguraApp) return;
-  const { exports, writeStr, invokeWasm } = kaguraApp;
+  if (!cremaApp) return;
+  const { exports, writeStr, invokeWasm } = cremaApp;
   invokeWasm(() => exports.tf_lab_cmd(writeStr(cmd), writeStr(a1), writeStr(a2), writeStr(a3), numArg));
 }
 
@@ -109,7 +109,7 @@ async function boot() {
     fetch("/data/effects.json").then((r) => r.text()),
   ]);
 
-  kaguraApp = await mountKaguraApp({
+  cremaApp = await mountCremaApp({
     canvas,
     imeInput,
     wasmUrl: "/wasm/tingfeng.wasm",
@@ -144,8 +144,8 @@ async function boot() {
   });
 
   document.addEventListener("visibilitychange", () => {
-    if (!kaguraApp) return;
-    const { exports, invokeWasm } = kaguraApp;
+    if (!cremaApp) return;
+    const { exports, invokeWasm } = cremaApp;
     invokeWasm(() => exports.tf_set_hidden(document.hidden ? 1 : 0));
     if (stageProbe) pullLabState();
   });
@@ -168,4 +168,4 @@ async function boot() {
   }
 }
 
-boot().catch((e) => console.error("[tingfeng-kagura] Boot failed:", e));
+boot().catch((e) => console.error("[tingfeng-crema] Boot failed:", e));

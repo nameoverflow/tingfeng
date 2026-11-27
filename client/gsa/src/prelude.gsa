@@ -15,10 +15,10 @@ pub use std.control.{
 }
 
 // ============================================================================
-// Portable IEEE-754 Math Re-exported from `kagura.gfx`
+// Portable IEEE-754 Math Re-exported from `crema.gfx`
 // ============================================================================
 
-pub use kagura.gfx.{sin, cos, acos, atan2, sqrt, exp, pi, degToRad}
+pub use crema.gfx.{sin, cos, acos, atan2, sqrt, exp, pi, degToRad}
 
 // ============================================================================
 // Total Ordering (`Ord`), `Semigroup`, `Monoid`, and `MonadWriter`

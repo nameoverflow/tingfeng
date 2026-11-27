@@ -1,10 +1,10 @@
-// Declarative Song-Dynasty Xuan-Paper UI (`ui_view`) built 100% on `kagura.ui`.
+// Declarative Song-Dynasty Xuan-Paper UI (`ui_view`) built 100% on `crema.ui`.
 // Replaces 1,700+ lines of imperative coordinate/tape code with composable `Element ClientMsg` trees.
 
 use std.option.{Option, Some, None}
 use std.list.{listLen, listAppend, listMap}
 use std.str.{intToStr, strJoin}
-use kagura.gfx.{
+use crema.gfx.{
     Vec2, Rect, rect,
     Color, rgba, hexColor, withAlpha,
     AlignCenter, AlignRight, fontSans, fontSerif,
@@ -12,7 +12,7 @@ use kagura.gfx.{
     floorInt, ceilInt, roundInt,
     drawRect, drawFillRect, drawCircle, drawLine
 }
-use kagura.ui.{
+use crema.ui.{
     Theme, AlignMid, AlignEnd, AlignStretch,
     wFixed, hFixed, fixedSize, wGrow, hGrow, fillSpace, wPct, maxW, maxH,
     pad, padXY, padTRBL, gap, alignX, alignY, centerContent,
@@ -747,7 +747,7 @@ def viewMobileTabbar(th: Theme, m: ClientModel): Element ClientMsg = {
                         };
                         if (badgeCnt > 0) {
                             drawFillRect(dl, rect(cx + 7.0, y0 + 3.0, 16.0, 14.0), 7.0, hexColor("#a32c22"));
-                            kagura.gfx.drawText(
+                            crema.gfx.drawText(
                                 dl, cx + 15.0, y0 + 13.3, fontSans(9.5, 700), AlignCenter, hexColor("#f7f1e3"),
                                 if (badgeCnt > 9) "9+" else intToStr(badgeCnt)
                             )

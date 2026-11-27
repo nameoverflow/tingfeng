@@ -4,7 +4,7 @@ entry = "src/main.gsa"
 tests = ["tests/spec.gsa"]
 
 [deps]
-kagura = { git = "github.com/geisha-lang/kagura", version = "0.1.0" }
+crema = { git = "github.com/geisha-lang/crema", version = "0.1.1" }
 
 [target.wasm32]
 exports = [
