@@ -131,6 +131,7 @@ rooms:
     desc: "密苇深处藏着一处避风水道，太湖水寨的快船常在此私下停靠，向水榭讨药或传话。"
     char:
       - water_fort_second_boss
+      - bounty_taihu_pirate
     exits:
       east: [0, 5]
 
@@ -150,6 +151,8 @@ rooms:
     kind: building
     rest: true
     desc: "四面临水的竹亭，檐下悬着风铃，亭中备有清茶与干爽竹席。听着雨打残荷，连体内郁结的内息也随之平复。"
+    char:
+      - taihu_pavilion_guardian
     insight:
       arts: [internal, lightness, sword]
       bonus: 8

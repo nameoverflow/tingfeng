@@ -2,7 +2,7 @@
   name: "开封五虎刀"
   type: blade
   tier: entry
-  desc: "开封城外押车护院与军汉常练的刚猛刀法。前两招沿用江湖通用劈斩步法，收尾绝招则是沉肩借腰的力劈重斩。"
+  desc: "开封城外押车护院与军汉常练的刚猛刀法。前两招以大开大合的劈扫压住阵脚，收尾绝招则是沉肩借腰的力劈重斩。"
   foundation: basic_blade
   requires:
     - art: basic_blade
@@ -11,7 +11,7 @@
   attack_moves:
     - id: wuhu_cut
       name: "顺风斜斩"
-      desc: "借进身之势斜刀斩出，复用标准劈斩步法。"
+      desc: "借进身之势斜刀斩出，干脆利落。"
       msg: "踏步横身，刀光顺势斜斩过去"
       unlock_level: 1
       damage: 14
@@ -50,7 +50,7 @@
   name: "汴梁杨家枪"
   type: spear
   tier: entry
-  desc: "脱胎于北宋边军枪术的路数。平刺可复用直刺步法，长突与连环三点则尽显长兵一寸长一寸强的锐气。"
+  desc: "脱胎于北路边军枪术的路数。起手中平直刺稳扎稳打，长突与连环三点则尽显长兵一寸长一寸强的锐气。"
   foundation: basic_spear
   requires:
     - art: basic_spear
@@ -59,7 +59,7 @@
   attack_moves:
     - id: yang_straight_thrust
       name: "中平直刺"
-      desc: "稳步平刺中宫，复用直刺身法。"
+      desc: "稳步平刺中宫，不留多余花架。"
       msg: "双手持杆稳步前递，枪尖直取中宫"
       unlock_level: 1
       damage: 14
@@ -98,7 +98,7 @@
   name: "行者齐眉棍"
   type: staff
   tier: entry
-  desc: "江湖行脚武僧与镖师常用的齐眉棍法。撩挑可借上挑旧势，横扫与腾空砸击则专破对手下盘与架势。"
+  desc: "江湖行脚武僧与镖师常用的齐眉棍法。起手撩挑封门，横扫与腾空砸击则专破对手下盘与架势。"
   foundation: basic_staff
   requires:
     - art: basic_staff
@@ -107,7 +107,7 @@
   attack_moves:
     - id: xingzhe_lift
       name: "拨草寻蛇"
-      desc: "沉棍由下往上挑打，复用上挑身法。"
+      desc: "沉棍由下往上挑打，专点对手手腕与空门。"
       msg: "棍尾一沉，自下而上斜挑对手手腕"
       unlock_level: 1
       damage: 13

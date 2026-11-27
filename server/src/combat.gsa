@@ -4,7 +4,7 @@
 
 use std.option.{Option, Some, None}
 use std.result.{Result, Ok, Err}
-use std.list.{listRev, listAppend, listMap, listAny}
+use std.list.{listRev, listAppend, listMap, listAny, listAll, listFilter}
 use std.rand.{Rng, nextRange}
 use fp.{
     Functor, fmap, (<$>),
@@ -550,6 +550,85 @@ def checkApAndAttack(left: Lens Battle BattleState, right: Lens Battle BattleSta
             *>> pure(true)
         } else pure(false)
 
+def isSelfBuffAlreadyActive(st: BattleState, sk: ActiveSkill): Bool =
+    match (sk.activeSkillTarget, sk.activeSkillDamage, sk.activeSkillHeal) {
+        (SelfTarget, None, None) ->
+            listAny(sk.activeSkillEffSelf, (triple) -> match triple {
+                (effId, _, _) -> mapMember(st.battleEffects, effId),
+            }),
+        _ -> false,
+    }
+
+pub def enemyReadyActiveSkills(wrld: World, st: BattleState): List (MartialArt, ActiveSkill) =
+    fp.listConcatMap(
+        mapElems(st.battleChar.charEnabled),
+        (artEnt) -> match mapLookup(wrld.martialArts, artEnt.artDef) {
+            None -> Nil,
+            Some(ma) -> fp.listFilterMap(
+                ma.artActiveSkills,
+                (sk) -> {
+                    let ready =
+                        sk.activeSkillUnlockLevel <= artEnt.artLevel
+                        && st.battleQi >= sk.activeSkillCost
+                        && !mapMember(st.battleActiveSkillCooldowns, sk.activeSkillId)
+                        && listAll(sk.activeSkillReqStatus, (reqId) -> mapMember(st.battleEffects, reqId))
+                        && !isSelfBuffAlreadyActive(st, sk);
+                    if (ready) Some((ma, sk)) else None
+                }
+            ),
+        }
+    )
+
+def pickEnemySkillChoice(
+    wrld: World,
+    st: BattleState,
+    stats: DerivedStats
+): Combat (Option (MartialArt, ActiveSkill)) = {
+    let ready = enemyReadyActiveSkills(wrld, st);
+    match ready {
+        Nil -> pure(None),
+        _ -> {
+            let lowHp = st.battleChar.charHP * 100 <= stats.dsMaxHp * 55;
+            let heals = listFilter(ready, (pair) -> match pair {
+                (_, sk) -> match sk.activeSkillHeal { Some(_) -> true, None -> false },
+            });
+            let defensives = listFilter(ready, (pair) -> match pair {
+                (_, sk) -> match sk.activeSkillTarget { SelfTarget -> true, _ -> false },
+            });
+            if (lowHp) {
+                match heals {
+                    Cons(_, _) -> pickRandom(heals),
+                    Nil -> match defensives {
+                        Cons(_, _) ->
+                            rollRange(1, 100) >>= (r) ->
+                                if (r <= 75) pickRandom(defensives) else pickRandom(ready),
+                        Nil ->
+                            rollRange(1, 100) >>= (r) ->
+                                if (r <= 60) pickRandom(ready) else pure(None),
+                    },
+                }
+            } else {
+                rollRange(1, 100) >>= (r) ->
+                    if (r <= 55) pickRandom(ready) else pure(None)
+            }
+        },
+    }
+}
+
+def checkEnemyApAndAct(): Combat Bool =
+    currentApProgress(enemySideL()) >>= (enemyAp) ->
+        if (enemyAp >= intToFloat(maxAp())) {
+            assignL(enemySideL() ~>> bsApL(), 0)
+            *>> assignL(enemySideL() ~>> bsApProgressL(), 0.0)
+            *>> ask() >>= (wrld) ->
+            useL(enemySideL()) >>= (eSt) ->
+            battleDerivedStats(enemySideL()) >>= (eStats) ->
+            pickEnemySkillChoice(wrld, eSt, eStats) >>= (choiceOpt) -> match choiceOpt {
+                Some((ma, sk)) -> useActiveSkill(ma, sk, enemySideL(), playerSideL()) *>> pure(true),
+                None -> battleAttack(enemySideL(), playerSideL()) *>> pure(true),
+            }
+        } else pure(false)
+
 def activeSkillArtLevel(skill: ActiveSkill, char: Character): Int = {
     let reqLvls = listMap(skill.activeSkillReqArts, (aid) -> characterKnownArtLevel(aid, char));
     let prepLvls = listMap(mapElems(char.charEnabled), (e) -> e.artLevel);
@@ -794,7 +873,7 @@ pub def flushBattleActionTick(dt: Float): Combat Bool =
                     useL(enemySideL() ~>> bsCharL() ~>> charHpL()) >>= (eHp) ->
                         if (eHp <= 0) pure(true)
                         else {
-                            let enemyStep = if (playerActed) pure(()) else voidM(checkApAndAttack(enemySideL(), playerSideL()));
+                            let enemyStep = if (playerActed) pure(()) else voidM(checkEnemyApAndAct());
                             enemyStep *>> (((pHp: Int) -> pHp <= 0) <$> useL(playerSideL() ~>> bsCharL() ~>> charHpL()))
                         },
         }

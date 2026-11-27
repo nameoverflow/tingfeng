@@ -34,6 +34,12 @@
         level: 15
       - id: basic_sword
         level: 12
+      - id: basic_blade
+        level: 12
+      - id: basic_spear
+        level: 12
+      - id: basic_staff
+        level: 12
       - id: basic_lightness
         level: 12
       - id: basic_internal
@@ -44,6 +50,9 @@
     sword:
       - id: nameless_trial_sword
         level: 8
+    blade:
+      - id: kaifeng_saber
+        level: 12
   prepared:
     fist:
       id: nameless_trial_fist
@@ -52,11 +61,15 @@
   teaches:
     basic_fist: 12
     basic_sword: 10
+    basic_blade: 10
+    basic_spear: 10
+    basic_staff: 10
     basic_lightness: 10
     basic_internal: 10
     nameless_trial_fist: 5
     nameless_trial_sword: 5
     escort_short_fist: 5
+    kaifeng_saber: 12
   teach_requires:
     flag: kaifeng.martial_hall_student
     refusal: "先在场上对过木人，我看过你的底子，再谈教什么。"

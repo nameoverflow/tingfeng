@@ -272,3 +272,15 @@
         - type: message
           speaker: "牡丹会执事裴文举"
           text: "干净利落。我已在牡丹台名录上添了你的名字，这五十文是会场备下的彩头。往后在洛阳，只要提一声‘牡丹台试过剑的’，酒楼与剑铺都高看一眼。"
+
+    - id: wensheng_after_broken_manual
+      trigger:
+        type: talk
+        npc: luoyang_teacher
+      conditions:
+        - type: quest_completed
+          quest: luoyang_broken_manual
+      actions:
+        - type: message
+          speaker: "闻声先生"
+          text: "白马寺那张旧拓片我已装裱收好。坊间伪谱少了不少，你也常来残谱室走走，剑法上的疑难尽管开口。"

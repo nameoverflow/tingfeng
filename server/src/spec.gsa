@@ -1155,15 +1155,25 @@ def testKaifengRegionalAndEconomy(tr: TestRunner, baseGs: GameState): Void = {
     assertThat(tr, requirePlayer(tr, gsMed2).playerCharacter.charHP == 65, "wound_powder HP != 65");
     assertThat(tr, match mapLookup(gsMed2.playerRuntime, "tester") { Some(r) -> r.runtimeInjuredRemaining == 60.0, None -> false }, "wound_powder injury != 60s");
 
-    // 4. Regional convergence (`weiyuan_first_echo`) quick flow check
-    let reg0 = gs0
+    // 4. Regional convergence (`weiyuan_first_echo`) gating & flow check
+    // First verify prologue `weiyuan.saw_ink_mark` alone does NOT prematurely trigger `weiyuan_first_echo`
+    let earlyShrine0 = gs0
         |> overF(gsStoriesL(), (sm) -> mapUpdate(sm, "tester", (st) ->
             st
                 |> overF(storyQuestStagesL(), (qm) -> qm |> (m) -> mapInsert(m, "weiyuan_bloody_case", "completed") |> (m) -> mapInsert(m, "first_steps_kaifeng", "completed"))
+                |> overF(storyFlagsL(), (fs) -> setInsert(fs, "weiyuan.saw_ink_mark"))
+        ));
+    let (_, earlyAtFork) = runOk(tr, "move to fork early", earlyShrine0, movePlayerToRoom("tester", "north_post_road", (0, 3)));
+    let (_, earlyAtShrine) = runOk(tr, "enter shrine early", earlyAtFork, playerMove("tester", North));
+    assertThat(tr, match questStageOf("weiyuan_first_echo", earlyAtShrine) { None -> true, Some(_) -> false }, "weiyuan_first_echo triggered prematurely on saw_ink_mark");
+
+    let reg0 = earlyShrine0
+        |> overF(gsStoriesL(), (sm) -> mapUpdate(sm, "tester", (st) ->
+            st
                 |> overF(storyFlagsL(), (fs) ->
                     fs
                         |> (s) -> setInsert(s, "weiyuan.met_envoy")
-                        |> (s) -> setInsert(s, "weiyuan.saw_ink_mark")
+                        |> (s) -> setInsert(s, "weiyuan.shrine_lead_found")
                         |> (s) -> setInsert(s, "weiyuan.clue_luoyang")
                         |> (s) -> setInsert(s, "weiyuan.clue_dali")
                         |> (s) -> setInsert(s, "weiyuan.clue_taihu")
@@ -1177,6 +1187,29 @@ def testKaifengRegionalAndEconomy(tr: TestRunner, baseGs: GameState): Void = {
     let (_, atEnvoy) = runOk(tr, "move to envoy", afterStalker, movePlayerToRoom("tester", "kaifeng_city", (1, -3)));
     let (_, repEnvoy) = runOk(tr, "report envoy", atEnvoy, playerTalk("tester", "weiyuan_envoy"));
     assertThat(tr, optOr(questStageOf("weiyuan_first_echo", repEnvoy), "") == "completed" && hasStoryFlag("weiyuan.echo_resolved", repEnvoy), "weiyuan_first_echo convergence failed");
+
+    // Verify Dali repeatable job starts with `dali.caravan_vouched` & Kaifeng bounty job starts at notice board
+    let daliJob0 = gs0
+        |> overF(gsStoriesL(), (sm) -> mapUpdate(sm, "tester", overF(storyFlagsL(), (fs) -> setInsert(fs, "dali.caravan_vouched"))));
+    let (_, atDaliYard) = runOk(tr, "move dali yard", daliJob0, movePlayerToRoom("tester", "dali_city", (0, 1)));
+    let (_, daliJobStarted) = runOk(tr, "start dali job", atDaliYard, playerTalk("tester", "dali_caravan_guard"));
+    assertThat(tr, optOr(questStageOf("job_dali_caravan_patrol", daliJobStarted), "") == "scout_stream", "job_dali_caravan_patrol did not start");
+
+    let bounty0 = gs0
+        |> overF(gsStoriesL(), (sm) -> mapUpdate(sm, "tester", overF(storyQuestStagesL(), (qm) -> mapInsert(qm, "north_road_patrol", "completed"))));
+    let (_, atWall) = runOk(tr, "move notice wall", bounty0, movePlayerToRoom("tester", "kaifeng_city", (-3, 0)));
+    let (_, bountyStarted) = runOk(tr, "start kaifeng bounty", atWall, playerTalk("tester", "kaifeng_notice_board_clerk"));
+    assertThat(tr, optOr(questStageOf("job_kaifeng_bounty_raider", bountyStarted), "") == "hunt_raider", "job_kaifeng_bounty_raider did not start");
+
+    // Verify enemy AI has ready active skills (salt_gang_poison_fist -> green_poison_sand)
+    match mapLookup(gs0.world.chars, "bounty_north_raider") {
+        Some(raider) -> {
+            let eSt = combat.newBattleState(raider, 0);
+            let ready = combat.enemyReadyActiveSkills(gs0.world, eSt);
+            assertThat(tr, listLen(ready) > 0, "enemy AI found no ready active skills for bounty_north_raider")
+        },
+        None -> assertThat(tr, false, "bounty_north_raider missing from world"),
+    };
 
     // 5. Legacy `prepared` folding + PlayerSave v6 round-trip & v5 migration reset
     let legacyJson = "{\"player_id\":\"tester\",\"version\":6,\"prepared\":{\"sword\":{\"id\":\"weiyuan_sword\",\"level\":3},\"fist\":{\"id\":\"nameless_trial_fist\",\"level\":1}},\"enabled\":{\"sword\":{\"id\":\"nameless_trial_sword\",\"level\":1}}}";

@@ -97,6 +97,7 @@ rooms:
     char:
       - peony_host_assistant
       - peony_challenger_song
+      - luoyang_arena_swordsman
     exits:
       south: [0, 3]
       north: [0, 5]

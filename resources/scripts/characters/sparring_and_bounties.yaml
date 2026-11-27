@@ -1,0 +1,261 @@
+- id: kaifeng_hall_disciple
+  name: "武馆大师兄石磊"
+  desc: "南门武馆的大师兄，正赤着臂在廊下打桩。见同门或江湖客想活动手脚，总肯下场喂几招。"
+  actions: [dialogue, attacking, sparring]
+  martial_arts:
+    foundation:
+      - id: basic_fist
+        level: 8
+      - id: basic_lightness
+        level: 6
+    fist:
+      - id: escort_short_fist
+        level: 6
+  prepared:
+    fist:
+      id: escort_short_fist
+      level: 6
+  dialogue:
+    - "梁教头忙着看新弟子，你要是想试招攒手感，直接找我切磋就行，点到为止。"
+  respawn: 12
+  attr:
+    hp: 100
+    qi: 90
+    max_qi: 90
+    jing: 120
+    qi_regen: 2.0
+    innate:
+      strength: 18
+      agility: 16
+      vitality: 17
+  reward_exp_ceiling: 700
+
+- id: luoyang_arena_swordsman
+  name: "牡丹台陪剑客谢听竹"
+  desc: "常驻牡丹会场的洛阳剑客，长剑挂在腰间，专陪过路名士在台下喂招试剑。"
+  actions: [dialogue, attacking, sparring]
+  martial_arts:
+    foundation:
+      - id: basic_sword
+        level: 14
+      - id: basic_lightness
+        level: 12
+    sword:
+      - id: luoyang_sword
+        level: 12
+    lightness:
+      - id: luoyang_flowing_step
+        level: 10
+  prepared:
+    sword:
+      id: luoyang_sword
+      level: 12
+    lightness:
+      id: luoyang_flowing_step
+      level: 10
+  dialogue:
+    - "牡丹台前不缺好酒，只缺肯真刀真剑喂招的人。手痒的话，拔剑便是。"
+  respawn: 12
+  attr:
+    hp: 165
+    qi: 130
+    max_qi: 130
+    jing: 140
+    qi_regen: 2.5
+    innate:
+      strength: 19
+      agility: 24
+      vitality: 18
+  reward_exp_ceiling: 2800
+
+- id: dali_drill_guard
+  name: "段氏教习段铁山"
+  desc: "段氏操练场上的沉稳教习，双掌布满厚茧，负责考校护院和客卿的下盘与重掌。"
+  actions: [dialogue, attacking, sparring]
+  martial_arts:
+    foundation:
+      - id: basic_fist
+        level: 16
+      - id: basic_internal
+        level: 14
+    fist:
+      - id: cangshan_cleaving_palm
+        level: 14
+  prepared:
+    fist:
+      id: cangshan_cleaving_palm
+      level: 14
+  dialogue:
+    - "护路靠的不是嘴皮子。想试自己掌力沉不沉、抗不抗得住重击，上场来接我三掌。"
+  respawn: 12
+  attr:
+    hp: 205
+    qi: 150
+    max_qi: 150
+    jing: 150
+    qi_regen: 3.0
+    innate:
+      strength: 25
+      agility: 18
+      vitality: 24
+  reward_exp_ceiling: 4800
+
+- id: taihu_pavilion_guardian
+  name: "守亭剑客江晚舟"
+  desc: "听雨荷亭边的青衫剑客，常年替水榭挡些不懂规矩的来客，也爱与内堂客人拆招论剑。"
+  actions: [dialogue, attacking, sparring]
+  martial_arts:
+    foundation:
+      - id: basic_sword
+        level: 16
+      - id: basic_internal
+        level: 14
+      - id: basic_lightness
+        level: 14
+    sword:
+      - id: taihu_willow_sword
+        level: 15
+    internal:
+      - id: taihu_breath
+        level: 12
+  prepared:
+    sword:
+      id: taihu_willow_sword
+      level: 15
+    internal:
+      id: taihu_breath
+      level: 12
+  dialogue:
+    - "湖上风急，剑招练得太死容易吃亏。若想试试卸力回剑的火候，随时可以跟我过几招。"
+  respawn: 12
+  attr:
+    hp: 190
+    qi: 160
+    max_qi: 160
+    jing: 150
+    qi_regen: 3.0
+    innate:
+      strength: 20
+      agility: 24
+      vitality: 21
+  reward_exp_ceiling: 4800
+
+- id: bounty_north_raider
+  name: "北郊截路盐枭"
+  desc: "蒙着粗布巾的盐帮暗桩，腰间挂着毒砂袋，正蹲在藏身小径旁窥探官道动静。"
+  actions: [dialogue]
+  hidden: true
+  martial_arts:
+    foundation:
+      - id: basic_fist
+        level: 10
+      - id: basic_lightness
+        level: 8
+    fist:
+      - id: salt_gang_poison_fist
+        level: 8
+  prepared:
+    fist:
+      id: salt_gang_poison_fist
+      level: 8
+  dialogue:
+    - "开封府的悬赏贴到这儿来了？先吃我一掌毒砂再说！"
+  respawn: 0
+  attr:
+    hp: 130
+    qi: 110
+    max_qi: 110
+    jing: 110
+    qi_regen: 2.0
+    innate:
+      strength: 20
+      agility: 17
+      vitality: 17
+
+- id: bounty_cangshan_bandit
+  name: "苍山流窜马匪"
+  desc: "扛着宽背大刀的马匪头目，趁着山雾摸回废石场，专劫落单茶马。"
+  actions: [dialogue]
+  hidden: true
+  martial_arts:
+    foundation:
+      - id: basic_blade
+        level: 14
+      - id: basic_lightness
+        level: 10
+    blade:
+      - id: kaifeng_saber
+        level: 12
+  prepared:
+    blade:
+      id: kaifeng_saber
+      level: 12
+  dialogue:
+    - "断指麻六栽了，苍山的路就不归我们走了？想领段家的赏钱，先过我这把刀！"
+  respawn: 0
+  attr:
+    hp: 175
+    qi: 120
+    max_qi: 120
+    jing: 120
+    qi_regen: 2.5
+    innate:
+      strength: 24
+      agility: 18
+      vitality: 20
+
+- id: bounty_taihu_pirate
+  name: "水寨越界快船手"
+  desc: "不服二当家约束的水寨散匪，驾着轻舟潜进芦苇暗港，手里藏着毒砂与分水刺。"
+  actions: [dialogue]
+  hidden: true
+  martial_arts:
+    foundation:
+      - id: basic_fist
+        level: 13
+      - id: basic_lightness
+        level: 12
+    fist:
+      - id: salt_gang_poison_fist
+        level: 11
+  prepared:
+    fist:
+      id: salt_gang_poison_fist
+      level: 11
+  dialogue:
+    - "翻江鲤答应柳庄不动岸，可没说暗港里的货我们不能拿！多管闲事，找死！"
+  respawn: 0
+  attr:
+    hp: 165
+    qi: 130
+    max_qi: 130
+    jing: 120
+    qi_regen: 2.5
+    innate:
+      strength: 21
+      agility: 22
+      vitality: 19
+
+- id: kaifeng_notice_board_clerk
+  name: "榜前录事"
+  desc: "开封府派在西市公告墙边抄录榜文与悬赏的书吏，手里提着浆糊桶和朱笔。"
+  actions: [dialogue]
+  martial_arts:
+    foundation:
+      - id: basic_internal
+        level: 4
+  prepared: {}
+  teaches: {}
+  dialogue:
+    - "西市公告墙天天换新榜。官府的缉捕悬赏、城里的江湖传闻，都在这面墙上挂着。"
+  respawn: 0
+  attr:
+    hp: 85
+    qi: 60
+    max_qi: 60
+    jing: 120
+    qi_regen: 1.5
+    innate:
+      strength: 10
+      agility: 12
+      vitality: 12

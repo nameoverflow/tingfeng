@@ -1,0 +1,464 @@
+- id: kaifeng_city_life
+  name: "市井百业"
+  objectives: []
+  reward:
+    money: 0
+    items: []
+  events:
+    - id: pawnshop_buys_wild_herbs
+      trigger:
+        type: talk
+        npc: kaifeng_pawnbroker
+      conditions:
+        - type: has_item
+          item: wild_herb_bundle
+      actions:
+        - type: take_item
+          item: wild_herb_bundle
+          amount: 1
+        - type: give_money
+          amount: 35
+        - type: message
+          speaker: "秦朝奉"
+          text: "北郊坡上的鲜三七？成色不错，压干了能卖个好价钱。给你三十五文现钱，收好了。"
+
+    - id: pawnshop_buys_old_silver
+      trigger:
+        type: talk
+        npc: kaifeng_pawnbroker
+      conditions:
+        - type: has_item
+          item: old_silver_ingot
+      actions:
+        - type: take_item
+          item: old_silver_ingot
+          amount: 1
+        - type: give_money
+          amount: 42
+        - type: message
+          speaker: "秦朝奉"
+          text: "大理商队早年的碎银块，成色足。照市价给你四十二文，两清。"
+
+    - id: apothecary_trades_wild_herbs
+      trigger:
+        type: talk
+        npc: kaifeng_physician
+      conditions:
+        - type: has_item
+          item: wild_herb_bundle
+        - type: quest_completed
+          quest: first_steps_kaifeng
+      actions:
+        - type: take_item
+          item: wild_herb_bundle
+          amount: 1
+        - type: give_item
+          item: clear_spirit_san
+          amount: 2
+        - type: give_money
+          amount: 15
+        - type: message
+          speaker: "柳药师"
+          text: "这把车前和三七还带着露水，正好入药！这两包清心散外加十五文药钱你拿着，比卖给当铺划算些。"
+
+    - id: banker_redeems_silver_note
+      trigger:
+        type: talk
+        npc: kaifeng_banker
+      conditions:
+        - type: has_item
+          item: kaifeng_silver_note
+      actions:
+        - type: take_item
+          item: kaifeng_silver_note
+          amount: 1
+        - type: give_money
+          amount: 100
+        - type: message
+          speaker: "算盘孙"
+          text: "朱印无误，通宝百文票照面兑现。一百文铜钱点清了，收好。"
+
+    - id: banker_redeems_old_silver
+      trigger:
+        type: talk
+        npc: kaifeng_banker
+      conditions:
+        - type: has_item
+          item: old_silver_ingot
+      actions:
+        - type: take_item
+          item: old_silver_ingot
+          amount: 1
+        - type: give_money
+          amount: 45
+        - type: message
+          speaker: "算盘孙"
+          text: "滇北茶马帮的旧碎银，成色比寻常官银还纯些。钱庄按实秤折给你四十五文。"
+
+    - id: banker_first_market_briefing
+      trigger:
+        type: talk
+        npc: kaifeng_banker
+      conditions:
+        - type: quest_completed
+          quest: first_steps_kaifeng
+        - type: not_flag
+          flag: kaifeng.banker_briefed
+      actions:
+        - type: set_flag
+          flag: kaifeng.banker_briefed
+        - type: message
+          speaker: "算盘孙"
+          text: "新在开封落脚？记几笔账准没错：东巷赵铁匠打兵器，仁和药铺和太湖水榭卖伤药，西市当铺能折价淘旧货、也能收你在外头捡的杂物。手头宽裕了，钱庄随时给你兑百文票。"
+
+    - id: notice_clerk_updates_fame
+      trigger:
+        type: talk
+        npc: kaifeng_notice_board_clerk
+      conditions:
+        - type: flag
+          flag: jianghu.name.nandu_ke
+        - type: not_flag
+          flag: kaifeng.notice_fame_seen
+      actions:
+        - type: set_flag
+          flag: kaifeng.notice_fame_seen
+        - type: message
+          speaker: "榜前录事"
+          text: "哟，这不是码头上人人提起的‘南渡客’吗？捕房刚把北郊截路盐枭的悬赏贴在最上头，等你把北郊失信那桩案子办完，随时来我这儿揭榜挣赏钱。"
+
+    - id: fanlou_evening_chat_after_travel
+      trigger:
+        type: talk
+        npc: fanlou_innkeeper
+      conditions:
+        - type: quest_completed
+          quest: first_steps_kaifeng
+        - type: flag
+          flag: weiyuan.shrine_lead_found
+        - type: not_flag
+          flag: kaifeng.inn_evening_talk
+      actions:
+        - type: set_flag
+          flag: kaifeng.inn_evening_talk
+        - type: give_item
+          item: wound_powder
+          amount: 1
+        - type: message
+          speaker: "樊楼伙计"
+          text: "客官这几日风尘仆仆，像是刚从外省赶回来。灶房熬姜汤时多留了包金创药，你收着。外头风声紧，夜里回房记得把门闩插紧。"
+
+- id: world_explorations_and_echoes
+  name: "江湖见闻与回响"
+  objectives: []
+  reward:
+    money: 0
+    items: []
+  events:
+    - id: explore_hunter_shed_errands
+      trigger:
+        type: enter_room
+        map: north_post_road
+        position: [1, 2]
+      conditions:
+        - type: not_flag
+          flag: explore.north_hunter_shed
+        - type: flag
+          flag: creation.childhood2.mountain_errands
+      actions:
+        - type: set_flag
+          flag: explore.north_hunter_shed
+        - type: give_item
+          item: wound_powder
+          amount: 1
+        - type: give_money
+          amount: 18
+        - type: message
+          speaker: "旁白"
+          text: "你自小翻山跑腿，一眼便看出棚外那串脚印步幅急促，是往北面黄河南堤方向去的。你在旧弓袋底翻出一包防身金创药和几枚散落的铜钱。"
+
+    - id: explore_hunter_shed_default
+      trigger:
+        type: enter_room
+        map: north_post_road
+        position: [1, 2]
+      conditions:
+        - type: not_flag
+          flag: explore.north_hunter_shed
+      actions:
+        - type: set_flag
+          flag: explore.north_hunter_shed
+        - type: give_item
+          item: wound_powder
+          amount: 1
+        - type: message
+          speaker: "旁白"
+          text: "冷粥旁搭着一只沾泥的旧弓袋，里头还剩一包未拆封的金创药。猎户走得太急，大概是撞见了夜里在林中出没的探子。"
+
+    - id: explore_herb_slope_medicine
+      trigger:
+        type: enter_room
+        map: north_post_road
+        position: [1, 3]
+      conditions:
+        - type: not_flag
+          flag: explore.north_herb_slope
+        - type: flag
+          flag: creation.origin.medicine_house
+      actions:
+        - type: set_flag
+          flag: explore.north_herb_slope
+        - type: give_item
+          item: wild_herb_bundle
+          amount: 1
+        - type: give_item
+          item: returning_qi_pill
+          amount: 1
+        - type: message
+          speaker: "旁白"
+          text: "你在药坡蹲身细辨，凭着家传辨药的眼力，不仅采了一把品相极佳的车前与野三七，还在石缝里找到采药人遗落的一粒回气丸。"
+
+    - id: explore_herb_slope_gathering
+      trigger:
+        type: enter_room
+        map: north_post_road
+        position: [1, 3]
+      conditions:
+        - type: not_flag
+          flag: explore.north_herb_slope
+        - type: flag
+          flag: creation.childhood1.herb_gathering
+      actions:
+        - type: set_flag
+          flag: explore.north_herb_slope
+        - type: give_item
+          item: wild_herb_bundle
+          amount: 1
+        - type: give_item
+          item: returning_qi_pill
+          amount: 1
+        - type: message
+          speaker: "旁白"
+          text: "幼年入山采药的本事还没丢。你避开毒草，顺手采下一把鲜嫩三七，又在旧竹篓印旁拾到一粒回气丸。"
+
+    - id: explore_herb_slope_default
+      trigger:
+        type: enter_room
+        map: north_post_road
+        position: [1, 3]
+      conditions:
+        - type: not_flag
+          flag: explore.north_herb_slope
+      actions:
+        - type: set_flag
+          flag: explore.north_herb_slope
+        - type: give_item
+          item: wild_herb_bundle
+          amount: 1
+        - type: message
+          speaker: "旁白"
+          text: "坡上车前草与野三七长得正旺，你顺手采了一把捆好，回城或许能拿去药铺或当铺换些实用之物。"
+
+    - id: explore_roadside_shrine
+      trigger:
+        type: enter_room
+        map: north_post_road
+        position: [-1, 2]
+      conditions:
+        - type: not_flag
+          flag: explore.north_roadside_shrine
+      actions:
+        - type: set_flag
+          flag: explore.north_roadside_shrine
+        - type: message
+          speaker: "旁白"
+          text: "你替倾倒的边卒牌位扶正，香炉底压着半截磨白的竹签，上面歪斜刻着“南渡老卒，杨家旧枪”八个字——看来黄河南渡津口的老卒并非寻常守渡人。"
+
+    - id: explore_baima_tea_shed_reading
+      trigger:
+        type: enter_room
+        map: luoyang_city
+        position: [1, 7]
+      conditions:
+        - type: not_flag
+          flag: explore.luoyang_tea_shed
+        - type: flag
+          flag: creation.childhood1.night_reading
+      actions:
+        - type: set_flag
+          flag: explore.luoyang_tea_shed
+        - type: give_item
+          item: clear_spirit_san
+          amount: 1
+        - type: give_money
+          amount: 20
+        - type: message
+          speaker: "旁白"
+          text: "茶寮壁上题着一首残破的旧京行旅诗。你幼年夜读旧书，随口补全了缺落的下句，邻桌老儒抚掌大笑，硬塞给你一包清心散与二十文茶资，还顺嘴提了句山门前的明心知客僧年轻时使过一手好齐眉棍。"
+
+    - id: explore_baima_tea_shed_default
+      trigger:
+        type: enter_room
+        map: luoyang_city
+        position: [1, 7]
+      conditions:
+        - type: not_flag
+          flag: explore.luoyang_tea_shed
+      actions:
+        - type: set_flag
+          flag: explore.luoyang_tea_shed
+        - type: give_item
+          item: clear_spirit_san
+          amount: 1
+        - type: message
+          speaker: "旁白"
+          text: "你在山门茶寮讨了碗粗茶歇脚。听邻桌香客说起，白马寺的明心知客僧早年曾是行脚武僧，一手齐眉棍法极稳。茶博士见你赶路疲惫，顺手送了一包清心散。"
+
+    - id: explore_luoyang_wet_steps_river
+      trigger:
+        type: enter_room
+        map: luoyang_city
+        position: [1, 1]
+      conditions:
+        - type: not_flag
+          flag: explore.luoyang_wet_steps
+        - type: flag
+          flag: creation.childhood1.river_chase
+      actions:
+        - type: set_flag
+          flag: explore.luoyang_wet_steps
+        - type: give_money
+          amount: 15
+        - type: message
+          speaker: "旁白"
+          text: "青石阶被洛水浸得发滑，你脚尖一沾便借力稳住——幼年在河岸追着渡船奔跑练出的脚感仍在。岸边卖鱼翁看得啧啧称奇，顺手抛来几枚铜钱讨个彩头。"
+
+    - id: explore_dali_gear_room
+      trigger:
+        type: enter_room
+        map: dali_city
+        position: [1, 3]
+      conditions:
+        - type: not_flag
+          flag: explore.dali_gear_room
+      actions:
+        - type: set_flag
+          flag: explore.dali_gear_room
+        - type: give_item
+          item: old_silver_ingot
+          amount: 1
+        - type: message
+          speaker: "旁白"
+          text: "护具架下堆着几副淘汰的旧皮甲，你在甲缝夹层里摸到半块早年商队遗落的旧碎银，上面还留着滇北马帮的戳记。"
+
+    - id: explore_dali_oath_wall_echo
+      trigger:
+        type: enter_room
+        map: dali_city
+        position: [-1, 4]
+      conditions:
+        - type: not_flag
+          flag: explore.dali_oath_wall
+        - type: flag
+          flag: creation.childhood2.cold_watch
+      actions:
+        - type: set_flag
+          flag: explore.dali_oath_wall
+        - type: message
+          speaker: "旁白"
+          text: "誓墙上刻着历代护路人的名讳与风雪夜守车的规矩。想起从前寒夜守门不敢合眼的滋味，你对段氏如今退居护路的苦心多了几分感同身受。"
+
+    - id: explore_taihu_decoction_room_med
+      trigger:
+        type: enter_room
+        map: taihu_water_pavilion
+        position: [1, 3]
+      conditions:
+        - type: not_flag
+          flag: explore.taihu_decoction_room
+        - type: flag
+          flag: creation.origin.medicine_house
+      actions:
+        - type: set_flag
+          flag: explore.taihu_decoction_room
+        - type: give_item
+          item: taihu_mending_pill
+          amount: 1
+        - type: message
+          speaker: "旁白"
+          text: "煎药房炉火正旺，一只砂罐眼看要扑锅。你凭着医药世家的习惯顺手撤炭压火、留住药汽，刚进门的药童感激不已，悄悄塞给你一粒水榭秘制的太湖续脉丹。"
+
+    - id: explore_taihu_decoction_room_default
+      trigger:
+        type: enter_room
+        map: taihu_water_pavilion
+        position: [1, 3]
+      conditions:
+        - type: not_flag
+          flag: explore.taihu_decoction_room
+      actions:
+        - type: set_flag
+          flag: explore.taihu_decoction_room
+        - type: give_item
+          item: wound_powder
+          amount: 1
+        - type: message
+          speaker: "旁白"
+          text: "煎药房里弥漫着苦艾与当归的香气，木案边摆着几包刚碾好的金创药，留字写着“过客伤重者自取一包”。你取了一包收进怀中。"
+
+    - id: echo_beggar_chen_street_smart
+      trigger:
+        type: talk
+        npc: alley_beggar_chen
+      conditions:
+        - type: quest_completed
+          quest: caoban_canal_shadow
+        - type: flag
+          flag: creation.childhood2.market_brawls
+        - type: not_flag
+          flag: echo.beggar_chen_brawls
+      actions:
+        - type: set_flag
+          flag: echo.beggar_chen_brawls
+        - type: give_money
+          amount: 25
+        - type: message
+          speaker: "破衣陈七"
+          text: "嘿，打眼一看你那护肋缩肩的架势，就是从小在市井里跟人抢食打出来的！这二十五文是盐帮小喽啰逃跑时掉在墙根的，见者有份，拿去买酒。"
+
+    - id: echo_dali_clerk_scholar
+      trigger:
+        type: talk
+        npc: dali_contract_clerk
+      conditions:
+        - type: flag
+          flag: weiyuan.clue_dali
+        - type: flag
+          flag: creation.origin.scholar_house
+        - type: not_flag
+          flag: echo.dali_clerk_scholar
+      actions:
+        - type: set_flag
+          flag: echo.dali_clerk_scholar
+        - type: give_item
+          item: clear_spirit_san
+          amount: 1
+        - type: message
+          speaker: "管契先生段文叔"
+          text: "难得江湖上还有你这般读过书、懂契约押韵的年轻人。这包提神的清心散留着夜里研读秘籍用，别把眼睛熬坏了。"
+
+    - id: echo_hall_disciple_courtyard
+      trigger:
+        type: talk
+        npc: kaifeng_hall_disciple
+      conditions:
+        - type: flag
+          flag: creation.childhood1.courtyard_practice
+        - type: not_flag
+          flag: echo.hall_disciple_courtyard
+      actions:
+        - type: set_flag
+          flag: echo.hall_disciple_courtyard
+        - type: message
+          speaker: "武馆大师兄石磊"
+          text: "看你指节上的老茧，小时候没少偷偷打木桩吧？有这股狠劲，跟我切磋不用客气，直接动手便是！"

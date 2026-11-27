@@ -8,8 +8,13 @@
         level: 6
   prepared: {}
   teaches: {}
+  shop:
+    qinggang_sword: 42
+    patrol_leather_armor: 45
+    wound_powder: 14
+    clear_spirit_san: 14
   dialogue:
-    - "当铺的规矩：只认死当活当，不问东西是谁家的。出了这个门，砖头也是银子。"
+    - "当铺的规矩：只认死当活当，不问东西是谁家的。你要是手里有草药、碎银或闲置旧物，也可以直接拿来估价。"
   respawn: 0
   attr:
     hp: 100
@@ -32,8 +37,10 @@
         level: 8
   prepared: {}
   teaches: {}
+  shop:
+    kaifeng_silver_note: 100
   dialogue:
-    - "开封城里人来人往，铜钱嫌沉，兑成票子才能走远路。只要印鉴对得上，洛阳、大理都认。"
+    - "开封城里人来人往，铜钱嫌沉，可以兑成通宝百文票带着走远路；手里有票子或碎银，找我照面兑现就行。"
   respawn: 0
   attr:
     hp: 100
@@ -104,16 +111,27 @@
     foundation:
       - id: basic_fist
         level: 12
+      - id: basic_spear
+        level: 16
       - id: basic_internal
         level: 10
     fist:
       - id: yamen_grappling_hand
         level: 8
+    spear:
+      - id: bianliang_spear
+        level: 16
   prepared:
-    fist:
-      id: yamen_grappling_hand
-      level: 8
-  teaches: {}
+    spear:
+      id: bianliang_spear
+      level: 16
+  teach_bonus: 3
+  teaches:
+    basic_spear: 16
+    bianliang_spear: 16
+  teach_requires:
+    flag: kaifeng.martial_hall_student
+    refusal: "边军枪术讲究站桩与发力，先去南门武馆把底子打牢，再来津口找老卒学枪。"
   dialogue:
     - "白日里渡船看旗，入夜后渡口封桩。这时候还往河边跑的，不是私盐船，就是背着人命的夜行人。"
   respawn: 0
@@ -140,11 +158,11 @@
       - id: basic_lightness
         level: 10
     fist:
-      - id: escort_short_fist
+      - id: salt_gang_poison_fist
         level: 10
   prepared:
     fist:
-      id: escort_short_fist
+      id: salt_gang_poison_fist
       level: 10
   teaches: {}
   dialogue:
@@ -381,8 +399,22 @@
         level: 16
       - id: basic_fist
         level: 12
-  prepared: {}
-  teaches: {}
+      - id: basic_staff
+        level: 16
+    staff:
+      - id: shaolin_staff
+        level: 16
+  prepared:
+    staff:
+      id: shaolin_staff
+      level: 16
+  teach_bonus: 3
+  teaches:
+    basic_staff: 16
+    shaolin_staff: 16
+  teach_requires:
+    flag: luoyang.name_card
+    refusal: "施主若愿在洛阳立稳脚跟，待牡丹会旧帖上有了姓名，再来山门前随老衲习棍不迟。"
   dialogue:
     - "城里争名的人走累了，多半会到白马寺听一声钟。施主若不急着赶路，西侧碑亭与东侧茶寮都可歇脚。"
   respawn: 0

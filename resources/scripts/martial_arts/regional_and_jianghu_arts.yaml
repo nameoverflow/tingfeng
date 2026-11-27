@@ -348,3 +348,54 @@
           - id: weakened
             duration: 9.0
             value: 1
+
+- id: salt_gang_poison_fist
+  name: "碧水毒砂掌"
+  type: fist
+  tier: entry
+  desc: "盐帮与水寨暗桩私下流传的阴损掌法，出掌时借袖中细砂带毒，专破对手护体真气。"
+  foundation: basic_fist
+  requires:
+    - art: basic_fist
+      level: 5
+  max_level: 25
+  attack_moves:
+    - id: poison_palm_slap
+      name: "暗砂拍腕"
+      desc: "虚晃一掌，顺势拍向对手小臂与脉门。"
+      msg: "袖口一抖，斜掌拍向对手腕骨"
+      unlock_level: 1
+      damage: 13
+      animation:
+        action: rig.fist.punch_a
+        tags: ["fist", "strike"]
+    - id: poison_palm_thrust
+      name: "阴风透骨"
+      desc: "沉肩贴身，阴劲直透胸胁。"
+      msg: "贴身滑步，阴掌直印对手胸胁"
+      unlock_level: 6
+      damage: 17
+      animation:
+        action: rig.fist.palm_knockback_a
+        tags: ["fist", "palm"]
+  active_skills:
+    - id: green_poison_sand
+      name: "碧水毒砂"
+      desc: "借掌风撒出青毒细砂，令对手持续失血中毒。"
+      msg: "掌风骤起，一蓬淡青毒砂随掌势扑面袭来"
+      unlock_level: 4
+      cd: 14.0
+      target: Single
+      cost: 42
+      ap_req: 65
+      req_status: []
+      damage: 42
+      animation:
+        action: rig.fist.palm_knockback_a
+        tags: ["fist", "palm", "poison"]
+      effect:
+        self: []
+        target:
+          - id: poisoned
+            duration: 10.0
+            value: 4

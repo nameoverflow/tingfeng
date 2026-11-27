@@ -214,3 +214,15 @@
         - type: message
           speaker: "守塔僧枯木"
           text: "昔年坐庙堂，如今护长路，枯荣交替，原是一口气的事。你既听进了这声晚钟，往后便留在塔下随老衲修习《枯荣禅息》吧。"
+
+    - id: chongsheng_monk_after_bell
+      trigger:
+        type: talk
+        npc: chongsheng_monk
+      conditions:
+        - type: quest_completed
+          quest: dali_chongsheng_bell
+      actions:
+        - type: message
+          speaker: "守塔僧枯木"
+          text: "三塔院的晚钟日日如此。若心浮气躁了，回来听一会儿钟、修几轮禅息便是。"

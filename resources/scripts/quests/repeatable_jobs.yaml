@@ -224,7 +224,7 @@
         npc: dali_caravan_guard
       conditions:
         - type: flag
-          flag: dali.road_pass
+          flag: dali.caravan_vouched
         - type: quest_not_started
           quest: job_dali_caravan_patrol
       actions:
@@ -364,3 +364,260 @@
           text: "分格清清楚楚，一点没弄混！这是水榭给的谢礼，若缺伤药也可以顺便在我这儿抓几包。"
         - type: complete_job
           quest: job_taihu_herb_gathering
+
+- id: job_kaifeng_bounty_raider
+  name: "悬赏·清剿截路盐枭"
+  objectives:
+    - stage: hunt_raider
+      text: "出开封北门至北郊递道的藏身小径，击退流窜的北郊截路盐枭。"
+    - stage: report_constable
+      text: "回开封府捕房向顾捕头或西市公告墙榜前录事复命领赏。"
+  reward:
+    money: 45
+    combat_exp: 65
+    potential: 45
+    items:
+      - id: wound_powder
+        amount: 1
+  events:
+    - id: job_kaifeng_bounty_start
+      trigger:
+        type: talk
+        npc: kaifeng_notice_board_clerk
+      conditions:
+        - type: quest_completed
+          quest: north_road_patrol
+        - type: quest_not_started
+          quest: job_kaifeng_bounty_raider
+      actions:
+        - type: set_stage
+          quest: job_kaifeng_bounty_raider
+          stage: hunt_raider
+        - type: show_npc
+          npc: bounty_north_raider
+        - type: message
+          speaker: "榜前录事"
+          text: "刚贴出的新悬赏：北郊递道藏身小径又冒出个携毒砂截路的盐枭。捕房赏银四十五文外加一包金创药，客官要揭这张榜吗？揭了便去北郊吧。"
+
+    - id: job_kaifeng_bounty_confront
+      trigger:
+        type: talk
+        npc: bounty_north_raider
+      conditions:
+        - type: quest_stage
+          quest: job_kaifeng_bounty_raider
+          stage: hunt_raider
+      actions:
+        - type: message
+          speaker: "北郊截路盐枭"
+          text: "又是揭了西市悬赏来换银子的？尝尝我这碧水毒砂！"
+        - type: start_battle
+          target: bounty_north_raider
+
+    - id: job_kaifeng_bounty_defeat
+      trigger:
+        type: kill
+        npc: bounty_north_raider
+      conditions:
+        - type: quest_stage
+          quest: job_kaifeng_bounty_raider
+          stage: hunt_raider
+      actions:
+        - type: hide_npc
+          npc: bounty_north_raider
+        - type: set_stage
+          quest: job_kaifeng_bounty_raider
+          stage: report_constable
+        - type: message
+          speaker: "旁白"
+          text: "截路盐枭被你打翻在地，丢下毒砂袋仓皇钻进松林。你可以回西市公告墙或捕房领赏了。"
+
+    - id: job_kaifeng_bounty_finish_clerk
+      trigger:
+        type: talk
+        npc: kaifeng_notice_board_clerk
+      conditions:
+        - type: quest_stage
+          quest: job_kaifeng_bounty_raider
+          stage: report_constable
+      actions:
+        - type: message
+          speaker: "榜前录事"
+          text: "北郊递铺刚捎回信说小径清静了！赏银和金创药这就给你销榜结算。"
+        - type: complete_job
+          quest: job_kaifeng_bounty_raider
+
+    - id: job_kaifeng_bounty_finish_constable
+      trigger:
+        type: talk
+        npc: kaifeng_constable
+      conditions:
+        - type: quest_stage
+          quest: job_kaifeng_bounty_raider
+          stage: report_constable
+      actions:
+        - type: message
+          speaker: "顾捕头"
+          text: "动作够利落。盐帮那帮人擅长使青毒，拿这包金创药和赏银备着，往后遇上心里有数。"
+        - type: complete_job
+          quest: job_kaifeng_bounty_raider
+
+- id: job_dali_bounty_bandit
+  name: "悬赏·苍山清匪"
+  objectives:
+    - stage: hunt_bandit
+      text: "登上苍山冷泉涧北面的苍山废石场，击退流窜马匪。"
+    - stage: report_tracker
+      text: "回苍山冷泉涧向猎山人阿罗复命领赏。"
+  reward:
+    money: 60
+    combat_exp: 90
+    potential: 60
+    items: []
+  events:
+    - id: job_dali_bounty_start
+      trigger:
+        type: talk
+        npc: cangshan_tracker
+      conditions:
+        - type: quest_completed
+          quest: dali_cangshan_caravan
+        - type: quest_not_started
+          quest: job_dali_bounty_bandit
+      actions:
+        - type: set_stage
+          quest: job_dali_bounty_bandit
+          stage: hunt_bandit
+        - type: show_npc
+          npc: bounty_cangshan_bandit
+        - type: message
+          speaker: "猎山人阿罗"
+          text: "断指麻六虽然跑了，山雾里又摸进来个拎大刀的流窜马匪，在北坡废石场蹲着截商队。段家出了六十文清山赏钱，你去把人赶下山吧。"
+
+    - id: job_dali_bounty_confront
+      trigger:
+        type: talk
+        npc: bounty_cangshan_bandit
+      conditions:
+        - type: quest_stage
+          quest: job_dali_bounty_bandit
+          stage: hunt_bandit
+      actions:
+        - type: message
+          speaker: "苍山流窜马匪"
+          text: "段家雇来的打手？看你接不接得住我这口五虎大刀！"
+        - type: start_battle
+          target: bounty_cangshan_bandit
+
+    - id: job_dali_bounty_defeat
+      trigger:
+        type: kill
+        npc: bounty_cangshan_bandit
+      conditions:
+        - type: quest_stage
+          quest: job_dali_bounty_bandit
+          stage: hunt_bandit
+      actions:
+        - type: hide_npc
+          npc: bounty_cangshan_bandit
+        - type: set_stage
+          quest: job_dali_bounty_bandit
+          stage: report_tracker
+        - type: message
+          speaker: "旁白"
+          text: "马匪刀势被破，狼狈滚下乱石坡逃远了。茶马山道暂时清静下来。"
+
+    - id: job_dali_bounty_finish
+      trigger:
+        type: talk
+        npc: cangshan_tracker
+      conditions:
+        - type: quest_stage
+          quest: job_dali_bounty_bandit
+          stage: report_tracker
+      actions:
+        - type: message
+          speaker: "猎山人阿罗"
+          text: "山坡上的马匪影儿都没了，这回商队能安心过涧。赏钱拿好，山里要是再起风声我再喊你。"
+        - type: complete_job
+          quest: job_dali_bounty_bandit
+
+- id: job_taihu_bounty_pirate
+  name: "悬赏·湖港巡防"
+  objectives:
+    - stage: hunt_pirate
+      text: "前往芦苇暗港，击退违约越界的水寨快船手。"
+    - stage: report_steward
+      text: "回雾柳栈桥向柳庄管事陆执复命领赏。"
+  reward:
+    money: 58
+    combat_exp: 85
+    potential: 58
+    items: []
+  events:
+    - id: job_taihu_bounty_start
+      trigger:
+        type: talk
+        npc: estate_steward_lu
+      conditions:
+        - type: quest_completed
+          quest: taihu_water_debt
+        - type: quest_not_started
+          quest: job_taihu_bounty_pirate
+      actions:
+        - type: set_stage
+          quest: job_taihu_bounty_pirate
+          stage: hunt_pirate
+        - type: show_npc
+          npc: bounty_taihu_pirate
+        - type: message
+          speaker: "柳庄管事陆执"
+          text: "翻江鲤虽守约，他手下仍有不服管束的快船手摸进芦苇暗港偷摸截船。柳庄不便直接进暗港动武，劳你代走一趟，五十八文酬银照付。"
+
+    - id: job_taihu_bounty_confront
+      trigger:
+        type: talk
+        npc: bounty_taihu_pirate
+      conditions:
+        - type: quest_stage
+          quest: job_taihu_bounty_pirate
+          stage: hunt_pirate
+      actions:
+        - type: message
+          speaker: "水寨越界快船手"
+          text: "柳庄的狗腿子敢摸进暗港来？尝尝湖上弟兄的手段！"
+        - type: start_battle
+          target: bounty_taihu_pirate
+
+    - id: job_taihu_bounty_defeat
+      trigger:
+        type: kill
+        npc: bounty_taihu_pirate
+      conditions:
+        - type: quest_stage
+          quest: job_taihu_bounty_pirate
+          stage: hunt_pirate
+      actions:
+        - type: hide_npc
+          npc: bounty_taihu_pirate
+        - type: set_stage
+          quest: job_taihu_bounty_pirate
+          stage: report_steward
+        - type: message
+          speaker: "旁白"
+          text: "越界快船手被你逼得跳水弃舟，顺着芦苇深处逃走了。暗港恢复了平静。"
+
+    - id: job_taihu_bounty_finish
+      trigger:
+        type: talk
+        npc: estate_steward_lu
+      conditions:
+        - type: quest_stage
+          quest: job_taihu_bounty_pirate
+          stage: report_steward
+      actions:
+        - type: message
+          speaker: "柳庄管事陆执"
+          text: "有你在暗港压着，水寨里那些不安分的小头目也得掂量几分。这是柳庄的酬银，收好。"
+        - type: complete_job
+          quest: job_taihu_bounty_pirate

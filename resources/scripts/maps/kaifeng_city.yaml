@@ -118,7 +118,9 @@ rooms:
     id: kaifeng_martial_hall
     name: "南门武馆"
     kind: building
-    desc: "武馆背靠南城墙根，正门开向演武场，墙上写着四个字：先站得住。"
+    desc: "武馆背靠南城墙根，正门开向演武场，墙上写着四个字：先站得住。武馆弟子常在堂前喂招切磋。"
+    char:
+      - kaifeng_hall_disciple
     exits:
       north: [-1, -1]
 
@@ -174,6 +176,8 @@ rooms:
         desc: "巷口墙上的威远命案旧榜已被风雨淋去大半，旁边新压了一张北郊河防严查夜渡的告示。"
       - flag: jianghu.canal_shadow_done
         desc: "巷口墙上贴着寻人、悬赏和外地路引，角落里多了一道严禁夹带私印入仓的府衙条陈。"
+    char:
+      - kaifeng_notice_board_clerk
     exits:
       east: [-2, 0]
       north: [-3, 1]

@@ -64,6 +64,7 @@ rooms:
     desc: "小径被松针盖住，只有常来的人才知道该往哪里落脚。"
     char:
       - mail_thief_spy
+      - bounty_north_raider
     exits:
       east: [0, 3]
       south: [-1, 2]

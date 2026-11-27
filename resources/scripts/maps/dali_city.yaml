@@ -61,6 +61,7 @@ rooms:
     desc: "半山腰的废石场堆满青白条石，地势险峻，俯瞰着茶马入城的必经之路。"
     char:
       - cangshan_outlaw_leader
+      - bounty_cangshan_bandit
     exits:
       south: [-2, 2]
 
@@ -119,7 +120,9 @@ rooms:
     id: dali_duan_drill_ground
     name: "段氏操练场"
     kind: landmark
-    desc: "操练场是旧府中院。西墙刻着护送誓词，东侧灶房供应远行归来的护卫。"
+    desc: "操练场是旧府中院。西墙刻着护送誓词，东侧灶房供应远行归来的护卫，教习常在场中考校拳掌。"
+    char:
+      - dali_drill_guard
     exits:
       south: [0, 3]
       north: [0, 5]

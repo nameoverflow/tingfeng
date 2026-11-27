@@ -154,3 +154,27 @@
         - type: message
           speaker: "太湖白发医者"
           text: "这册《烟水步图解》与《拂柳剑谱》你留着研读。方书阁的沈青笺也已认你为内堂常客，想学剑与步法，随时可去请教。"
+
+    - id: water_fort_boss_after_truce
+      trigger:
+        type: talk
+        npc: water_fort_second_boss
+      conditions:
+        - type: quest_completed
+          quest: taihu_water_debt
+      actions:
+        - type: message
+          speaker: "水寨二当家翻江鲤"
+          text: "药方下阕管用，弟兄们的暑伤已经压下去了。今年柳庄的岸边我们绝不沾边——不过你要是手痒想再活动筋骨，芦苇暗港随时欢迎。"
+
+    - id: estate_steward_after_truce
+      trigger:
+        type: talk
+        npc: estate_steward_lu
+      conditions:
+        - type: quest_completed
+          quest: taihu_water_debt
+      actions:
+        - type: message
+          speaker: "柳庄管事陆执"
+          text: "水寨的快船这几日果然没再靠岸，药材我也照方送去了水榭。你办事有分寸，往后路过雾柳栈桥，柳庄不会拦你。"
